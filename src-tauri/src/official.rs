@@ -26,6 +26,27 @@ pub fn no_window(c: &mut std::process::Command) {
 #[cfg(not(target_os = "windows"))]
 pub fn no_window(_c: &mut std::process::Command) {}
 
+/// 令牌刷新退避:失败后 15 分钟内不再尝试。
+/// 两个刷新入口(宠物令牌 / credentials.json)共用一个退避,
+/// 保证同一时间窗内最多打一次令牌接口
+fn refresh_allowed(shared: &Shared) -> bool {
+    shared
+        .refresh_backoff
+        .lock()
+        .unwrap()
+        .map(|t| std::time::Instant::now() >= t)
+        .unwrap_or(true)
+}
+
+fn note_refresh(shared: &Shared, ok: bool) {
+    *shared.refresh_backoff.lock().unwrap() = if ok {
+        None
+    } else {
+        eprintln!("[claude-pet] 令牌刷新失败,退避 15 分钟");
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(900))
+    };
+}
+
 /// 走刷新流程换新令牌,返回 (access, refresh, expires_in_secs)
 fn refresh_grant(refresh: &str) -> Option<(String, String, i64)> {
     use std::io::Write as _;
@@ -72,10 +93,14 @@ fn pet_token(shared: &Shared) -> Option<String> {
     if expires_ms == 0 || now_ms < expires_ms - 120_000 {
         return Some(access);
     }
-    if refresh.is_empty() {
-        return Some(access);
+    if refresh.is_empty() || !refresh_allowed(shared) {
+        return Some(access); // 拿旧令牌碰运气,退避期内绝不打令牌接口
     }
-    let (new_access, new_refresh, expires_in) = refresh_grant(&refresh)?;
+    let Some((new_access, new_refresh, expires_in)) = refresh_grant(&refresh) else {
+        note_refresh(shared, false);
+        return Some(access);
+    };
+    note_refresh(shared, true);
     {
         let mut cfg = shared.cfg.lock().unwrap();
         cfg.oauth_access = new_access.clone();
@@ -95,7 +120,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
         return Some(tok);
     }
     // 1) ~/.claude/.credentials.json,过期则用 refreshToken 续期
-    if let Some(tok) = token_from_credentials_file() {
+    if let Some(tok) = token_from_credentials_file(shared) {
         return Some(tok);
     }
     // 2) Windows 凭据管理器
@@ -138,7 +163,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
 
 /// 读 credentials.json;accessToken 快过期时用 refreshToken 续期并写回,
 /// 这样即使用户从不打开 CLI,凭据也一直有效
-fn token_from_credentials_file() -> Option<String> {
+fn token_from_credentials_file(shared: &Shared) -> Option<String> {
     let path = dirs::home_dir()?.join(".claude").join(".credentials.json");
     let text = std::fs::read_to_string(&path).ok()?;
     let mut root: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -154,10 +179,14 @@ fn token_from_credentials_file() -> Option<String> {
     }
     // 过期(或 2 分钟内将过期):刷新
     let refresh = oauth["refreshToken"].as_str().unwrap_or("");
-    if refresh.is_empty() {
-        return Some(access.to_string()); // 没法刷,先用旧的碰运气
+    if refresh.is_empty() || !refresh_allowed(shared) {
+        return Some(access.to_string()); // 没法刷/退避期内,先用旧的碰运气
     }
-    let (new_access, new_refresh, expires_in) = refresh_grant(refresh)?;
+    let Some((new_access, new_refresh, expires_in)) = refresh_grant(refresh) else {
+        note_refresh(shared, false);
+        return Some(access.to_string());
+    };
+    note_refresh(shared, true);
     // 写回,和 Claude Code 自己的格式保持一致
     let obj = root.get_mut("claudeAiOauth")?.as_object_mut()?;
     obj.insert("accessToken".into(), serde_json::Value::String(new_access.clone()));

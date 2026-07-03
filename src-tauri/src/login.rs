@@ -126,12 +126,18 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let resp: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).map_err(|_| "令牌响应异常")?;
-    let access = resp["access_token"].as_str().ok_or_else(|| {
-        format!("换取令牌失败:{}", {
+    let access = match resp["access_token"].as_str() {
+        Some(a) => a,
+        None => {
             let s = resp.to_string();
-            s.chars().take(120).collect::<String>()
-        })
-    })?;
+            // 限流最常见的失败,给出能照做的提示而不是甩 JSON
+            return Err(if s.contains("rate_limit") {
+                "接口暂时限流,过 5~10 分钟再点一次「连接」即可(hooks 不受影响)".into()
+            } else {
+                format!("换取令牌失败:{}", s.chars().take(120).collect::<String>())
+            });
+        }
+    };
 
     // 写进配置
     {

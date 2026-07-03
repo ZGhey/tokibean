@@ -376,14 +376,16 @@
 
   el("connect-claude").addEventListener("click", () => {
     el("acct-status").textContent = "浏览器授权中…";
+    el("acct-result").textContent = "";
     invoke("connect_claude")
       .then((msg) => {
         el("acct-status").textContent = "已连接";
-        el("install-result").textContent = msg;
+        el("acct-result").textContent = msg;
       })
       .catch((err) => {
+        // 连接的报错只出现在账号区,别串到下面 hook 区吓人
         el("acct-status").textContent = "未连接";
-        el("install-result").textContent = "失败:" + err;
+        el("acct-result").textContent = "连接失败:" + err;
       });
   });
 

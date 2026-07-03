@@ -68,6 +68,9 @@ pub struct Shared {
     pub official: Mutex<Option<(OfficialUsage, Instant)>>,
     /// 被限流后的退避截止时刻
     pub official_backoff: Mutex<Option<Instant>>,
+    /// 令牌刷新失败后的退避截止时刻。没有它,一份过期凭据会让每次轮询
+    /// 都去打令牌接口,把 console.anthropic.com 打到限流(实测翻过车)
+    pub refresh_backoff: Mutex<Option<Instant>>,
 }
 
 impl Shared {
@@ -96,6 +99,7 @@ impl Shared {
             last_resize: Mutex::new(Instant::now()),
             official: Mutex::new(None),
             official_backoff: Mutex::new(None),
+            refresh_backoff: Mutex::new(None),
         }
     }
 }
