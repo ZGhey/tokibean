@@ -164,6 +164,8 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                 };
                 core.bubble = Some((text, now + Duration::from_secs(dwell)));
                 core.tool_note = None;
+                // 刚烧完一波 token,请求尽快刷一次官方用量(事件驱动)
+                shared.official_want.store(true, Ordering::Relaxed);
                 // 今日完工计数(跨天清零)
                 let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                 if core.stops_day != today {

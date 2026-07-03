@@ -204,6 +204,8 @@
     try {
       if (panel.classList.contains("hidden")) {
         panel.classList.remove("hidden");
+        // 用户要看数据了:请求后端刷一次官方用量(后端有防抖)
+        invoke("panel_opened").catch(() => {});
         // 面板顶到画布底的实际布局高度(自动含负 margin 的重叠量)
         const need = Math.ceil(
           canvas.getBoundingClientRect().bottom - panel.getBoundingClientRect().top

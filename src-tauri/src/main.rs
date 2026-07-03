@@ -92,6 +92,17 @@ fn focus_terminal() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn panel_opened(app: AppHandle) {
+    // 用户正在看数据:竖旗请求刷新(refresh_usage 内部有 60s 防抖)
+    let shared = app.state::<Arc<Shared>>();
+    shared
+        .official_want
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    state::refresh_usage(&shared, false);
+    state::push_update(&app, &shared);
+}
+
+#[tauri::command]
 fn connect_claude(app: AppHandle) -> Result<String, String> {
     let shared = app.state::<Arc<Shared>>().inner().clone();
     let msg = login::connect(shared.clone())?;
@@ -113,7 +124,8 @@ fn main() {
             get_config,
             set_config,
             connect_claude,
-            focus_terminal
+            focus_terminal,
+            panel_opened
         ])
         .on_window_event(|window, event| {
             let shared = window.app_handle().state::<Arc<Shared>>();
@@ -235,11 +247,14 @@ fn main() {
                 });
             }
 
-            // 线程 2:心跳。每秒处理状态过期,每 30 秒重扫 JSONL 用量
+            // 线程 2:心跳。每秒处理状态过期,每 30 秒重扫 JSONL 用量。
+            // 官方接口的抓取是事件驱动的(Stop/面板打开/干活中过期/重置点已过),
+            // 值不值得问由 refresh_usage 内部判定——完全空闲时一次都不问
             {
                 let h = handle.clone();
                 let s = shared.clone();
                 std::thread::spawn(move || {
+                    use std::sync::atomic::Ordering;
                     let mut tick: u64 = 0;
                     // 启动时先扫一遍
                     state::refresh_usage(&s, true);
@@ -248,10 +263,13 @@ fn main() {
                         std::thread::sleep(Duration::from_secs(1));
                         tick += 1;
                         let mut changed = state::expire_transients(&s);
-                        if tick % 30 == 0 {
-                            // JSONL 每 30 秒扫,官方接口每 90 秒问一次(有限流)
-                            state::refresh_usage(&s, tick % 90 == 0);
+                        // Stop 事件竖了旗就别等 30 秒节拍,尽快响应
+                        if tick % 30 == 0 || s.official_want.load(Ordering::Relaxed) {
+                            state::refresh_usage(&s, false);
                             state::check_usage_alerts(&h, &s);
+                            changed = true;
+                        }
+                        if tick % 30 == 0 {
                             // 兜底保存窗口位置(拖拽节流可能漏掉最后一段位移)
                             if let Some(w) = h.get_webview_window("main") {
                                 if let Ok(pos) = w.outer_position() {
@@ -263,7 +281,6 @@ fn main() {
                                     }
                                 }
                             }
-                            changed = true;
                         }
                         if changed {
                             state::push_update(&h, &s);

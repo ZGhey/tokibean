@@ -71,6 +71,10 @@ pub struct Shared {
     /// 令牌刷新失败后的退避截止时刻。没有它,一份过期凭据会让每次轮询
     /// 都去打令牌接口,把 console.anthropic.com 打到限流(实测翻过车)
     pub refresh_backoff: Mutex<Option<Instant>>,
+    /// 事件驱动抓取请求:Stop 完工 / 面板打开时竖旗,尽快问一次官方用量
+    pub official_want: AtomicBool,
+    /// 上次尝试问官方接口的时刻(不论成败),60 秒防抖用
+    pub official_last_try: Mutex<Option<Instant>>,
 }
 
 impl Shared {
@@ -100,6 +104,8 @@ impl Shared {
             official: Mutex::new(None),
             official_backoff: Mutex::new(None),
             refresh_backoff: Mutex::new(None),
+            official_want: AtomicBool::new(false),
+            official_last_try: Mutex::new(None),
         }
     }
 }
@@ -284,27 +290,51 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
         build_snapshot(&scanner.events, &cfg)
     };
 
-    // 订阅模式:优先用官方接口的真实百分比。轮询失败(限流/网络)时
-    // 沿用最长 6 小时的旧值,再不行才回退本地加权估算(basis 保持 auto/manual)
+    // 订阅模式:优先用官方接口的真实百分比,但抓取是事件驱动的——
+    // 百分比只有干活才会涨,完全空闲时一次都不问:
+    //   · with_official(启动/切模式/连接账号)→ 直接问
+    //   · Stop 完工 / 面板打开竖了 official_want 旗 → 问(60s 防抖)
+    //   · 干活中且缓存超 5 分钟旧(长任务持续在烧)→ 问(60s 防抖)
+    //   · 重置点已过但数据还是旧窗口的 → 问(60s 防抖)
+    // 失败(限流/网络)时沿用最长 6 小时的旧值,再不行才回退本地估算
     if snap.mode == "subscription" {
         let now = Instant::now();
+        let any_working = shared
+            .core
+            .lock()
+            .unwrap()
+            .sessions
+            .values()
+            .any(|s| s.base == Base::Working);
         let backoff = shared
             .official_backoff
             .lock()
             .unwrap()
             .map(|t| now < t)
             .unwrap_or(false);
+        let asap = shared.official_want.swap(false, Ordering::Relaxed);
         let mut cache = shared.official.lock().unwrap();
         // 缓存里记录的重置时刻已过 = 窗口其实已经翻篇了
         let window_over = |o: &OfficialUsage| {
             o.five_reset_ts != 0 && chrono::Utc::now().timestamp() >= o.five_reset_ts
         };
-        // 过了重置点就别死等 90 秒节拍,提前去问(最快 60 秒一次,限流退避照旧)
-        let stale_after_reset = cache
+        let cache_age = cache.as_ref().map(|(_, at)| now.duration_since(*at));
+        let working_stale =
+            any_working && cache_age.map(|a| a > Duration::from_secs(300)).unwrap_or(true);
+        let reset_stale = cache
             .as_ref()
             .map(|(o, at)| window_over(o) && now.duration_since(*at) > Duration::from_secs(60))
             .unwrap_or(false);
-        if (with_official || stale_after_reset) && !backoff {
+        let tried_recently = shared
+            .official_last_try
+            .lock()
+            .unwrap()
+            .map(|t| now.duration_since(t) < Duration::from_secs(60))
+            .unwrap_or(false);
+        let should = !backoff
+            && (with_official || ((asap || working_stale || reset_stale) && !tried_recently));
+        if should {
+            *shared.official_last_try.lock().unwrap() = Some(now);
             use crate::official::FetchOutcome;
             match crate::official::fetch(shared, &cfg.oauth_token) {
                 FetchOutcome::Ok(fresh) => {
