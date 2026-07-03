@@ -58,7 +58,7 @@
     libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
   ```
 
-> **WSL 用户注意**:这是图形程序,要在 Windows 侧运行(Windows 上装 Rust + Node),不要在 WSL 里跑。Claude Code 如果跑在 WSL 里,hooks 里的 `127.0.0.1` 在 WSL2 镜像网络模式下可以直通 Windows 侧;非镜像模式需要把 hook 命令里的地址改成 Windows 主机 IP。
+> **WSL 用户注意**:这是图形程序,要在 Windows 侧运行(Windows 上装 Rust + Node),不要在 WSL 里跑。Claude Code 跑在 WSL 里也能被感知:面板的「安装 hooks」会自动同步到每个 WSL 发行版的 `~/.claude/settings.json`(镜像网络模式直接用 `127.0.0.1`;NAT 模式自动改用 Windows 主机网关地址,但还需在宠物配置里把 `bind` 设为 `"0.0.0.0"` 并重启宠物)。
 
 ## 快速开始
 
