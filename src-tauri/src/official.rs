@@ -288,11 +288,23 @@ fn token_from_blob(blob: &[u8]) -> Option<String> {
     };
     let text = text.trim().trim_matches('\0').to_string();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-        if let Some(tok) = v["claudeAiOauth"]["accessToken"].as_str() {
-            return Some(tok.to_string());
+        // 凭据库里也可能是过期货(mac Keychain / Win 凭据管理器):
+        // 带 expiresAt 就校验,过期的不要——它刷不了,用了也只是白吃 401
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let usable = |oauth: &serde_json::Value| -> Option<String> {
+            let tok = oauth["accessToken"].as_str()?;
+            let exp = oauth["expiresAt"].as_i64().unwrap_or(0);
+            if exp == 0 || now_ms < exp - 120_000 {
+                Some(tok.to_string())
+            } else {
+                None
+            }
+        };
+        if v["claudeAiOauth"].is_object() {
+            return usable(&v["claudeAiOauth"]);
         }
-        if let Some(tok) = v["accessToken"].as_str() {
-            return Some(tok.to_string());
+        if v["accessToken"].is_string() {
+            return usable(&v);
         }
     }
     if text.starts_with("sk-ant-oat") {
