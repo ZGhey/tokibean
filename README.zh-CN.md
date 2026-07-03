@@ -1,10 +1,24 @@
+<div align="center">
+
 # Tokibean 码豆 🫘
+
+### 一只看得见 Claude Code 在干嘛的桌面宠物
+
+它陪你思考、写码、搜索、完工撒花——顺便帮你盯着 token 额度。
+
+[![Release](https://img.shields.io/github/v/release/ZGhey/tokibean?style=flat-square&color=e8916c)](https://github.com/ZGhey/tokibean/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/ZGhey/tokibean/total?style=flat-square&color=e8916c)](https://github.com/ZGhey/tokibean/releases)
+[![Stars](https://img.shields.io/github/stars/ZGhey/tokibean?style=flat-square&color=e8916c)](https://github.com/ZGhey/tokibean/stargazers)
+![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square)
+[![License](https://img.shields.io/github/license/ZGhey/tokibean?style=flat-square)](LICENSE)
 
 [English](README.md) | **简体中文**
 
-> 一只吃 token 的桌面小豆子 —— works with Claude Code。
-> 本项目为社区作品,与 Anthropic 无关联、未获其背书;"Claude" 仅作兼容性事实描述。
-> 默认角色「拱门·墩墩」为原创形象,项目所有内置皮肤均可自由分发。
+<img src="docs/gifs/thinking.gif" width="150" alt="思考中"> <img src="docs/gifs/coding.gif" width="150" alt="改代码"> <img src="docs/gifs/done.gif" width="150" alt="完工庆祝">
+
+**[⬇ 下载 macOS / Windows / Linux 安装包](https://github.com/ZGhey/tokibean/releases/latest)** &nbsp;·&nbsp; macOS 一行装:`brew install --cask zghey/tap/tokibean`
+
+</div>
 
 住在桌面上的 Claude Code 状态监视宠物。不用喂食、不用养成——它只做三件事:
 
@@ -13,6 +27,8 @@
 3. **额度状态可视化**:窗口用量超 80% 头顶冒感叹号,额度耗尽直接躺平睡觉(反正也干不了活)。
 
 跨平台:Windows / macOS / Linux(Tauri 2)。
+
+> 本项目为社区作品,与 Anthropic 无关联、未获其背书;"Claude" 仅作兼容性事实描述。默认角色「拱门·墩墩」为原创形象,项目所有内置皮肤均可自由分发。
 
 ## 状态图鉴
 
@@ -130,3 +146,11 @@ Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ 状态
 - **只统计 Claude Code**:claude.ai 网页版的用量不落在本地文件里,监控不到
 - **周限额**:官方口径未公开,面板里的"近 7 天"是滚动近似值
 - 端口 8737 被占用时 hook 服务器会启动失败(看终端日志),在配置里换端口后重装 hooks
+
+## Star history
+
+觉得墩墩可爱的话,点个 ⭐ 能帮更多人发现它。
+
+<a href="https://star-history.com/#ZGhey/tokibean&Date">
+  <img src="https://api.star-history.com/svg?repos=ZGhey/tokibean&type=Date" width="600" alt="Star History Chart">
+</a>

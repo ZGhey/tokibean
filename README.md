@@ -1,10 +1,24 @@
+<div align="center">
+
 # Tokibean 🫘
+
+### A desktop pet that shows you what Claude Code is doing
+
+It thinks, codes, searches, and celebrates right alongside you — and keeps an eye on your token budget.
+
+[![Release](https://img.shields.io/github/v/release/ZGhey/tokibean?style=flat-square&color=e8916c)](https://github.com/ZGhey/tokibean/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/ZGhey/tokibean/total?style=flat-square&color=e8916c)](https://github.com/ZGhey/tokibean/releases)
+[![Stars](https://img.shields.io/github/stars/ZGhey/tokibean?style=flat-square&color=e8916c)](https://github.com/ZGhey/tokibean/stargazers)
+![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square)
+[![License](https://img.shields.io/github/license/ZGhey/tokibean?style=flat-square)](LICENSE)
 
 **English** | [简体中文](README.zh-CN.md)
 
-> A little desktop bean that eats tokens — works with Claude Code.
-> A community project, not affiliated with or endorsed by Anthropic; "Claude" is used only as a factual compatibility reference.
-> The default mascot "Archway Dundun" (拱门·墩墩) is an original character, and every built-in skin is free to redistribute.
+<img src="docs/gifs/thinking.gif" width="150" alt="thinking"> <img src="docs/gifs/coding.gif" width="150" alt="coding"> <img src="docs/gifs/done.gif" width="150" alt="celebrating">
+
+**[⬇ Download for macOS / Windows / Linux](https://github.com/ZGhey/tokibean/releases/latest)** &nbsp;·&nbsp; macOS one-liner: `brew install --cask zghey/tap/tokibean`
+
+</div>
 
 A desktop pet that lives on your screen and watches Claude Code. No feeding, no leveling — it does just three things:
 
@@ -13,6 +27,8 @@ A desktop pet that lives on your screen and watches Claude Code. No feeding, no 
 3. **Quota state at a glance**: an exclamation mark pops over its head past 80% window usage, and it flops down to sleep once the quota is spent (nothing to do anyway).
 
 Cross-platform: Windows / macOS / Linux (Tauri 2).
+
+> A community project, not affiliated with or endorsed by Anthropic; "Claude" is used only as a factual compatibility reference. The default mascot "Archway Dundun" (拱门·墩墩) is an original character, and every built-in skin is free to redistribute.
 
 ## State gallery
 
@@ -130,3 +146,11 @@ All drawing logic lives in the single file `src/pet.js`. Keep the `window.PetRen
 - **Only counts Claude Code**: usage from the claude.ai web app isn't in local files, so it can't be monitored.
 - **Weekly limit**: the official figure isn't published; the panel's "last 7 days" is a rolling approximation.
 - If port 8737 is in use, the hook server fails to start (check the terminal log); change the port in the config and reinstall hooks.
+
+## Star history
+
+If Tokibean made you smile, a ⭐ helps others find it.
+
+<a href="https://star-history.com/#ZGhey/tokibean&Date">
+  <img src="https://api.star-history.com/svg?repos=ZGhey/tokibean&type=Date" width="600" alt="Star History Chart">
+</a>
