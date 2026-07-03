@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Pet</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="panel" class="hidden">
+    <div class="row head">
+      <span id="mode-badge" class="badge">订阅</span>
+      <select id="mode-select" title="计费模式">
+        <option value="auto">自动检测</option>
+        <option value="subscription">订阅(Pro/Max)</option>
+        <option value="api">API 计费</option>
+      </select>
+    </div>
+
+    <div id="sub-block">
+      <div class="label-row">
+        <span>5 小时窗口</span>
+        <span id="block-pct" class="num">--%</span>
+      </div>
+      <div id="pixel-bar" aria-label="窗口用量"></div>
+      <div class="hint" id="block-reset">暂无活动窗口</div>
+      <div class="label-row hidden" id="week-row">
+        <span>周额度</span>
+        <span id="week-pct" class="num">--%</span>
+      </div>
+    </div>
+
+    <div id="api-block" class="hidden">
+      <div class="label-row"><span>今日成本</span><span id="cost-today" class="num big">$0.00</span></div>
+      <div class="label-row"><span>近 7 天</span><span id="cost-week" class="num">$0.00</span></div>
+    </div>
+
+    <div id="trend" title="近 7 天逐日用量"></div>
+    <div class="label-row"><span>今日 tokens</span><span id="tok-today" class="num">0</span></div>
+    <div class="label-row"><span>近 7 天</span><span id="tok-week" class="num">0</span></div>
+    <div class="label-row"><span>模型</span><span id="models" class="num small">--</span></div>
+
+    <div class="divider"></div>
+
+    <div class="label-row">
+      <span>官方用量</span>
+      <span id="acct-status" class="num small">未连接</span>
+    </div>
+    <button id="connect-claude">连接 Claude 账号</button>
+    <div class="label-row">
+      <span>系统通知</span>
+      <input type="checkbox" id="cfg-notify" checked />
+    </div>
+    <div class="label-row">
+      <span>不足此秒数不提醒</span>
+      <input type="number" id="cfg-minsecs" min="0" max="3600" value="30" />
+    </div>
+    <div class="label-row">
+      <span>提示音</span>
+      <input type="checkbox" id="cfg-sound" />
+    </div>
+    <div class="label-row">
+      <span>皮肤</span>
+      <select id="cfg-skin">
+        <option value="classic">墩墩(默认)</option>
+        <option value="bean">豆豆</option>
+        <option value="tabby">橘猫·摸鱼</option>
+        <option value="tribute">私藏款(需本地文件)</option>
+      </select>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="label-row">
+      <span>hook 事件</span>
+      <span id="hook-status" class="num small">还没收到</span>
+    </div>
+    <button id="install-hooks">安装 Claude Code hooks</button>
+    <div class="hint" id="install-result"></div>
+    <div class="hint dim">监听 127.0.0.1:8737 · 点宠物收起面板</div>
+  </div>
+
+  <canvas id="pet" width="200" height="184" title="点我看用量"></canvas>
+
+  <script src="pet.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

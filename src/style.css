@@ -1,0 +1,155 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  background: transparent;
+  overflow: hidden;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", -apple-system, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 4px;
+}
+
+#pet {
+  image-rendering: pixelated;
+  cursor: pointer;
+  z-index: 1;
+}
+
+/* 面板 */
+#panel {
+  width: 224px;
+  /* 必须全不透明:窗口置顶悬浮在终端等亮色文字上方,
+     半透明会让底下的文字渗上来,看起来像面板显示错乱 */
+  background: rgb(24, 22, 20);
+  border: 1px solid rgba(217, 119, 87, 0.35);
+  border-radius: 12px;
+  padding: 12px;
+  color: #e8e2d8;
+  font-size: 12px;
+  /* 画布顶部约 80px 是气泡预留区,面板往下压掉大部分,
+     不然展开时面板和宠物之间有一大块空隙 */
+  margin-bottom: -60px;
+  z-index: 2;
+}
+#panel { transition: opacity 0.35s; }
+#panel.hidden, .hidden { display: none; }
+
+.row.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.badge {
+  background: rgba(217, 119, 87, 0.18);
+  color: #e8916c;
+  border: 1px solid rgba(217, 119, 87, 0.45);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+input[type="number"] {
+  background: #2b2825;
+  color: #d8d2c6;
+  border: 1px solid #46413b;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 3px 4px;
+  width: 56px;
+  outline: none;
+}
+input[type="checkbox"] { accent-color: #d97757; }
+
+select {
+  background: #2b2825;
+  color: #d8d2c6;
+  border: 1px solid #46413b;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 3px 4px;
+  outline: none;
+}
+
+.label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 5px 0;
+  color: #b3aca0;
+}
+/* 左侧标签不许被长数值挤断行 */
+.label-row > span:first-child {
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+.num {
+  color: #f0eadf;
+  font-variant-numeric: tabular-nums;
+  font-family: Consolas, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+.num.big { font-size: 16px; color: #e8916c; }
+.num.small { font-size: 11px; }
+
+/* 像素块进度条:10 格,呼应像素宠物 */
+#pixel-bar {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 3px;
+  margin: 6px 0 4px;
+}
+#pixel-bar span {
+  height: 10px;
+  border-radius: 2px;
+  background: #3a3630;
+}
+#pixel-bar span.on { background: #d97757; }
+#pixel-bar span.on.warn { background: #e0a63b; }
+#pixel-bar span.on.full { background: #d05045; }
+
+/* 近 7 天像素趋势柱 */
+#trend {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 24px;
+  margin: 8px 0 2px;
+}
+#trend span {
+  flex: 1;
+  background: #6b5548;
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+}
+#trend span.today { background: #d97757; }
+
+.hint { color: #8a8478; font-size: 11px; margin-top: 4px; line-height: 1.5; }
+.hint.dim { color: #6b665c; margin-top: 8px; }
+
+.divider { height: 1px; background: #3a3630; margin: 10px 0; }
+
+button {
+  width: 100%;
+  margin-top: 6px;
+  background: rgba(217, 119, 87, 0.14);
+  color: #e8916c;
+  border: 1px solid rgba(217, 119, 87, 0.5);
+  border-radius: 8px;
+  padding: 7px 0;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+button:hover { background: rgba(217, 119, 87, 0.26); }
+button:active { transform: scale(0.98); }
