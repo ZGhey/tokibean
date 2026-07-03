@@ -112,25 +112,37 @@ fn pet_token(shared: &Shared) -> Option<String> {
     Some(new_access)
 }
 
-/// 依次尝试:宠物账号令牌 → credentials.json(可续期)→ 各平台凭据存储
-/// → 宠物配置/环境变量(setup-token 的长期令牌,部分接口权限不足,兜底)
+/// 取令牌的原则:手里有现成有效的凭证,就绝不去令牌接口换新的。
+/// 三遍扫描:① 未过期的现成凭证(零网络)② 全过期了才续期(带退避)
+/// ③ 平台凭据库与长期令牌兜底
 fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
-    // 0) 面板一键连接存的令牌
-    if let Some(tok) = pet_token(shared) {
+    // —— 第一遍:现成、未过期,零网络请求 ——
+    // 面板一键连接存的令牌
+    if let Some(tok) = pet_token_peek(shared) {
         return Some(tok);
     }
-    // 1) WSL 发行版里的 credentials.json:CLI 天天在用、令牌总是新鲜。
-    //    只读不刷新——refresh token 是轮换的,代刷会把 WSL 里的 CLI 挤下线;
-    //    也因此只接受未过期的令牌
+    // 本机 ~/.claude/.credentials.json
+    if let Some(tok) = local_credentials_peek() {
+        return Some(tok);
+    }
+    // WSL 发行版里的 credentials.json:CLI 天天在用、令牌总是新鲜。
+    // 只读不刷新——refresh token 是轮换的,代刷会把 WSL 里的 CLI 挤下线;
+    // 也因此只接受未过期的令牌
     #[cfg(target_os = "windows")]
     if let Some(tok) = token_from_wsl_credentials() {
         return Some(tok);
     }
-    // 2) 本机 ~/.claude/.credentials.json,过期则用 refreshToken 续期
+
+    // —— 第二遍:全都过期了,才走续期(共用 15 分钟退避)——
+    if let Some(tok) = pet_token(shared) {
+        return Some(tok);
+    }
     if let Some(tok) = token_from_credentials_file(shared) {
         return Some(tok);
     }
-    // 3) Windows 凭据管理器
+
+    // —— 第三遍:兜底 ——
+    // Windows 凭据管理器
     #[cfg(target_os = "windows")]
     {
         for name in ["Claude Code-credentials", "Claude Code", "claude"] {
@@ -141,7 +153,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
             }
         }
     }
-    // 4) macOS Keychain
+    // macOS Keychain
     #[cfg(target_os = "macos")]
     {
         if let Ok(out) = std::process::Command::new("security")
@@ -156,7 +168,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
             }
         }
     }
-    // 5) 宠物配置 / 环境变量(长期令牌兜底)
+    // 宠物配置 / 环境变量(setup-token 的长期令牌)
     if !cfg_token.trim().is_empty() {
         return Some(cfg_token.trim().to_string());
     }
@@ -166,6 +178,39 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 面板令牌:未过期才给,不触发任何续期
+fn pet_token_peek(shared: &Shared) -> Option<String> {
+    let cfg = shared.cfg.lock().unwrap();
+    if cfg.oauth_access.is_empty() {
+        return None;
+    }
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    if cfg.oauth_expires_ms == 0 || now_ms < cfg.oauth_expires_ms - 120_000 {
+        Some(cfg.oauth_access.clone())
+    } else {
+        None
+    }
+}
+
+/// 本机 credentials.json:未过期才给,不触发任何续期
+fn local_credentials_peek() -> Option<String> {
+    let path = dirs::home_dir()?.join(".claude").join(".credentials.json");
+    let text = std::fs::read_to_string(&path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let oauth = &v["claudeAiOauth"];
+    let access = oauth["accessToken"].as_str().unwrap_or("");
+    if access.is_empty() {
+        return None;
+    }
+    let expires_at = oauth["expiresAt"].as_i64().unwrap_or(0);
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    if expires_at == 0 || now_ms < expires_at - 120_000 {
+        Some(access.to_string())
+    } else {
+        None
+    }
 }
 
 /// 读 WSL 各发行版的 credentials.json,只接受还有 2 分钟以上有效期的令牌
