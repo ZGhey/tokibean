@@ -291,7 +291,16 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
             .map(|t| now < t)
             .unwrap_or(false);
         let mut cache = shared.official.lock().unwrap();
-        if with_official && !backoff {
+        // 缓存里记录的重置时刻已过 = 窗口其实已经翻篇了
+        let window_over = |o: &OfficialUsage| {
+            o.five_reset_ts != 0 && chrono::Utc::now().timestamp() >= o.five_reset_ts
+        };
+        // 过了重置点就别死等 90 秒节拍,提前去问(最快 60 秒一次,限流退避照旧)
+        let stale_after_reset = cache
+            .as_ref()
+            .map(|(o, at)| window_over(o) && now.duration_since(*at) > Duration::from_secs(60))
+            .unwrap_or(false);
+        if (with_official || stale_after_reset) && !backoff {
             use crate::official::FetchOutcome;
             match crate::official::fetch(shared, &cfg.oauth_token) {
                 FetchOutcome::Ok(fresh) => {
@@ -324,8 +333,15 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
             }
         }
         if let Some((off, _)) = cache.as_ref() {
-            snap.block_pct = off.five_pct;
-            snap.block_reset_ts = off.five_reset_ts;
+            if window_over(off) {
+                // 重置时刻已过但还没拿到新窗口数据:按已重置归零,
+                // 绝不挂着上个窗口的旧 100% 让宠物装睡
+                snap.block_pct = 0.0;
+                snap.block_reset_ts = 0;
+            } else {
+                snap.block_pct = off.five_pct;
+                snap.block_reset_ts = off.five_reset_ts;
+            }
             snap.week_pct = off.week_pct;
             snap.basis = "official".into();
         }
