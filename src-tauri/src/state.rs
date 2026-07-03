@@ -368,8 +368,35 @@ pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
         return;
     }
     if pct >= 1.0 {
+        // 额度用尽:接口已拒绝请求,还挂着"工作中/等输入"的会话其实都被
+        // 打断了(limit 时不会有 Stop 事件)。别让宠物永远装思考——
+        // 全部转入空闲,睡觉状态自然接管,并补一条气泡说明
+        let interrupted = {
+            let mut core = shared.core.lock().unwrap();
+            let mut hit = false;
+            for s in core.sessions.values_mut() {
+                if s.base == Base::Working || s.base == Base::Attention {
+                    s.base = Base::Idle;
+                    s.done_until = None;
+                    hit = true;
+                }
+            }
+            if hit {
+                core.tool_note = None;
+                core.bubble = Some((
+                    "额度用完了,任务被打断,先睡会儿…".to_string(),
+                    Instant::now() + Duration::from_secs(120),
+                ));
+            }
+            hit
+        };
         if !shared.warned_limit.swap(true, Ordering::Relaxed) && notify_on {
-            notify(app, "额度到顶了", "当前 5 小时窗口的估算额度已用完,宠物先睡了");
+            let body = if interrupted {
+                "5 小时窗口额度已用完,运行中的任务被打断,宠物先睡了"
+            } else {
+                "5 小时窗口额度已用完,宠物先睡了"
+            };
+            notify(app, "额度到顶了", body);
         }
     } else if pct >= 0.8 {
         shared.warned_limit.store(false, Ordering::Relaxed);
