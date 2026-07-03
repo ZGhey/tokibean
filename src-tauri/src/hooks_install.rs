@@ -166,7 +166,7 @@ pub fn install(port: u16) -> Result<String, String> {
 
 /// 枚举 WSL 发行版里已存在的 .claude 目录(\\wsl$ 访问,同 usage.rs 的发现逻辑)
 #[cfg(target_os = "windows")]
-fn wsl_claude_dirs() -> Vec<std::path::PathBuf> {
+pub fn wsl_claude_dirs() -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut out = Vec::new();
     let mut cmd = std::process::Command::new("wsl.exe");

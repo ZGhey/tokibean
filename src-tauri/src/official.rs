@@ -119,11 +119,18 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
     if let Some(tok) = pet_token(shared) {
         return Some(tok);
     }
-    // 1) ~/.claude/.credentials.json,过期则用 refreshToken 续期
+    // 1) WSL 发行版里的 credentials.json:CLI 天天在用、令牌总是新鲜。
+    //    只读不刷新——refresh token 是轮换的,代刷会把 WSL 里的 CLI 挤下线;
+    //    也因此只接受未过期的令牌
+    #[cfg(target_os = "windows")]
+    if let Some(tok) = token_from_wsl_credentials() {
+        return Some(tok);
+    }
+    // 2) 本机 ~/.claude/.credentials.json,过期则用 refreshToken 续期
     if let Some(tok) = token_from_credentials_file(shared) {
         return Some(tok);
     }
-    // 2) Windows 凭据管理器
+    // 3) Windows 凭据管理器
     #[cfg(target_os = "windows")]
     {
         for name in ["Claude Code-credentials", "Claude Code", "claude"] {
@@ -134,7 +141,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
             }
         }
     }
-    // 3) macOS Keychain
+    // 4) macOS Keychain
     #[cfg(target_os = "macos")]
     {
         if let Ok(out) = std::process::Command::new("security")
@@ -149,13 +156,35 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
             }
         }
     }
-    // 4) 宠物配置 / 环境变量(长期令牌兜底)
+    // 5) 宠物配置 / 环境变量(长期令牌兜底)
     if !cfg_token.trim().is_empty() {
         return Some(cfg_token.trim().to_string());
     }
     if let Ok(tok) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
         if !tok.trim().is_empty() {
             return Some(tok.trim().to_string());
+        }
+    }
+    None
+}
+
+/// 读 WSL 各发行版的 credentials.json,只接受还有 2 分钟以上有效期的令牌
+#[cfg(target_os = "windows")]
+fn token_from_wsl_credentials() -> Option<String> {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    for dir in crate::hooks_install::wsl_claude_dirs() {
+        let Ok(text) = std::fs::read_to_string(dir.join(".credentials.json")) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let oauth = &v["claudeAiOauth"];
+        let access = oauth["accessToken"].as_str().unwrap_or("");
+        if access.is_empty() {
+            continue;
+        }
+        let expires_at = oauth["expiresAt"].as_i64().unwrap_or(0);
+        if expires_at == 0 || now_ms < expires_at - 120_000 {
+            return Some(access.to_string());
         }
     }
     None
