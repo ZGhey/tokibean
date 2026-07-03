@@ -1,6 +1,6 @@
-// 用量聚合:解析 Claude Code 写在本地的 JSONL 会话记录
-// 数据源:~/.claude/projects/<项目>/<会话>.jsonl
-// 每条 assistant 消息里带 message.usage(input/output/cache token 数)和 message.model
+// Usage aggregation: parse the JSONL session logs Claude Code writes locally
+// Data source: ~/.claude/projects/<project>/<session>.jsonl
+// Each assistant message carries message.usage (input/output/cache token counts) and message.model
 
 use chrono::{DateTime, Local, TimeZone, Utc};
 use serde::Serialize;
@@ -13,7 +13,7 @@ use crate::config::Config;
 
 #[derive(Clone)]
 pub struct UsageEvent {
-    pub ts: i64, // epoch 秒
+    pub ts: i64, // epoch seconds
     pub input: u64,
     pub output: u64,
     pub cache_w: u64,
@@ -27,12 +27,12 @@ impl UsageEvent {
     }
 }
 
-/// 增量扫描器:记住每个文件读到的偏移量,只解析新增部分
+/// Incremental scanner: remembers the read offset per file and only parses appended data
 pub struct Scanner {
     offsets: HashMap<PathBuf, u64>,
     seen: HashSet<String>,
     pub events: Vec<UsageEvent>,
-    /// WSL 发行版里的 projects 目录(Windows 侧经 \\wsl$ 访问),定期刷新
+    /// projects directories inside WSL distros (accessed from Windows via \\wsl$), refreshed periodically
     wsl_roots: Vec<PathBuf>,
     wsl_checked: Option<std::time::Instant>,
 }
@@ -48,7 +48,7 @@ impl Scanner {
         }
     }
 
-    /// 枚举 WSL 发行版里所有用户的 ~/.claude/projects,10 分钟刷新一次
+    /// Enumerate ~/.claude/projects for all users across WSL distros, refreshed every 10 minutes
     #[cfg(target_os = "windows")]
     fn wsl_projects_dirs(&mut self) -> Vec<PathBuf> {
         let now = std::time::Instant::now();
@@ -63,7 +63,7 @@ impl Scanner {
             crate::official::no_window(&mut cmd);
             if let Ok(out) = cmd.args(["-l", "-q"]).output() {
                 if out.status.success() {
-                    // wsl.exe 输出是 UTF-16LE
+                    // wsl.exe output is UTF-16LE
                     let text = if out.stdout.iter().take(8).any(|&b| b == 0) {
                         let units: Vec<u16> = out
                             .stdout
@@ -93,7 +93,7 @@ impl Scanner {
                         }
                     }
                     if !self.wsl_roots.is_empty() {
-                        println!("[claude-pet] WSL 用量目录:{} 个", self.wsl_roots.len());
+                        println!("[claude-pet] WSL usage directories: {}", self.wsl_roots.len());
                     }
                 }
             }
@@ -126,7 +126,7 @@ impl Scanner {
         for f in files {
             self.scan_file(&f);
         }
-        // 只保留最近 8 天,防止内存无限涨
+        // Keep only the last 8 days to prevent unbounded memory growth
         let cutoff = Utc::now().timestamp() - 8 * 24 * 3600;
         self.events.retain(|e| e.ts >= cutoff);
     }
@@ -135,7 +135,7 @@ impl Scanner {
         let Ok(meta) = fs::metadata(path) else { return };
         let len = meta.len();
         let offset = *self.offsets.get(path).unwrap_or(&0);
-        let start = if len < offset { 0 } else { offset }; // 文件被截断/重写则从头读
+        let start = if len < offset { 0 } else { offset }; // if the file was truncated/rewritten, read from the start
         if len == start {
             return;
         }
@@ -147,11 +147,11 @@ impl Scanner {
         if file.read_to_end(&mut buf).is_err() {
             return;
         }
-        // 最后一行可能还没写完(没有换行符),留到下次
+        // The last line may not be fully written yet (no newline); leave it for next time
         let complete_len = match buf.iter().rposition(|&b| b == b'\n') {
             Some(pos) => pos + 1,
             None => {
-                return; // 一整行都没写完
+                return; // not even one full line written
             }
         };
         let text = String::from_utf8_lossy(&buf[..complete_len]);
@@ -171,7 +171,7 @@ impl Scanner {
         if !usage.is_object() {
             return;
         }
-        // 去重:会话 resume 时同一条消息可能出现在多个文件里
+        // Dedup: on session resume the same message can appear in multiple files
         let msg_id = v["message"]["id"].as_str().unwrap_or("");
         let req_id = v["requestId"].as_str().unwrap_or("");
         if !msg_id.is_empty() || !req_id.is_empty() {
@@ -220,25 +220,25 @@ pub struct ModelUsage {
 #[derive(Serialize, Clone, Default)]
 pub struct UsageSnapshot {
     pub mode: String, // subscription | api
-    /// 当前 5 小时窗口
+    /// Current 5-hour window
     pub block_tokens: u64,
-    pub block_limit: u64, // 0 = 未知
+    pub block_limit: u64, // 0 = unknown
     pub block_pct: f64,
-    /// 百分比口径:manual = tokens/手动限额;auto = 加权成本/历史峰值窗口加权成本
+    /// Percentage basis: manual = tokens/manual limit; auto = weighted cost/historical peak-window weighted cost
     pub basis: String,
-    pub block_reset_ts: i64, // 窗口结束的 epoch 秒,0 = 当前无活动窗口
+    pub block_reset_ts: i64, // epoch seconds when the window ends, 0 = no active window currently
     pub max_block_tokens: u64,
-    /// 今天(本地时区)
+    /// Today (local timezone)
     pub today_tokens: u64,
     pub today_cost: f64,
-    /// 近 7 天(滚动,近似周限额口径,官方口径未公开)
+    /// Last 7 days (rolling, approximates the weekly-limit basis; the official basis is undisclosed)
     pub week_tokens: u64,
     pub week_cost: f64,
-    /// 周限额官方利用率(仅 basis=official 时有值),0.0-1.0
+    /// Official weekly-limit utilization (present only when basis=official), 0.0-1.0
     pub week_pct: Option<f64>,
     pub models: Vec<ModelUsage>,
     pub has_data: bool,
-    /// 近 7 天逐日 token(最旧→今天),画趋势图用
+    /// Per-day tokens over the last 7 days (oldest → today), for the trend chart
     pub daily_tokens: Vec<u64>,
 }
 
@@ -246,11 +246,11 @@ fn cost_of(e: &UsageEvent, cfg: &Config) -> f64 {
     let p = &cfg.prices;
     let m = e.model.to_lowercase();
     let (i, o) = if m.contains("opus") || m.contains("fable") || m.contains("mythos") {
-        (p.opus_in, p.opus_out) // fable/mythos 单价未公开,先按 opus 档估
+        (p.opus_in, p.opus_out) // fable/mythos pricing undisclosed; estimate at the opus tier for now
     } else if m.contains("haiku") {
         (p.haiku_in, p.haiku_out)
     } else {
-        (p.sonnet_in, p.sonnet_out) // sonnet 及未知模型按 sonnet 价
+        (p.sonnet_in, p.sonnet_out) // sonnet and unknown models use the sonnet price
     };
     (e.input as f64 * i
         + e.output as f64 * o
@@ -263,14 +263,14 @@ fn floor_to_hour(ts: i64) -> i64 {
     ts - ts.rem_euclid(3600)
 }
 
-/// 把事件按 5 小时窗口切块:窗口从首次活动所在的 UTC 整点开始,持续 5 小时;
-/// 超出窗口末尾的下一条事件开启新窗口。与 ccusage 的 blocks 口径一致。
+/// Split events into 5-hour window blocks: a window starts at the UTC hour of first activity and lasts 5 hours;
+/// the next event past the window's end starts a new window. Matches ccusage's blocks semantics.
 pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
     let mut evs: Vec<&UsageEvent> = events.iter().collect();
     evs.sort_by_key(|e| e.ts);
 
     let now = Utc::now().timestamp();
-    let mut blocks: Vec<(i64, i64, u64, f64)> = Vec::new(); // (start, end, tokens, 加权成本)
+    let mut blocks: Vec<(i64, i64, u64, f64)> = Vec::new(); // (start, end, tokens, weighted cost)
     for e in &evs {
         let fits = blocks.last().map(|b| e.ts < b.1).unwrap_or(false);
         if fits {
@@ -290,9 +290,9 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
         _ => (0, 0.0, 0),
     };
 
-    // 官方额度按模型单价加权(缓存读远便宜于普通输入),
-    // 用原始 token 数当口径会被海量缓存读撑大分母、严重低估占比。
-    // 手动设了 block_limit 就按 token 数算,否则按加权成本对比历史峰值窗口
+    // The official quota weights by per-model price (cache reads are far cheaper than normal input);
+    // using raw token counts as the basis would inflate the denominator with massive cache reads and badly underestimate the ratio.
+    // If block_limit was set manually, compute by token count; otherwise by weighted cost vs. the historical peak window
     let (pct, limit, basis) = if cfg.block_limit > 0 {
         (
             block_tokens as f64 / cfg.block_limit as f64,
@@ -304,7 +304,7 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
         (p, max_block, "auto")
     };
 
-    // 今天:本地时区零点起
+    // Today: from local-timezone midnight
     let local_midnight = Local::now()
         .date_naive()
         .and_hms_opt(0, 0, 0)
@@ -332,7 +332,7 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
             today_cost += cost_of(e, cfg);
             daily_tokens[6] += e.total();
         } else {
-            // 昨天=5,前天=4……
+            // yesterday=5, day before=4…
             let days_back = (local_midnight - e.ts - 1).div_euclid(86400);
             let idx = 5 - days_back;
             if (0..=5).contains(&idx) {
@@ -360,7 +360,7 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
         today_cost,
         week_tokens,
         week_cost,
-        week_pct: None, // 官方模式下由 state::refresh_usage 填充
+        week_pct: None, // filled by state::refresh_usage in official mode
         models,
         has_data: !evs.is_empty(),
         daily_tokens,

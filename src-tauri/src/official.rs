@@ -1,23 +1,23 @@
-// 官方用量:用本机 Claude Code 的 OAuth 凭据查 Anthropic 官方用量接口
-// 凭据只在本进程内存里使用,只发给 api.anthropic.com,不落盘不外传。
-// 拿不到凭据或接口失败时返回 None,上层回退到本地估算。
+// Official usage: query Anthropic's official usage API using the local Claude Code OAuth credentials.
+// Credentials are only used in this process's memory and only sent to api.anthropic.com, never written to disk or shared.
+// Returns None when no credential is available or the API fails, and the caller falls back to local estimation.
 
 use serde::Serialize;
 
 #[derive(Clone, Serialize, Default)]
 pub struct OfficialUsage {
-    /// 5 小时窗口利用率,0.0-1.0
+    /// 5-hour window utilization, 0.0-1.0
     pub five_pct: f64,
-    /// 窗口重置的 epoch 秒,0 = 未知
+    /// Window reset time in epoch seconds, 0 = unknown
     pub five_reset_ts: i64,
-    /// 周限额利用率,0.0-1.0
+    /// Weekly quota utilization, 0.0-1.0
     pub week_pct: Option<f64>,
 }
 
 use crate::login::OAUTH_CLIENT_ID;
 use crate::state::Shared;
 
-/// Windows 下不弹控制台黑框(GUI 应用里 curl/wsl 子进程会闪窗)
+/// Suppress the console window on Windows (curl/wsl subprocesses flash a window in a GUI app)
 #[cfg(target_os = "windows")]
 pub fn no_window(c: &mut std::process::Command) {
     use std::os::windows::process::CommandExt;
@@ -26,9 +26,9 @@ pub fn no_window(c: &mut std::process::Command) {
 #[cfg(not(target_os = "windows"))]
 pub fn no_window(_c: &mut std::process::Command) {}
 
-/// 令牌刷新退避:失败后 15 分钟内不再尝试。
-/// 两个刷新入口(宠物令牌 / credentials.json)共用一个退避,
-/// 保证同一时间窗内最多打一次令牌接口
+/// Token refresh backoff: after a failure, don't retry for 15 minutes.
+/// Both refresh entry points (pet token / credentials.json) share one backoff,
+/// ensuring the token endpoint is hit at most once per time window
 fn refresh_allowed(shared: &Shared) -> bool {
     shared
         .refresh_backoff
@@ -42,12 +42,12 @@ fn note_refresh(shared: &Shared, ok: bool) {
     *shared.refresh_backoff.lock().unwrap() = if ok {
         None
     } else {
-        eprintln!("[claude-pet] 令牌刷新失败,退避 15 分钟");
+        eprintln!("[claude-pet] token refresh failed, backing off for 15 minutes");
         Some(std::time::Instant::now() + std::time::Duration::from_secs(900))
     };
 }
 
-/// 走刷新流程换新令牌,返回 (access, refresh, expires_in_secs)
+/// Run the refresh flow to obtain a new token, returns (access, refresh, expires_in_secs)
 fn refresh_grant(refresh: &str) -> Option<(String, String, i64)> {
     use std::io::Write as _;
     use std::process::{Command, Stdio};
@@ -80,7 +80,7 @@ fn refresh_grant(refresh: &str) -> Option<(String, String, i64)> {
     ))
 }
 
-/// 面板"连接 Claude 账号"存的令牌,过期自动续期并写回配置
+/// Token saved by the panel's "connect Claude account"; auto-renews on expiry and writes back to config
 fn pet_token(shared: &Shared) -> Option<String> {
     let (access, refresh, expires_ms) = {
         let cfg = shared.cfg.lock().unwrap();
@@ -94,7 +94,7 @@ fn pet_token(shared: &Shared) -> Option<String> {
         return Some(access);
     }
     if refresh.is_empty() || !refresh_allowed(shared) {
-        return Some(access); // 拿旧令牌碰运气,退避期内绝不打令牌接口
+        return Some(access); // Try the old token and hope for the best; never hit the token endpoint during backoff
     }
     let Some((new_access, new_refresh, expires_in)) = refresh_grant(&refresh) else {
         note_refresh(shared, false);
@@ -108,41 +108,61 @@ fn pet_token(shared: &Shared) -> Option<String> {
         cfg.oauth_expires_ms = now_ms + expires_in * 1000;
         let _ = cfg.save();
     }
-    eprintln!("[claude-pet] 官方模式:账号令牌已续期");
+    eprintln!("[claude-pet] official mode: account token renewed");
     Some(new_access)
 }
 
-/// 取令牌的原则:手里有现成有效的凭证,就绝不去令牌接口换新的。
-/// 三遍扫描:① 未过期的现成凭证(零网络)② 全过期了才续期(带退避)
-/// ③ 平台凭据库与长期令牌兜底
+/// Token retrieval principle: if a valid credential is already at hand, never hit the token endpoint for a new one.
+/// Three-pass scan: (1) ready, unexpired credentials, including macOS Keychain (zero network); (2) refresh only when all expired (with backoff);
+/// (3) Windows Credential Manager and long-lived token fallback
 fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
-    // —— 第一遍:现成、未过期,零网络请求 ——
-    // 面板一键连接存的令牌
+    // -- Pass 1: ready and unexpired, zero network requests --
+    // Token saved by the panel's one-click connect
     if let Some(tok) = pet_token_peek(shared) {
         return Some(tok);
     }
-    // 本机 ~/.claude/.credentials.json
+    // Local ~/.claude/.credentials.json
     if let Some(tok) = local_credentials_peek() {
         return Some(tok);
     }
-    // WSL 发行版里的 credentials.json:CLI 天天在用、令牌总是新鲜。
-    // 只读不刷新——refresh token 是轮换的,代刷会把 WSL 里的 CLI 挤下线;
-    // 也因此只接受未过期的令牌
+    // macOS Keychain: on macOS the CLI actively maintains credentials in the Keychain,
+    // while ~/.claude/.credentials.json may be a stale vestigial file left by an old version that no one refreshes
+    // (once its refreshToken is rotated out, continuing to pass 2 only pointlessly hits the token endpoint).
+    // Read-only, no refresh, zero network requests, same peak cost as the local file above
+    #[cfg(target_os = "macos")]
+    if let Some(tok) = macos_keychain_peek() {
+        return Some(tok);
+    }
+    // credentials.json in WSL distros: the CLI uses it daily, so the token is always fresh.
+    // Read-only, no refresh -- the refresh token is rotated, and refreshing on its behalf would kick the WSL CLI offline;
+    // for that reason only unexpired tokens are accepted
     #[cfg(target_os = "windows")]
     if let Some(tok) = token_from_wsl_credentials() {
         return Some(tok);
     }
 
-    // —— 第二遍:全都过期了,才走续期(共用 15 分钟退避)——
+    // -- Pass 2: only refresh when everything has expired (shared 15-minute backoff) --
     if let Some(tok) = pet_token(shared) {
         return Some(tok);
     }
-    if let Some(tok) = token_from_credentials_file(shared) {
-        return Some(tok);
+    // macOS safeguard: the credential source of truth is the Keychain; ~/.claude/.credentials.json is
+    // often a stale file left by an old version (accessToken expired, refreshToken rotated out and dead).
+    // As long as this entry still exists in the Keychain (even if expired -- the CLI refreshes it on next use),
+    // never force-refresh with this dead file's invalid refreshToken: that would only rate-limit
+    // console.anthropic.com and get the panel's "connect Claude account" rejected too. Only Macs whose
+    // Keychain is genuinely empty keep the file-refresh fallback
+    #[cfg(target_os = "macos")]
+    let skip_file_refresh = macos_keychain_present();
+    #[cfg(not(target_os = "macos"))]
+    let skip_file_refresh = false;
+    if !skip_file_refresh {
+        if let Some(tok) = token_from_credentials_file(shared) {
+            return Some(tok);
+        }
     }
 
-    // —— 第三遍:兜底 ——
-    // Windows 凭据管理器
+    // -- Pass 3: fallback --
+    // Windows Credential Manager
     #[cfg(target_os = "windows")]
     {
         for name in ["Claude Code-credentials", "Claude Code", "claude"] {
@@ -153,22 +173,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
             }
         }
     }
-    // macOS Keychain
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(out) = std::process::Command::new("security")
-            .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
-            .output()
-        {
-            if out.status.success() {
-                let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if let Some(tok) = token_from_blob(text.as_bytes()) {
-                    return Some(tok);
-                }
-            }
-        }
-    }
-    // 宠物配置 / 环境变量(setup-token 的长期令牌)
+    // Pet config / environment variable (setup-token's long-lived token)
     if !cfg_token.trim().is_empty() {
         return Some(cfg_token.trim().to_string());
     }
@@ -180,7 +185,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
     None
 }
 
-/// 面板令牌:未过期才给,不触发任何续期
+/// Pet token: returned only if unexpired, triggers no renewal
 fn pet_token_peek(shared: &Shared) -> Option<String> {
     let cfg = shared.cfg.lock().unwrap();
     if cfg.oauth_access.is_empty() {
@@ -194,7 +199,7 @@ fn pet_token_peek(shared: &Shared) -> Option<String> {
     }
 }
 
-/// 本机 credentials.json:未过期才给,不触发任何续期
+/// Local credentials.json: returned only if unexpired, triggers no renewal
 fn local_credentials_peek() -> Option<String> {
     let path = dirs::home_dir()?.join(".claude").join(".credentials.json");
     let text = std::fs::read_to_string(&path).ok()?;
@@ -213,7 +218,32 @@ fn local_credentials_peek() -> Option<String> {
     }
 }
 
-/// 读 WSL 各发行版的 credentials.json,只接受还有 2 分钟以上有效期的令牌
+/// Credentials in the macOS Keychain: returned only if unexpired, triggers no renewal
+#[cfg(target_os = "macos")]
+fn macos_keychain_peek() -> Option<String> {
+    let out = std::process::Command::new("security")
+        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    token_from_blob(text.as_bytes())
+}
+
+/// Whether a Claude Code credential entry exists in the macOS Keychain (only checks presence, doesn't read the secret or check expiry).
+/// Used to determine "whether the Keychain is this machine's credential source of truth" -- no -w, reads metadata only
+#[cfg(target_os = "macos")]
+fn macos_keychain_present() -> bool {
+    std::process::Command::new("security")
+        .args(["find-generic-password", "-s", "Claude Code-credentials"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Read each WSL distro's credentials.json, accepting only tokens with more than 2 minutes of validity left
 #[cfg(target_os = "windows")]
 fn token_from_wsl_credentials() -> Option<String> {
     let now_ms = chrono::Utc::now().timestamp_millis();
@@ -235,8 +265,8 @@ fn token_from_wsl_credentials() -> Option<String> {
     None
 }
 
-/// 读 credentials.json;accessToken 快过期时用 refreshToken 续期并写回,
-/// 这样即使用户从不打开 CLI,凭据也一直有效
+/// Read credentials.json; when the accessToken is near expiry, renew via refreshToken and write back,
+/// so the credential stays valid even if the user never opens the CLI
 fn token_from_credentials_file(shared: &Shared) -> Option<String> {
     let path = dirs::home_dir()?.join(".claude").join(".credentials.json");
     let text = std::fs::read_to_string(&path).ok()?;
@@ -246,22 +276,22 @@ fn token_from_credentials_file(shared: &Shared) -> Option<String> {
     if access.is_empty() {
         return None;
     }
-    let expires_at = oauth["expiresAt"].as_i64().unwrap_or(0); // 毫秒
+    let expires_at = oauth["expiresAt"].as_i64().unwrap_or(0); // milliseconds
     let now_ms = chrono::Utc::now().timestamp_millis();
     if expires_at == 0 || now_ms < expires_at - 120_000 {
         return Some(access.to_string());
     }
-    // 过期(或 2 分钟内将过期):刷新
+    // Expired (or expiring within 2 minutes): refresh
     let refresh = oauth["refreshToken"].as_str().unwrap_or("");
     if refresh.is_empty() || !refresh_allowed(shared) {
-        return Some(access.to_string()); // 没法刷/退避期内,先用旧的碰运气
+        return Some(access.to_string()); // Can't refresh / in backoff, use the old one and hope for the best
     }
     let Some((new_access, new_refresh, expires_in)) = refresh_grant(refresh) else {
         note_refresh(shared, false);
         return Some(access.to_string());
     };
     note_refresh(shared, true);
-    // 写回,和 Claude Code 自己的格式保持一致
+    // Write back, keeping Claude Code's own format
     let obj = root.get_mut("claudeAiOauth")?.as_object_mut()?;
     obj.insert("accessToken".into(), serde_json::Value::String(new_access.clone()));
     obj.insert("refreshToken".into(), serde_json::Value::String(new_refresh));
@@ -270,13 +300,13 @@ fn token_from_credentials_file(shared: &Shared) -> Option<String> {
         serde_json::Value::Number((now_ms + expires_in * 1000).into()),
     );
     let _ = std::fs::write(&path, serde_json::to_string(&root).unwrap_or(text));
-    eprintln!("[claude-pet] 官方模式:credentials.json 令牌已续期");
+    eprintln!("[claude-pet] official mode: credentials.json token renewed");
     Some(new_access)
 }
 
-/// 凭据 blob 可能是整段 JSON({"claudeAiOauth":{...}}),也可能就是裸 token
+/// A credential blob may be a full JSON ({"claudeAiOauth":{...}}) or just a bare token
 fn token_from_blob(blob: &[u8]) -> Option<String> {
-    // UTF-8 优先,含 NUL 时按 UTF-16LE 解
+    // Prefer UTF-8; decode as UTF-16LE when NUL bytes are present
     let text = if blob.iter().take(64).any(|&b| b == 0) {
         let units: Vec<u16> = blob
             .chunks_exact(2)
@@ -288,8 +318,8 @@ fn token_from_blob(blob: &[u8]) -> Option<String> {
     };
     let text = text.trim().trim_matches('\0').to_string();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-        // 凭据库里也可能是过期货(mac Keychain / Win 凭据管理器):
-        // 带 expiresAt 就校验,过期的不要——它刷不了,用了也只是白吃 401
+        // The credential store may also hold expired goods (mac Keychain / Win Credential Manager):
+        // validate if expiresAt is present, reject expired ones -- they can't be refreshed and would just eat a 401
         let now_ms = chrono::Utc::now().timestamp_millis();
         let usable = |oauth: &serde_json::Value| -> Option<String> {
             let tok = oauth["accessToken"].as_str()?;
@@ -313,7 +343,7 @@ fn token_from_blob(blob: &[u8]) -> Option<String> {
     None
 }
 
-/// 查官方接口。token 通过 stdin 传给 curl(-H @-),避免出现在进程命令行里
+/// Query the official API. The token is passed to curl over stdin (-H @-) to keep it off the process command line
 pub enum FetchOutcome {
     Ok(OfficialUsage),
     RateLimited,
@@ -329,7 +359,7 @@ fn fetch_inner(shared: &Shared, cfg_token: &str) -> Option<FetchOutcome> {
     use std::process::{Command, Stdio};
 
     let Some(token) = get_token(shared, cfg_token) else {
-        eprintln!("[claude-pet] 官方模式:未找到 Claude Code 凭据");
+        eprintln!("[claude-pet] official mode: no Claude Code credential found");
         return None;
     };
     let mut cmd = Command::new("curl");
@@ -357,7 +387,7 @@ fn fetch_inner(shared: &Shared, cfg_token: &str) -> Option<FetchOutcome> {
         .ok()?;
     let out = child.wait_with_output().ok()?;
     if !out.status.success() {
-        eprintln!("[claude-pet] 官方模式:curl 失败({})", out.status);
+        eprintln!("[claude-pet] official mode: curl failed ({})", out.status);
         return None;
     }
     let body = String::from_utf8_lossy(&out.stdout);
@@ -365,17 +395,17 @@ fn fetch_inner(shared: &Shared, cfg_token: &str) -> Option<FetchOutcome> {
         return Some(FetchOutcome::Ok(u));
     }
     if body.contains("rate_limit") {
-        eprintln!("[claude-pet] 官方模式:被限流,退避 5 分钟");
+        eprintln!("[claude-pet] official mode: rate limited, backing off for 5 minutes");
         return Some(FetchOutcome::RateLimited);
     }
     let head: String = body.chars().take(200).collect();
-    eprintln!("[claude-pet] 官方模式:响应无法解析:{}", head);
+    eprintln!("[claude-pet] official mode: could not parse response: {}", head);
     None
 }
 
 fn parse(body: &str) -> Option<OfficialUsage> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
-    // 字段名做几种兼容:five_hour / 5h,utilization 可能是 0-100 或 0-1
+    // Handle several field-name variants: five_hour / 5h; utilization may be 0-100 or 0-1
     let five = v
         .get("five_hour")
         .or_else(|| v.get("5h"))
@@ -401,7 +431,7 @@ fn parse(body: &str) -> Option<OfficialUsage> {
 
 #[cfg(target_os = "windows")]
 mod windows_cred {
-    // 手写 CredReadW FFI,不引新依赖
+    // Hand-written CredReadW FFI, no new dependency
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
 

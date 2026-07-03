@@ -1,6 +1,6 @@
-// hook 事件接收器
-// Claude Code 的 hooks 会把事件 JSON POST 到 http://127.0.0.1:<port>/event
-// 事件 JSON 里带 hook_event_name 和 session_id,按会话独立维护状态
+// Hook event receiver
+// Claude Code's hooks POST event JSON to http://127.0.0.1:<port>/event
+// The event JSON carries hook_event_name and session_id; state is tracked per session
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tiny_http::{Method, Response, Server};
 
+use crate::i18n;
 use crate::state::{self, Base, Session, Shared};
 
 pub fn run(app: AppHandle, shared: Arc<Shared>) {
@@ -19,11 +20,11 @@ pub fn run(app: AppHandle, shared: Arc<Shared>) {
     let server = match Server::http((bind.as_str(), port)) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[claude-pet] hook 服务器启动失败(端口 {} 被占用?):{}", port, e);
+            eprintln!("[claude-pet] hook server failed to start (port {} in use?): {}", port, e);
             return;
         }
     };
-    println!("[claude-pet] hook 服务器已监听 {}:{}", bind, port);
+    println!("[claude-pet] hook server listening on {}:{}", bind, port);
 
     for mut request in server.incoming_requests() {
         let mut body = String::new();
@@ -46,24 +47,27 @@ fn snippet(s: &str, max_chars: usize) -> String {
     out
 }
 
-/// 工具名 → 面向人的短语
+/// Tool name -> a stable, language-neutral key.
+/// This is NOT localized: the pet renderers both match on these keys to pick the tool
+/// animation AND draw them as terminal-style status tags ("cmd"/"reading"/…), so they
+/// must stay in English regardless of the UI language.
 fn friendly_tool(t: &str) -> String {
     let known = match t {
-        "Bash" | "PowerShell" => "跑命令",
-        "Edit" | "Write" | "NotebookEdit" => "改代码",
-        "Read" => "读文件",
-        "Grep" | "Glob" => "搜代码",
-        "WebFetch" | "WebSearch" => "查资料",
-        "Task" | "Agent" => "派子任务",
-        "TodoWrite" | "TaskCreate" | "TaskUpdate" => "列计划",
+        "Bash" | "PowerShell" => "cmd",
+        "Edit" | "Write" | "NotebookEdit" => "coding",
+        "Read" => "reading",
+        "Grep" | "Glob" => "searching",
+        "WebFetch" | "WebSearch" => "browsing",
+        "Task" | "Agent" => "agents",
+        "TodoWrite" | "TaskCreate" | "TaskUpdate" => "planning",
         _ => "",
     };
     if !known.is_empty() {
         return known.to_string();
     }
-    // mcp__server__tool 只留最后一段
+    // mcp__server__tool -> keep only the last segment
     let short = t.rsplit("__").next().unwrap_or(t);
-    format!("用 {}", snippet(short, 12))
+    snippet(short, 12)
 }
 
 fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
@@ -82,7 +86,7 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
     };
     let sid = v["session_id"].as_str().unwrap_or("default").to_string();
 
-    // worked:本轮 Stop 前工作了多少秒,用于通知降噪和庆祝等级
+    // worked: how many seconds this turn worked before Stop, used for notification denoising and celebration level
     let mut worked: u64 = 0;
 
     {
@@ -92,7 +96,7 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
 
         if name == "SessionEnd" {
             core.sessions.remove(&sid);
-            // 注意:push_update 会再锁 core,必须先释放
+            // Note: push_update locks core again, so it must be released first
             drop(core);
             state::push_update(app, shared);
             return;
@@ -103,6 +107,7 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
             since: Instant::now(),
             done_until: None,
             last_seen: Instant::now(),
+            in_tool: false,
         });
         sess.last_seen = now;
 
@@ -113,11 +118,14 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                 }
                 sess.base = Base::Working;
                 sess.done_until = None;
+                sess.in_tool = false;
                 core.bubble = None;
                 core.tool_note = None;
             }
             "PostToolUse" => {
-                // 工具出错 → 短暂的恼火动画
+                // Tool finished, exit the "in tool call" state
+                sess.in_tool = false;
+                // Tool error -> a brief annoyed animation
                 let r = &v["tool_response"];
                 let is_err = r["is_error"].as_bool().unwrap_or(false)
                     || !r["error"].is_null()
@@ -127,15 +135,16 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                 }
             }
             "PreToolUse" => {
-                // 兜底:错过 UserPromptSubmit 也能感知到在干活
+                // Fallback: still detect work even if UserPromptSubmit was missed
                 if sess.base != Base::Working {
                     sess.base = Base::Working;
                     sess.since = now;
                 }
+                sess.in_tool = true;
                 if let Some(tool) = v["tool_name"].as_str() {
                     core.tool_note = Some((friendly_tool(tool), now + Duration::from_secs(10)));
                 }
-                // 后台任务发射:一颗小卫星入轨
+                // Background task launched: a little satellite enters orbit
                 if v["tool_input"]["run_in_background"].as_bool().unwrap_or(false) {
                     core.bg_tasks.push(now + Duration::from_secs(15 * 60));
                 }
@@ -146,27 +155,34 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                 }
                 let level = if worked >= 600 { 2 } else if worked >= 60 { 1 } else { 0 };
                 let dwell = if level == 2 { 20 } else { 12 };
-                // sess 的写入全部做完,再碰 core 的其他字段(借用检查)
+                // Finish all writes to sess before touching core's other fields (borrow checker)
                 sess.base = Base::Done;
                 sess.since = now;
                 sess.done_until = Some(now + Duration::from_secs(dwell));
+                sess.in_tool = false;
                 core.celebrate = core.celebrate.max(level);
                 let msg = v["last_assistant_message"].as_str().unwrap_or("");
                 let head = if worked >= 60 {
-                    format!("完工·{}分钟", worked / 60)
+                    if i18n::is_zh() {
+                        format!("完工·{}分钟", worked / 60)
+                    } else {
+                        format!("Done · {} min", worked / 60)
+                    }
                 } else {
-                    "完工".to_string()
+                    i18n::t("完工", "Done").to_string()
                 };
                 let text = if msg.is_empty() {
                     format!("{}!", head)
-                } else {
+                } else if i18n::is_zh() {
                     format!("{}:{}", head, snippet(msg, 40))
+                } else {
+                    format!("{}: {}", head, snippet(msg, 40))
                 };
                 core.bubble = Some((text, now + Duration::from_secs(dwell)));
                 core.tool_note = None;
-                // 刚烧完一波 token,请求尽快刷一次官方用量(事件驱动)
+                // Just burned a batch of tokens; request an official usage refresh soon (event-driven)
                 shared.official_want.store(true, Ordering::Relaxed);
-                // 今日完工计数(跨天清零)
+                // Today's completion count (reset across days)
                 let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                 if core.stops_day != today {
                     core.stops_day = today;
@@ -176,14 +192,15 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
             }
             "Notification" => {
                 if sess.base != Base::Attention {
-                    sess.since = now; // 焦急升级计时起点
+                    sess.since = now; // Start timing the anxiety escalation
                 }
                 sess.base = Base::Attention;
                 sess.done_until = None;
+                sess.in_tool = false;
                 core.tool_note = None;
                 let msg = v["message"].as_str().unwrap_or("");
                 let text = if msg.is_empty() {
-                    "在等你输入!".to_string()
+                    i18n::t("在等你输入!", "Waiting for you!").to_string()
                 } else {
                     snippet(msg, 40)
                 };
@@ -195,29 +212,32 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                     .values()
                     .any(|s| s.base == Base::Working || s.base == Base::Attention);
                 if !anyone_busy {
-                    core.bubble = Some(("开工!".to_string(), now + Duration::from_secs(6)));
+                    core.bubble =
+                        Some((i18n::t("开工!", "Let's go!").to_string(), now + Duration::from_secs(6)));
                 }
             }
-            _ => {} // SubagentStop 等先忽略
+            _ => {} // Ignore SubagentStop and others for now
         }
     }
 
-    // 系统通知:只对两个高价值事件发。
-    // Stop 通知降噪:干了不到 notify_min_secs 的小活不打扰
+    // System notifications: only fire for two high-value events.
+    // Stop notification denoising: don't interrupt for small tasks under notify_min_secs
     if notify_on {
         match name {
             "Stop" if worked >= notify_min => {
                 let msg = v["last_assistant_message"].as_str().unwrap_or("");
                 let body_text = if msg.is_empty() {
-                    "本轮任务已完成".to_string()
+                    i18n::t("本轮任务已完成", "This turn is done").to_string()
                 } else {
                     snippet(msg, 80)
                 };
-                state::notify(app, "Claude 完工了", &body_text);
+                state::notify(app, i18n::t("Claude 完工了", "Claude is done"), &body_text);
             }
             "Notification" => {
-                let msg = v["message"].as_str().unwrap_or("Claude 在等你输入或授权");
-                state::notify(app, "Claude 在等你", &snippet(msg, 80));
+                let msg = v["message"]
+                    .as_str()
+                    .unwrap_or(i18n::t("Claude 在等你输入或授权", "Claude is waiting for input or approval"));
+                state::notify(app, i18n::t("Claude 在等你", "Claude needs you"), &snippet(msg, 80));
             }
             _ => {}
         }

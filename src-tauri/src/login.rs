@@ -1,6 +1,8 @@
-// 应用内一键连接 Claude 账号:标准 OAuth PKCE 流程
-// 浏览器授权 → localhost 回调收 code → 换取 access/refresh token → 存宠物配置
-// 全程令牌只在本机,只与 claude.ai / console.anthropic.com 通信
+// In-app one-click "connect Claude account": standard OAuth PKCE flow.
+// Browser authorization -> localhost callback receives the code -> exchange for
+// access/refresh token -> store into the pet config.
+// Tokens stay on this machine the whole time, talking only to
+// claude.ai / console.anthropic.com.
 
 use base64::Engine;
 use sha2::Digest;
@@ -24,9 +26,10 @@ fn random_urlsafe() -> String {
 }
 
 fn open_browser(url: &str) {
-    // Windows 打 URL 的坑:裸 cmd start 会把 & 拆成命令,rundll32 也会截断。
-    // 唯一稳的是给 start 的 URL 加引号,而 Rust 对无空格参数不会自动加,
-    // 所以用 raw_arg 手工拼
+    // Windows URL-opening pitfall: a bare `cmd start` splits on `&` into separate
+    // commands, and rundll32 truncates too. The only reliable fix is to quote the
+    // URL passed to `start`; Rust won't auto-quote a space-free argument, so we
+    // hand-assemble it with raw_arg.
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -40,15 +43,21 @@ fn open_browser(url: &str) {
     let _ = Command::new("xdg-open").arg(url).spawn();
 }
 
-/// 阻塞执行完整登录流程,成功后把令牌写进配置。返回给面板显示的结果文案。
+/// Runs the full login flow synchronously; on success writes the tokens into the
+/// config. Returns the result text shown on the panel.
 pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
     let verifier = random_urlsafe();
     let challenge = b64url(&sha2::Sha256::digest(verifier.as_bytes()));
     let state = random_urlsafe();
 
-    // 先占住回调端口,再开浏览器
-    let server = tiny_http::Server::http(("127.0.0.1", CALLBACK_PORT))
-        .map_err(|e| format!("回调端口 {} 被占用:{}", CALLBACK_PORT, e))?;
+    // Claim the callback port first, then open the browser.
+    let server = tiny_http::Server::http(("127.0.0.1", CALLBACK_PORT)).map_err(|e| {
+        if crate::i18n::is_zh() {
+            format!("回调端口 {} 被占用:{}", CALLBACK_PORT, e)
+        } else {
+            format!("Callback port {} is in use: {}", CALLBACK_PORT, e)
+        }
+    })?;
 
     let url = format!(
         "https://claude.ai/oauth/authorize?code=true&client_id={}&response_type=code\
@@ -59,14 +68,14 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
     );
     open_browser(&url);
 
-    // 等回调(3 分钟超时)
+    // Wait for the callback (3-minute timeout).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
     let (code, got_state) = loop {
         let remain = deadline
             .checked_duration_since(std::time::Instant::now())
-            .ok_or("授权超时,请重试")?;
+            .ok_or_else(|| crate::i18n::t("授权超时,请重试", "Authorization timed out, please retry"))?;
         let Some(req) = server.recv_timeout(remain).map_err(|e| e.to_string())? else {
-            return Err("授权超时,请重试".into());
+            return Err(crate::i18n::t("授权超时,请重试", "Authorization timed out, please retry").into());
         };
         let url = req.url().to_string();
         if !url.starts_with("/callback") {
@@ -78,23 +87,28 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
                 .find_map(|p| p.strip_prefix(&format!("{}=", k)))
                 .map(|s| s.to_string())
         };
-        let ok_page = tiny_http::Response::from_data(
+        let ok_body = format!(
             "<meta charset=utf-8><body style='font-family:sans-serif;text-align:center;padding-top:20vh'>\
-             ✅ 已连接,可以关掉这个页面回到宠物了</body>".as_bytes().to_vec(),
-        )
-        .with_header("Content-Type: text/html; charset=utf-8".parse::<tiny_http::Header>().unwrap());
+             {}</body>",
+            crate::i18n::t(
+                "✅ 已连接,可以关掉这个页面回到宠物了",
+                "✅ Connected. You can close this page and go back to the pet."
+            )
+        );
+        let ok_page = tiny_http::Response::from_data(ok_body.into_bytes())
+            .with_header("Content-Type: text/html; charset=utf-8".parse::<tiny_http::Header>().unwrap());
         let code = get("code");
         let _ = req.respond(ok_page);
         match code {
             Some(c) => break (c, get("state").unwrap_or_default()),
-            None => return Err("授权被取消或回调缺少 code".into()),
+            None => return Err(crate::i18n::t("授权被取消或回调缺少 code", "Authorization was cancelled or the callback is missing the code").into()),
         }
     };
     if got_state != state {
-        return Err("state 校验失败,已中止".into());
+        return Err(crate::i18n::t("state 校验失败,已中止", "state validation failed, aborted").into());
     }
 
-    // 换令牌
+    // Exchange the code for tokens.
     let body = serde_json::json!({
         "grant_type": "authorization_code",
         "code": code,
@@ -125,21 +139,29 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let resp: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).map_err(|_| "令牌响应异常")?;
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout))
+            .map_err(|_| crate::i18n::t("令牌响应异常", "Malformed token response"))?;
     let access = match resp["access_token"].as_str() {
         Some(a) => a,
         None => {
             let s = resp.to_string();
-            // 限流最常见的失败,给出能照做的提示而不是甩 JSON
+            // Rate-limiting is the most common failure; give an actionable hint
+            // instead of dumping raw JSON.
             return Err(if s.contains("rate_limit") {
-                "接口暂时限流,过 5~10 分钟再点一次「连接」即可(hooks 不受影响)".into()
-            } else {
+                crate::i18n::t(
+                    "接口暂时限流,过 5~10 分钟再点一次「连接」即可(hooks 不受影响)",
+                    "The API is temporarily rate-limited. Wait 5-10 minutes and click \"Connect\" again (hooks are unaffected).",
+                )
+                .into()
+            } else if crate::i18n::is_zh() {
                 format!("换取令牌失败:{}", s.chars().take(120).collect::<String>())
+            } else {
+                format!("Token exchange failed: {}", s.chars().take(120).collect::<String>())
             });
         }
     };
 
-    // 写进配置
+    // Write into the config.
     {
         let mut cfg = shared.cfg.lock().unwrap();
         cfg.oauth_access = access.to_string();
@@ -148,5 +170,9 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
             + resp["expires_in"].as_i64().unwrap_or(3600) * 1000;
         cfg.save().map_err(|e| e.to_string())?;
     }
-    Ok("已连接 Claude 账号,官方用量已启用".into())
+    Ok(crate::i18n::t(
+        "已连接 Claude 账号,官方用量已启用",
+        "Claude account connected. Official usage is now enabled.",
+    )
+    .into())
 }

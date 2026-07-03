@@ -10,78 +10,82 @@
   <div id="panel" class="hidden">
     <div class="row head">
       <span id="mode-badge" class="badge">订阅</span>
-      <select id="mode-select" title="计费模式">
-        <option value="auto">自动检测</option>
-        <option value="subscription">订阅(Pro/Max)</option>
-        <option value="api">API 计费</option>
+      <select id="mode-select" data-i18n-title="billing_mode">
+        <option value="auto" data-i18n="mode_auto">自动检测</option>
+        <option value="subscription" data-i18n="mode_sub">订阅(Pro/Max)</option>
+        <option value="api" data-i18n="mode_api">API 计费</option>
       </select>
     </div>
 
     <div id="sub-block">
       <div class="label-row">
-        <span>5 小时窗口</span>
+        <span data-i18n="win5h">5 小时窗口</span>
         <span id="block-pct" class="num">--%</span>
       </div>
-      <div id="pixel-bar" aria-label="窗口用量"></div>
-      <div class="hint" id="block-reset">暂无活动窗口</div>
+      <div id="pixel-bar" data-i18n-aria="usage_aria"></div>
+      <div class="hint" id="block-reset" data-i18n="no_window">暂无活动窗口</div>
       <div class="label-row hidden" id="week-row">
-        <span>周额度</span>
+        <span data-i18n="week_quota">周额度</span>
         <span id="week-pct" class="num">--%</span>
       </div>
     </div>
 
     <div id="api-block" class="hidden">
-      <div class="label-row"><span>今日成本</span><span id="cost-today" class="num big">$0.00</span></div>
-      <div class="label-row"><span>近 7 天</span><span id="cost-week" class="num">$0.00</span></div>
+      <div class="label-row"><span data-i18n="cost_today">今日成本</span><span id="cost-today" class="num big">$0.00</span></div>
+      <div class="label-row"><span data-i18n="last7">近 7 天</span><span id="cost-week" class="num">$0.00</span></div>
     </div>
 
-    <div id="trend" title="近 7 天逐日用量"></div>
-    <div class="label-row"><span>今日 tokens</span><span id="tok-today" class="num">0</span></div>
-    <div class="label-row"><span>近 7 天</span><span id="tok-week" class="num">0</span></div>
-    <div class="label-row"><span>模型</span><span id="models" class="num small">--</span></div>
+    <div id="trend" data-i18n-title="trend_title"></div>
+    <div class="label-row"><span data-i18n="tok_today">今日 tokens</span><span id="tok-today" class="num">0</span></div>
+    <div class="label-row"><span data-i18n="last7">近 7 天</span><span id="tok-week" class="num">0</span></div>
+    <div class="label-row"><span data-i18n="models">模型</span><span id="models" class="num small">--</span></div>
 
     <div class="divider"></div>
 
     <div class="label-row">
-      <span>官方用量</span>
-      <span id="acct-status" class="num small">未连接</span>
+      <span data-i18n="official_usage">官方用量</span>
+      <span id="acct-status" class="num small" data-i18n="not_connected">未连接</span>
     </div>
-    <button id="connect-claude">连接 Claude 账号</button>
+    <button id="connect-claude" data-i18n="connect_claude">连接 Claude 账号</button>
     <div class="hint" id="acct-result"></div>
     <div class="label-row">
-      <span>系统通知</span>
+      <span data-i18n="notify">系统通知</span>
       <input type="checkbox" id="cfg-notify" checked />
     </div>
     <div class="label-row">
-      <span>不足此秒数不提醒</span>
+      <span data-i18n="min_secs">不足此秒数不提醒</span>
       <input type="number" id="cfg-minsecs" min="0" max="3600" value="30" />
     </div>
     <div class="label-row">
-      <span>提示音</span>
+      <span data-i18n="sound">提示音</span>
       <input type="checkbox" id="cfg-sound" />
     </div>
     <div class="label-row">
-      <span>皮肤</span>
+      <span data-i18n="boss_key">老板键</span>
+      <input type="text" id="cfg-bosskey" class="key-input" readonly data-i18n-title="boss_key_title" />
+    </div>
+    <div class="label-row">
+      <span data-i18n="skin">皮肤</span>
       <select id="cfg-skin">
-        <option value="classic">墩墩(默认)</option>
-        <option value="bean">豆豆</option>
-        <option value="tabby">橘猫·摸鱼</option>
-        <option value="tribute">私藏款(需本地文件)</option>
+        <option value="classic" data-i18n="skin_classic">墩墩(默认)</option>
+        <option value="bean" data-i18n="skin_bean">豆豆</option>
+        <option value="tabby" data-i18n="skin_tabby">橘猫·摸鱼</option>
+        <option value="tribute" data-i18n="skin_tribute">私藏款(需本地文件)</option>
       </select>
     </div>
 
     <div class="divider"></div>
 
     <div class="label-row">
-      <span>hook 事件</span>
-      <span id="hook-status" class="num small">还没收到</span>
+      <span data-i18n="hook_events">hook 事件</span>
+      <span id="hook-status" class="num small" data-i18n="not_received">还没收到</span>
     </div>
-    <button id="install-hooks">安装 Claude Code hooks</button>
+    <button id="install-hooks" data-i18n="install_hooks">安装 Claude Code hooks</button>
     <div class="hint" id="install-result"></div>
-    <div class="hint dim">监听 127.0.0.1:8737 · 点宠物收起面板</div>
+    <div class="hint dim" data-i18n="listen_hint">监听 127.0.0.1:8737 · 点宠物收起面板</div>
   </div>
 
-  <canvas id="pet" width="200" height="184" title="点我看用量"></canvas>
+  <canvas id="pet" width="200" height="184" data-i18n-title="pet_title"></canvas>
 
   <script src="pet.js"></script>
   <script src="main.js"></script>

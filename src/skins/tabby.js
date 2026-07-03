@@ -1,14 +1,14 @@
-// 皮肤:橘猫·摸鱼 —— 原创像素橘猫
-// 覆盖 window.PetRenderer,复用 window.PetKit。
+// Skin: Tabby the Slacker — an original pixel orange cat
+// Overrides window.PetRenderer, reusing window.PetKit.
 
 (function () {
   const K = window.PetKit;
   const { S, GY, px } = K;
-  const O = "#e8933a";  // 橘
-  const D = "#c9712a";  // 深橘条纹
-  const W = "#f7efe2";  // 白毛
-  const P = "#e8879a";  // 粉(耳内/鼻)
-  const E = "#2b241c";  // 眼
+  const O = "#e8933a";  // orange
+  const D = "#c9712a";  // dark orange stripes
+  const W = "#f7efe2";  // white fur
+  const P = "#e8879a";  // pink (inner ear / nose)
+  const E = "#2b241c";  // eyes
 
   function catEyes(ctx, cx, hy, mode) {
     const L = cx - 5, R = cx + 3;
@@ -33,35 +33,35 @@
     }
   }
 
-  // 坐姿猫。tail:-2..2 摆尾相位;返回头顶行
+  // Sitting cat. tail: -2..2 tail-wag phase; returns the head-top row
   function catSit(ctx, cx, o) {
     const hy = GY - 17 - (o.bounce || 0);
     const t2 = o.tail || 0;
-    // 尾巴(右侧翘起摆动)
+    // Tail (curls up on the right and sways)
     px(ctx, cx + 11, GY - 6, 2, 4, O);
     px(ctx, cx + 12 + t2, GY - 9, 2, 3, O);
     px(ctx, cx + 13 + t2 * 2, GY - 11, 2, 2, D);
-    // 后身
+    // Rear body
     px(ctx, cx - 9, GY - 9, 18, 9, O);
     px(ctx, cx - 9, GY - 1, 18, 1, D);
-    // 胸口白
+    // White chest
     px(ctx, cx - 3, GY - 7, 7, 7, W);
-    // 头
+    // Head
     px(ctx, cx - 8, hy, 16, 8, O);
-    // 耳朵
+    // Ears
     px(ctx, cx - 8, hy - 3, 4, 3, O);
     px(ctx, cx + 4, hy - 3, 4, 3, O);
     px(ctx, cx - 7, hy - 2, 2, 2, P);
     px(ctx, cx + 5, hy - 2, 2, 2, P);
-    // 额头条纹
+    // Forehead stripes
     px(ctx, cx - 5, hy, 2, 2, D);
     px(ctx, cx - 1, hy, 2, 2, D);
     px(ctx, cx + 3, hy, 2, 2, D);
     catEyes(ctx, cx, hy, o.eyes || "open");
-    // 白嘴 + 粉鼻
+    // White muzzle + pink nose
     px(ctx, cx - 2, hy + 5, 5, 3, W);
     px(ctx, cx, hy + 5, 1, 1, P);
-    // 前爪
+    // Front paws
     const tap = o.tap ? 1 : 0;
     px(ctx, cx - 5, GY - 2 + (o.typing ? tap : 0), 3, 2, O);
     px(ctx, cx + 2, GY - 2 + (o.typing ? 1 - tap : 0), 3, 2, O);
@@ -70,23 +70,23 @@
     return hy;
   }
 
-  // 蜷成一团睡
+  // Curled up asleep
   function catCurl(ctx, cx, t) {
     const br = Math.sin(t * 0.045) > 0 ? 1 : 0;
     px(ctx, cx - 10, GY - 8 - br, 20, 8 + br, O);
     px(ctx, cx - 8, GY - 10 - br, 16, 2, O);
     px(ctx, cx - 10, GY - 2, 20, 2, D);
-    // 头埋在身侧
+    // Head tucked against the side
     px(ctx, cx + 2, GY - 9 - br, 8, 5, O);
     px(ctx, cx + 3, GY - 11 - br, 2, 2, O);
     px(ctx, cx + 8, GY - 11 - br, 2, 2, O);
-    px(ctx, cx + 4, GY - 7 - br, 3, 1, E); // 闭眼
-    // 尾巴绕到身前
+    px(ctx, cx + 4, GY - 7 - br, 3, 1, E); // closed eye
+    // Tail wrapped around to the front
     px(ctx, cx - 12, GY - 5, 3, 3, D);
     return GY - 11;
   }
 
-  // 被拎起来:猫式瘫软,身体拉长四肢下垂
+  // Picked up: cat goes limp, body stretches out with limbs dangling
   function catDangle(ctx, cx, t) {
     const hy = GY - 32 + Math.round(Math.sin(t * 0.2));
     px(ctx, cx - 8, hy, 16, 7, O);
@@ -94,23 +94,18 @@
     px(ctx, cx + 4, hy - 3, 4, 3, O);
     catEyes(ctx, cx, hy, "wide");
     px(ctx, cx - 2, hy + 5, 5, 2, W);
-    // 拉长的身体
+    // Stretched-out body
     px(ctx, cx - 6, hy + 7, 12, 12, O);
     px(ctx, cx - 2, hy + 8, 5, 10, W);
-    // 下垂的四肢(微晃)
+    // Dangling limbs (slight sway)
     for (const [lx, ph] of [[-6, 0], [-2, 1.2], [2, 2.1], [5, 3.0]]) {
       const sway = Math.sin(t * 0.15 + ph) > 0 ? 1 : 0;
       px(ctx, cx + lx + sway, hy + 19, 2, 4, O);
     }
-    // 尾巴直直垂着
+    // Tail hanging straight down
     px(ctx, cx + 7, hy + 18, 2, 6, D);
     return hy;
   }
-
-  const LABEL = {
-    "跑命令": "cmd", "读文件": "reading", "改代码": "coding", "搜代码": "searching",
-    "查资料": "browsing", "派子任务": "agents", "列计划": "planning",
-  };
 
   let wx = 0, wTarget = 0, wMode = "stand", wUntil = -1;
   let patT = 0;
@@ -155,20 +150,21 @@
     } else if (state === "working") {
       const note = x.toolNote || "";
       const tired = (x.workSecs || 0) >= 600;
-      if (note === "跑命令") {
+      if (note === "cmd") {
         hy = catSit(ctx, cx, { eyes: "down", typing: true, tap: Math.floor(t / 5) % 2 === 0, tail: tailFast });
-        px(ctx, cx - 7, GY - 1, 14, 2, "#3a3630"); // 键盘
-      } else if (note === "读文件") {
+        px(ctx, cx - 7, GY - 1, 14, 2, "#3a3630"); // keyboard
+      } else if (note === "reading") {
         hy = catSit(ctx, cx, { eyes: "down", tail: tailSlow });
         px(ctx, cx - 6, GY - 3, 6, 4, "#e8e2d8");
         px(ctx, cx + 1, GY - 3, 6, 4, "#f0eadf");
         px(ctx, cx, GY - 4, 1, 5, "#8a8478");
       } else {
-        // 思考/其他工具:尾巴节拍器式快甩
+        // Thinking / other tools: tail whips fast like a metronome
         hy = catSit(ctx, cx, { eyes: tired ? "down" : "open", tail: tailFast });
       }
       if (!bubble) {
-        const label = LABEL[note] || (note ? note.replace(/^用 /, "") : "thinking");
+        // toolNote is already a stable English key ("cmd"/"reading"/…) or a short tool name
+        const label = note || "thinking";
         K.statusTag(ctx, canvas, cx, hy, label, t);
       }
       if (K.isNight()) px(ctx, cx - 3, hy - 1, 6, 1, "#f0d468");
@@ -177,9 +173,9 @@
       const waited = x.attnSecs || 0;
       if (waited >= 300) {
         hy = catCurl(ctx, cx, t);
-        catEyes(ctx, cx + 4, GY - 12, "open"); // 趴着但睁眼盯你
+        catEyes(ctx, cx + 4, GY - 12, "open"); // lying down but eyes open, staring at you
       } else {
-        // 举爪挠玻璃 + 蹦
+        // Raise a paw to scratch the glass + hop
         const hop = t % 50 < 8 ? 2 : 0;
         hy = catSit(ctx, cx, { eyes: waited >= 120 ? "wide" : "open", bounce: hop, tail: tailFast });
         const up = Math.floor(t / 10) % 2 === 0 ? 2 : 0;

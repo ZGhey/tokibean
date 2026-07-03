@@ -1,17 +1,17 @@
-// 生成 app-icon.png(1024×1024):拱门·墩墩官方图标
-// 零依赖:像素数据手工铺,PNG 用 Node 内置 zlib 编码
-// 用法:node gen-icon.js && npm run tauri -- icon app-icon.png
+// Generate app-icon.png (1024×1024): the official "拱门·墩墩" icon
+// Zero-dependency: pixel data laid out by hand, PNG encoded via Node's built-in zlib
+// Usage: node gen-icon.js && npm run tauri -- icon app-icon.png
 const zlib = require("zlib");
 const fs = require("fs");
 
 const SIZE = 1024;
-const rgba = Buffer.alloc(SIZE * SIZE * 4); // 默认全透明
+const rgba = Buffer.alloc(SIZE * SIZE * 4); // fully transparent by default
 
-// ---- 调色板 ----
-const BG = [0xf5, 0xee, 0xe1, 255];     // 米白圆角底
-const C = [0xf2, 0x82, 0x3e, 255];      // 柿子橙(与 pet.js 一致)
-const K = [0x26, 0x22, 0x1d, 255];      // 眼睛
-const BLUSH = [0xf0, 0xb8, 0xc4, 255];  // 腮红
+// ---- Palette ----
+const BG = [0xf5, 0xee, 0xe1, 255];     // off-white rounded background
+const C = [0xf2, 0x82, 0x3e, 255];      // persimmon orange (matches pet.js)
+const K = [0x26, 0x22, 0x1d, 255];      // eyes
+const BLUSH = [0xf0, 0xb8, 0xc4, 255];  // blush
 
 function setPx(x, y, c) {
   if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
@@ -19,11 +19,11 @@ function setPx(x, y, c) {
   rgba[i] = c[0]; rgba[i + 1] = c[1]; rgba[i + 2] = c[2]; rgba[i + 3] = c[3];
 }
 
-// ---- 圆角方形底(留 44px 外边距,圆角半径 200)----
+// ---- Rounded-square background (44px outer margin, corner radius 200) ----
 const M = 44, R = 200;
 for (let y = M; y < SIZE - M; y++) {
   for (let x = M; x < SIZE - M; x++) {
-    // 四角圆弧判定
+    // Corner-arc test
     const cx = Math.min(Math.max(x, M + R), SIZE - M - R);
     const cy = Math.min(Math.max(y, M + R), SIZE - M - R);
     const dx = x - cx, dy = y - cy;
@@ -31,22 +31,22 @@ for (let y = M; y < SIZE - M; y++) {
   }
 }
 
-// ---- 墩墩像素图(26×26 网格,搬运自 pet.js 的 body/eyes 几何)----
-// 网格原点:x = cx-13 → 0,y = y0-4 → 0
+// ---- Dundun pixel art (26×26 grid, ported from pet.js's body/eyes geometry) ----
+// Grid origin: x = cx-13 → 0, y = y0-4 → 0
 const grid = [];
 function cell(x, y, w, h, c) {
   for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) grid.push([i, j, c]);
 }
-cell(6, 0, 14, 2, C);   // 穹顶第二级 px(cx-7,  y0-4, 14, 2)
-cell(2, 2, 22, 2, C);   // 穹顶第一级 px(cx-11, y0-2, 22, 2)
-cell(0, 4, 26, 15, C);  // 身体       px(cx-13, y0,   26, 15)
-for (const lx of [2, 8, 16, 22]) cell(lx, 19, 2, 7, C); // 四条腿 y0+15 高 7
-cell(4, 8, 3, 3, K);    // 左眼 px(cx-9, y0+4, 3, 3)
-cell(15, 8, 3, 3, K);   // 右眼 px(cx+2, y0+4, 3, 3)
-cell(1, 15, 2, 1, BLUSH);  // 左腮红 px(cx-12, y0+11)
-cell(23, 15, 2, 1, BLUSH); // 右腮红 px(cx+10, y0+11)
+cell(6, 0, 14, 2, C);   // dome tier 2  px(cx-7,  y0-4, 14, 2)
+cell(2, 2, 22, 2, C);   // dome tier 1  px(cx-11, y0-2, 22, 2)
+cell(0, 4, 26, 15, C);  // body         px(cx-13, y0,   26, 15)
+for (const lx of [2, 8, 16, 22]) cell(lx, 19, 2, 7, C); // four legs, y0+15, height 7
+cell(4, 8, 3, 3, K);    // left eye  px(cx-9, y0+4, 3, 3)
+cell(15, 8, 3, 3, K);   // right eye px(cx+2, y0+4, 3, 3)
+cell(1, 15, 2, 1, BLUSH);  // left blush  px(cx-12, y0+11)
+cell(23, 15, 2, 1, BLUSH); // right blush px(cx+10, y0+11)
 
-// 26 格 × 30px = 780,居中
+// 26 cells × 30px = 780, centered
 const CELL = 30, OX = (SIZE - 26 * CELL) / 2, OY = (SIZE - 26 * CELL) / 2;
 for (const [gx, gy, c] of grid) {
   for (let j = 0; j < CELL; j++)
@@ -54,7 +54,7 @@ for (const [gx, gy, c] of grid) {
       setPx(OX + gx * CELL + i, OY + gy * CELL + j, c);
 }
 
-// ---- PNG 编码 ----
+// ---- PNG encoding ----
 function crc32(buf) {
   let c, table = crc32.table;
   if (!table) {
@@ -77,7 +77,7 @@ function chunk(type, data) {
 }
 const ihdr = Buffer.alloc(13);
 ihdr.writeUInt32BE(SIZE, 0); ihdr.writeUInt32BE(SIZE, 4);
-ihdr[8] = 8; ihdr[9] = 6; // 8bit RGBA
+ihdr[8] = 8; ihdr[9] = 6; // 8-bit RGBA
 const raw = Buffer.alloc(SIZE * (SIZE * 4 + 1));
 for (let y = 0; y < SIZE; y++) {
   raw[y * (SIZE * 4 + 1)] = 0; // filter: none

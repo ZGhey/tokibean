@@ -1,12 +1,87 @@
-// 前端主逻辑:订阅 Rust 推送的 pet-update,驱动宠物动画和面板
+// Frontend main logic: subscribe to the pet-update pushed by Rust, driving the pet animation and panel
 
 (function () {
   const { listen } = window.__TAURI__.event;
   const { invoke } = window.__TAURI__.core;
 
+  // ---------- i18n ----------
+  // System language decides the UI language: Chinese for zh*, English otherwise.
+  const LANG = (navigator.language || "en").toLowerCase().startsWith("zh") ? "zh" : "en";
+  const I18N = {
+    mode_auto: ["自动检测", "Auto-detect"],
+    mode_sub: ["订阅(Pro/Max)", "Subscription (Pro/Max)"],
+    mode_api: ["API 计费", "API billing"],
+    billing_mode: ["计费模式", "Billing mode"],
+    badge_sub: ["订阅", "Sub"],
+    win5h: ["5 小时窗口", "5-hour window"],
+    usage_aria: ["窗口用量", "Window usage"],
+    no_window: ["暂无活动窗口", "No active window"],
+    week_quota: ["周额度", "Weekly quota"],
+    cost_today: ["今日成本", "Today's cost"],
+    last7: ["近 7 天", "Last 7 days"],
+    trend_title: ["近 7 天逐日用量", "Daily usage, last 7 days"],
+    tok_today: ["今日 tokens", "Today's tokens"],
+    models: ["模型", "Models"],
+    official_usage: ["官方用量", "Official usage"],
+    not_connected: ["未连接", "Not connected"],
+    connect_claude: ["连接 Claude 账号", "Connect Claude account"],
+    notify: ["系统通知", "Notifications"],
+    min_secs: ["不足此秒数不提醒", "Skip notify under N sec"],
+    sound: ["提示音", "Sound"],
+    boss_key: ["老板键", "Boss key"],
+    boss_key_title: ["点一下再按下想设的快捷键;叫出/藏起宠物", "Click, then press a shortcut; shows/hides the pet"],
+    skin: ["皮肤", "Skin"],
+    skin_classic: ["墩墩(默认)", "Dundun (default)"],
+    skin_bean: ["豆豆", "Bean"],
+    skin_tabby: ["橘猫·摸鱼", "Tabby"],
+    skin_tribute: ["私藏款(需本地文件)", "Tribute (local file)"],
+    hook_events: ["hook 事件", "Hook events"],
+    not_received: ["还没收到", "Nothing yet"],
+    install_hooks: ["安装 Claude Code hooks", "Install Claude Code hooks"],
+    listen_hint: ["监听 127.0.0.1:8737 · 点宠物收起面板", "Listening on 127.0.0.1:8737 · click pet to collapse"],
+    pet_title: ["点我看用量", "Click me for usage"],
+    reset_done: ["已重置", "reset"],
+    official_data: ["官方数据", "official data"],
+    limit_manual: ["限额 {v}(手动设置)", "limit {v} (manual)"],
+    limit_auto: ["按加权用量·历史峰值窗口估算", "estimated vs. weighted peak window"],
+    limit_nodata: ["还没有足够数据估算限额", "not enough data to estimate the limit"],
+    reset_line: ["{hh}:{mm} 重置(剩 {left})· {note}", "resets {hh}:{mm} ({left} left) · {note}"],
+    no_window_official: ["当前无活动窗口 · 官方数据", "No active window · official data"],
+    no_window2: ["当前无活动窗口", "No active window"],
+    connected_official: ["已连接·官方数据", "Connected · official data"],
+    connected: ["已连接", "Connected"],
+    authorizing: ["浏览器授权中…", "Authorizing in browser…"],
+    no_claude_data: ["没找到 ~/.claude 数据", "No ~/.claude data found"],
+    hook_ok: ["已连通(最近:{ev})", "Connected (last: {ev})"],
+    sessions_n: [" · {n} 会话", " · {n} sessions"],
+    go_install: ["还没收到,去装 hooks →", "Nothing yet — install hooks →"],
+    update_hooks: ["更新 Claude Code hooks(有新事件)", "Update Claude Code hooks (new events)"],
+    connect_fail: ["连接失败:{e}", "Connect failed: {e}"],
+    installing: ["安装中…", "Installing…"],
+    fail: ["失败:{e}", "Failed: {e}"],
+    boss_updated: ["老板键已更新:{k}", "Boss key updated: {k}"],
+    boss_fail: ["老板键设置失败:{e}", "Failed to set boss key: {e}"],
+    press_shortcut: ["按下快捷键…", "Press a shortcut…"],
+  };
+  function t(key, vars) {
+    let s = (I18N[key] ? I18N[key][LANG === "zh" ? 0 : 1] : key) || key;
+    if (vars) for (const k in vars) s = s.split("{" + k + "}").join(vars[k]);
+    return s;
+  }
+  // Fill static markup marked with data-i18n / data-i18n-title / data-i18n-aria.
+  function applyStaticI18n() {
+    document.documentElement.lang = LANG === "zh" ? "zh-CN" : "en";
+    document.querySelectorAll("[data-i18n]").forEach((el) => (el.textContent = t(el.dataset.i18n)));
+    document.querySelectorAll("[data-i18n-title]").forEach((el) => (el.title = t(el.dataset.i18nTitle)));
+    document
+      .querySelectorAll("[data-i18n-aria]")
+      .forEach((el) => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
+  }
+  applyStaticI18n();
+
   const canvas = document.getElementById("pet");
   const ctx = canvas.getContext("2d");
-  // 高 DPI:后备缓冲按物理像素分辨率渲染,文字和像素边缘都更锐利
+  // High DPI: render the backing buffer at physical pixel resolution so text and pixel edges stay sharp
   {
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.width, h = canvas.height;
@@ -31,14 +106,14 @@
     tool_note: null,
     celebrate: 0,
   };
-  let t = 0;
+  let frame = 0;
   let dragging = false;
   let pat = false;
 
-  // ---------- 动画循环 ----------
+  // ---------- Animation loop ----------
   function loop() {
-    t++;
-    window.PetRenderer.draw(ctx, canvas, cur.state, cur.warn, cur.bubble, t, {
+    frame++;
+    window.PetRenderer.draw(ctx, canvas, cur.state, cur.warn, cur.bubble, frame, {
       sessions: cur.working_count,
       workSecs: cur.work_secs,
       attnSecs: cur.attention_secs,
@@ -53,7 +128,7 @@
   }
   loop();
 
-  // ---------- 数字格式化 ----------
+  // ---------- Number formatting ----------
   function fmtTokens(n) {
     if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
     if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
@@ -64,19 +139,19 @@
     return "$" + x.toFixed(2);
   }
   function fmtCountdown(sec) {
-    if (sec <= 0) return "已重置";
+    if (sec <= 0) return t("reset_done");
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
 
-  // ---------- 面板渲染 ----------
+  // ---------- Panel rendering ----------
   const el = (id) => document.getElementById(id);
 
-  // 像素进度条:10 格
+  // Pixel progress bar: 10 cells
   const bar = el("pixel-bar");
   for (let i = 0; i < 10; i++) bar.appendChild(document.createElement("span"));
-  // 7 天趋势柱
+  // 7-day trend bars
   const trend = el("trend");
   for (let i = 0; i < 7; i++) trend.appendChild(document.createElement("span"));
   trend.lastChild.className = "today";
@@ -86,13 +161,13 @@
     if (!u) return;
 
     const isSub = u.mode === "subscription";
-    el("mode-badge").textContent = isSub ? "订阅" : "API";
+    el("mode-badge").textContent = isSub ? t("badge_sub") : "API";
     el("sub-block").classList.toggle("hidden", !isSub);
     el("api-block").classList.toggle("hidden", isSub);
 
     if (isSub) {
       const pct = Math.min(u.block_pct, 1.5);
-      // 估算口径加 ≈ 提示仅供参考,别被"100%"吓到
+      // Prefix estimates with ≈ to signal they're approximate, so "100%" isn't alarming
       const approx = u.basis === "official" || u.basis === "manual" ? "" : "≈";
       el("block-pct").textContent =
         u.block_limit > 0 || u.basis === "official"
@@ -116,19 +191,24 @@
         const mm = String(resetAt.getMinutes()).padStart(2, "0");
         const limitNote =
           u.basis === "official"
-            ? "官方数据"
+            ? t("official_data")
             : u.block_limit > 0
             ? u.basis === "manual"
-              ? `限额 ${fmtTokens(u.block_limit)}(手动设置)`
-              : "按加权用量·历史峰值窗口估算"
-            : "还没有足够数据估算限额";
-        el("block-reset").textContent = `${hh}:${mm} 重置(剩 ${fmtCountdown(left)})· ${limitNote}`;
+              ? t("limit_manual", { v: fmtTokens(u.block_limit) })
+              : t("limit_auto")
+            : t("limit_nodata");
+        el("block-reset").textContent = t("reset_line", {
+          hh,
+          mm,
+          left: fmtCountdown(left),
+          note: limitNote,
+        });
       } else {
         el("block-reset").textContent =
-          u.basis === "official" ? "当前无活动窗口 · 官方数据" : "当前无活动窗口";
+          u.basis === "official" ? t("no_window_official") : t("no_window2");
       }
-      if (u.basis === "official") el("acct-status").textContent = "已连接·官方数据";
-      // 周限额(官方模式才有)
+      if (u.basis === "official") el("acct-status").textContent = t("connected_official");
+      // Weekly quota (only available in official mode)
       const hasWeek =
         u.basis === "official" && u.week_pct !== null && u.week_pct !== undefined;
       el("week-row").classList.toggle("hidden", !hasWeek);
@@ -138,7 +218,7 @@
       el("cost-week").textContent = fmtCost(u.week_cost);
     }
 
-    // 趋势柱高按 7 天里的最大值归一
+    // Normalize trend bar heights against the 7-day maximum
     if (u.daily_tokens && u.daily_tokens.length === 7) {
       const max = Math.max(...u.daily_tokens, 1);
       for (let i = 0; i < 7; i++) {
@@ -153,21 +233,21 @@
       ? u.models.map((m) => `${m.model} ${fmtTokens(m.tokens)}`).join(" · ")
       : u.has_data
       ? "--"
-      : "没找到 ~/.claude 数据";
+      : t("no_claude_data");
 
-    const sess = cur.session_count > 1 ? ` · ${cur.session_count} 会话` : "";
+    const sess = cur.session_count > 1 ? t("sessions_n", { n: cur.session_count }) : "";
     el("hook-status").textContent = cur.hooks_seen
-      ? `已连通(最近:${cur.last_event || "--"})${sess}`
-      : "还没收到,去装 hooks →";
-    // 已经在正常工作的东西不需要按钮;但缺新事件时要重新亮出来
+      ? t("hook_ok", { ev: cur.last_event || "--" }) + sess
+      : t("go_install");
+    // No button needed when things already work; but re-surface it when new events are missing
     el("install-hooks").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
     el("connect-claude").classList.toggle("hidden", u.basis === "official" || cfgConnected);
   }
 
-  // 倒计时每秒刷新
+  // Refresh the countdown every second
   setInterval(renderPanel, 1000);
 
-  // ---------- 事件订阅 ----------
+  // ---------- Event subscription ----------
   listen("pet-update", (e) => {
     cur = e.payload;
     onStateChange(cur.state);
@@ -178,15 +258,15 @@
     renderPanel();
   });
 
-  // ---------- 交互 ----------
-  // 面板比基础窗口高,展开时把窗口向上扩高,收起时还原,
-  // 避免面板顶部被窗口边界裁掉
+  // ---------- Interaction ----------
+  // The panel is taller than the base window: expand the window upward when open and restore on close,
+  // so the panel's top isn't clipped by the window edge
   const BASE_H = 340;
   const WIN_W = 240;
   let resizing = false;
 
-  // 把窗口调到目标高度,保持底边(宠物脚下)位置不动。
-  // 以当前实际高度为基准,不假设窗口处于 BASE_H,避免状态失步
+  // Resize the window to the target height while keeping the bottom edge (under the pet) fixed.
+  // Measure from the current actual height rather than assuming BASE_H, to avoid state drift
   async function setWindowHeight(targetH) {
     const win = window.__TAURI__.window.getCurrentWindow();
     const { LogicalSize, LogicalPosition } = window.__TAURI__.dpi;
@@ -204,14 +284,14 @@
     try {
       if (panel.classList.contains("hidden")) {
         panel.classList.remove("hidden");
-        // 用户要看数据了:请求后端刷一次官方用量(后端有防抖)
+        // The user wants to see data: ask the backend to refresh official usage once (it's debounced)
         invoke("panel_opened").catch(() => {});
-        // 面板顶到画布底的实际布局高度(自动含负 margin 的重叠量)
+        // Actual layout height from panel top to canvas bottom (auto-includes the negative-margin overlap)
         const need = Math.ceil(
           canvas.getBoundingClientRect().bottom - panel.getBoundingClientRect().top
         ) + 12;
         await setWindowHeight(Math.max(need, BASE_H));
-        armAutoHide(); // 打开后若鼠标一直不进面板,也会按时收起
+        armAutoHide(); // If the mouse never enters after opening, still collapse on schedule
       } else {
         await setWindowHeight(BASE_H);
         panel.classList.add("hidden");
@@ -221,7 +301,7 @@
     }
   }
 
-  // 面板自动渐隐:鼠标离开面板 1 秒后淡出收起,不用再点一次
+  // Panel auto fade-out: 1 second after the mouse leaves the panel, fade and collapse without another click
   let hideTimer = null;
   function armAutoHide() {
     clearTimeout(hideTimer);
@@ -231,7 +311,7 @@
         armAutoHide();
         return;
       }
-      // 正在操作下拉/输入框时不打扰
+      // Don't interrupt while a dropdown/input is in use
       if (panel.contains(document.activeElement) && document.activeElement !== document.body) {
         armAutoHide();
         return;
@@ -249,10 +329,10 @@
   });
   panel.addEventListener("mouseleave", armAutoHide);
 
-  // 按住宠物直接拖动窗口,原地松开才算点击(开关面板)。
-  // 移动超过阈值就交给系统原生拖拽,之后 mouseup 不会再回到页面。
-  // 原生拖拽期间页面收不到鼠标事件,靠窗口 Moved 事件维持 dragging 标记,
-  // 停止移动 350ms 后视为松手
+  // Hold the pet to drag the window; releasing in place counts as a click (toggle panel).
+  // Once movement passes the threshold, hand off to the OS native drag, after which mouseup won't return to the page.
+  // During native dragging the page receives no mouse events, so the window Moved event keeps the dragging flag alive;
+  // treat it as released 350ms after movement stops
   let downPos = null;
   let dragEndTimer = null;
   function armDragEnd() {
@@ -279,7 +359,7 @@
   });
   window.addEventListener("mouseup", () => {
     if (downPos) {
-      // 有气泡时点上半区(气泡所在) → 聚焦终端;点宠物本体 → 开关面板
+      // With a bubble, clicking the top half (where the bubble is) focuses the terminal; clicking the pet toggles the panel
       if (cur.bubble && downPos.canvasY !== undefined && downPos.canvasY < 108) {
         invoke("focus_terminal").catch((err) => {
           el("install-result").textContent = String(err);
@@ -291,9 +371,16 @@
     downPos = null;
   });
 
-  // 摸头:鼠标悬停在宠物身上(没按住时)
+  // Right-click the pet to hide it (bring it back with the boss key Cmd/Ctrl+Shift+B or the tray menu).
+  // Also disable the webview's default context menu so no ugly system menu pops up over the transparent pet
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+  canvas.addEventListener("contextmenu", () => {
+    window.__TAURI__.window.getCurrentWindow().hide();
+  });
+
+  // Head pat: mouse hovering over the pet (when not held down)
   canvas.addEventListener("mousemove", (e) => {
-    const gx = e.offsetX / 4, gy = e.offsetY / 4; // 网格坐标(像素放大倍数 4)
+    const gx = e.offsetX / 4, gy = e.offsetY / 4; // Grid coordinates (pixel scale factor 4)
     pat = !downPos && gx > 8 && gx < 42 && gy > 12 && gy < 36;
   });
   canvas.addEventListener("mouseleave", () => {
@@ -306,10 +393,11 @@
     });
   });
 
-  // ---------- 设置区 ----------
+  // ---------- Settings ----------
   let cfgConnected = false;
   let soundOn = false;
   let hooksIncomplete = false;
+  let bossKeyAccel = "CommandOrControl+Shift+B";
   invoke("get_config").then((c) => {
     el("cfg-notify").checked = c.notify;
     el("cfg-minsecs").value = c.notify_min_secs;
@@ -317,15 +405,19 @@
     soundOn = c.sound;
     cfgConnected = c.connected;
     hooksIncomplete = !!c.hooks_incomplete;
+    if (c.boss_key) {
+      bossKeyAccel = c.boss_key;
+      el("cfg-bosskey").value = prettyAccel(c.boss_key);
+    }
     el("cfg-skin").value = c.skin || "classic";
-    // 非默认皮肤:动态加载覆盖 PetRenderer
+    // Non-default skin: dynamically load it to override PetRenderer
     if (c.skin && c.skin !== "classic") {
       const s = document.createElement("script");
       s.src = "skins/" + encodeURIComponent(c.skin) + ".js";
       document.body.appendChild(s);
     }
-    if (hooksIncomplete) el("install-hooks").textContent = "更新 Claude Code hooks(有新事件)";
-    if (c.connected) el("acct-status").textContent = "已连接";
+    if (hooksIncomplete) el("install-hooks").textContent = t("update_hooks");
+    if (c.connected) el("acct-status").textContent = t("connected");
   });
   function saveCfg() {
     soundOn = el("cfg-sound").checked;
@@ -340,11 +432,81 @@
   el("cfg-minsecs").addEventListener("change", saveCfg);
   el("cfg-sound").addEventListener("change", saveCfg);
   el("cfg-skin").addEventListener("change", () => {
-    // 换肤后重载页面让新皮肤生效
+    // Reload the page after switching skins so the new one takes effect
     Promise.resolve(saveCfg()).then(() => location.reload());
   });
 
-  // ---------- 8-bit 提示音(WebAudio,无音频文件) ----------
+  // ---------- Boss key recording ----------
+  const IS_MAC = navigator.userAgent.includes("Mac");
+  // Render an accelerator string nicely: symbols on mac (⌘⇧B), text elsewhere (Ctrl+Shift+B)
+  function prettyAccel(a) {
+    const parts = a.split("+").map((t) => {
+      const u = t.trim().toLowerCase();
+      if (["commandorcontrol", "cmdorctrl"].includes(u)) return IS_MAC ? "⌘" : "Ctrl";
+      if (["super", "meta", "cmd", "command"].includes(u)) return IS_MAC ? "⌘" : "Win";
+      if (["control", "ctrl"].includes(u)) return IS_MAC ? "⌃" : "Ctrl";
+      if (["alt", "option"].includes(u)) return IS_MAC ? "⌥" : "Alt";
+      if (u === "shift") return IS_MAC ? "⇧" : "Shift";
+      return t.trim().toUpperCase();
+    });
+    return IS_MAC ? parts.join("") : parts.join("+");
+  }
+  // Build an accelerator string from a keyboard event (needs at least one modifier + one main key)
+  function accelFromEvent(e) {
+    const mods = [];
+    if (e.metaKey) mods.push("Super"); // Cmd on mac
+    if (e.ctrlKey) mods.push("Control");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+    let key = null;
+    if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
+    else if (/^Digit[0-9]$/.test(e.code)) key = e.code.slice(5);
+    else if (/^F[0-9]{1,2}$/.test(e.code)) key = e.code;
+    else if (e.code === "Space") key = "Space";
+    if (!key || mods.length === 0) return null;
+    return mods.concat(key).join("+");
+  }
+
+  const bossInput = el("cfg-bosskey");
+  let recording = false;
+  bossInput.addEventListener("focus", () => {
+    recording = true;
+    bossInput.classList.add("recording");
+    bossInput.value = t("press_shortcut");
+  });
+  bossInput.addEventListener("blur", () => {
+    if (recording) {
+      recording = false;
+      bossInput.classList.remove("recording");
+      bossInput.value = prettyAccel(bossKeyAccel);
+    }
+  });
+  bossInput.addEventListener("keydown", (e) => {
+    if (!recording) return;
+    e.preventDefault();
+    if (e.key === "Escape") {
+      bossInput.blur();
+      return;
+    }
+    const accel = accelFromEvent(e);
+    if (!accel) return; // Only modifiers pressed, keep waiting for the main key
+    invoke("set_boss_key", { accel })
+      .then(() => {
+        bossKeyAccel = accel;
+        el("install-result").textContent = t("boss_updated", { k: prettyAccel(accel) });
+      })
+      .catch((err) => {
+        el("install-result").textContent = t("boss_fail", { e: err });
+      })
+      .finally(() => {
+        recording = false;
+        bossInput.classList.remove("recording");
+        bossInput.value = prettyAccel(bossKeyAccel);
+        bossInput.blur();
+      });
+  });
+
+  // ---------- 8-bit sound effects (WebAudio, no audio files) ----------
   let audioCtx = null;
   function beep(seq) {
     if (!soundOn) return;
@@ -368,36 +530,36 @@
   let prevState = "idle";
   let prevOops = false;
   function onStateChange(s) {
-    if (cur.oops && !prevOops) beep([[196, 0.1], [147, 0.16]]); // 出错:低沉咕咚
+    if (cur.oops && !prevOops) beep([[196, 0.1], [147, 0.16]]); // Error: low thud
     prevOops = !!cur.oops;
     if (s === prevState) return;
-    if (s === "done") beep([[660, 0.09], [880, 0.14]]);       // 完工:叮-咚
-    else if (s === "attention") beep([[520, 0.07], [520, 0.07]]); // 等你:嗒嗒
+    if (s === "done") beep([[660, 0.09], [880, 0.14]]);       // Done: ding-dong
+    else if (s === "attention") beep([[520, 0.07], [520, 0.07]]); // Waiting for you: tap-tap
     prevState = s;
   }
 
   el("connect-claude").addEventListener("click", () => {
-    el("acct-status").textContent = "浏览器授权中…";
+    el("acct-status").textContent = t("authorizing");
     el("acct-result").textContent = "";
     invoke("connect_claude")
       .then((msg) => {
-        el("acct-status").textContent = "已连接";
+        el("acct-status").textContent = t("connected");
         el("acct-result").textContent = msg;
       })
       .catch((err) => {
-        // 连接的报错只出现在账号区,别串到下面 hook 区吓人
-        el("acct-status").textContent = "未连接";
-        el("acct-result").textContent = "连接失败:" + err;
+        // Keep connect errors in the account area — don't leak into the hook area below.
+        el("acct-status").textContent = t("not_connected");
+        el("acct-result").textContent = t("connect_fail", { e: err });
       });
   });
 
   el("install-hooks").addEventListener("click", () => {
-    el("install-result").textContent = "安装中…";
+    el("install-result").textContent = t("installing");
     invoke("install_hooks")
       .then((msg) => {
         el("install-result").textContent = msg;
         hooksIncomplete = false;
       })
-      .catch((err) => (el("install-result").textContent = "失败:" + err));
+      .catch((err) => (el("install-result").textContent = t("fail", { e: err })));
   });
 })();

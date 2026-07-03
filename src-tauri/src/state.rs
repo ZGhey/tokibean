@@ -1,7 +1,7 @@
-// 状态机:宠物的大脑
-// 多会话:每个 Claude Code 会话(session_id)独立记录状态,展示时聚合:
-//   任一会话 attention > 任一 working > 任一 done(短暂) > limit(额度耗尽) > idle
-// warn(窗口 >80%)是叠加标记,不占状态位
+// State machine: the pet's brain
+// Multi-session: each Claude Code session (session_id) tracks its own state; aggregated for display:
+//   any attention > any working > any done (transient) > limit (quota exhausted) > idle
+// warn (window >80%) is an overlay flag, not a state slot
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::config::Config;
+use crate::i18n;
 use crate::official::OfficialUsage;
 use crate::usage::{build_snapshot, Scanner, UsageSnapshot};
 
@@ -26,29 +27,32 @@ pub enum Base {
 
 pub struct Session {
     pub base: Base,
-    /// 进入当前 base 的时刻(Working 时用来算工时)
+    /// When the current base was entered (used to compute work time while Working)
     pub since: Instant,
     pub done_until: Option<Instant>,
     pub last_seen: Instant,
+    /// Whether a tool call is in progress (PreToolUse arrived, PostToolUse hasn't yet).
+    /// A long command (build/test) can go minutes without any hook; use this to tell "stuck" from "tool running slowly"
+    pub in_tool: bool,
 }
 
 pub struct Core {
     pub sessions: HashMap<String, Session>,
     pub bubble: Option<(String, Instant)>,
-    /// 正在使用的工具(PreToolUse),短暂展示
+    /// Tool currently in use (PreToolUse), shown briefly
     pub tool_note: Option<(String, Instant)>,
-    /// 完工庆祝等级:0 无 / 1 中活(>=1min) / 2 大活(>=10min)
+    /// Completion celebration level: 0 none / 1 medium job (>=1min) / 2 big job (>=10min)
     pub celebrate: u8,
     pub last_event: Option<String>,
-    /// 今日完工轮数(日期变更自动清零)+ 战报:全闲 10 分钟后弹一次
+    /// Today's completed rounds (auto-reset on date change) + daily report: pops once after 10 min fully idle
     pub stops_today: u32,
     pub stops_day: String,
     pub report_day: String,
     pub idle_since: Option<Instant>,
-    /// 工具报错的恼火表情持续到
+    /// The annoyed expression from a tool error lasts until this instant
     pub oops_until: Option<Instant>,
-    /// 后台任务(run_in_background)的到期时刻列表。
-    /// hooks 没有完成事件,按 15 分钟衰减,宁早勿错
+    /// Expiry instants of background tasks (run_in_background).
+    /// Hooks have no completion event, so decay over 15 minutes — better early than wrong
     pub bg_tasks: Vec<Instant>,
 }
 
@@ -60,20 +64,24 @@ pub struct Shared {
     pub hooks_seen: AtomicBool,
     pub warned_80: AtomicBool,
     pub warned_limit: AtomicBool,
-    /// 窗口位置持久化的节流:上次保存时刻 / 最近一次程序性改窗口尺寸的时刻
+    /// Throttling for window-position persistence: last save instant / instant of the last programmatic window resize
     pub last_pos_save: Mutex<Instant>,
     pub last_resize: Mutex<Instant>,
-    /// 官方用量缓存(值, 获取时刻)。接口失败时沿用旧值(最长 6 小时),
-    /// 绝不因为一次网络抖动就回退到会瞎报 100% 的本地估算
+    /// Official usage cache (value, fetch instant). On fetch failure, keep the old value (up to 6 hours);
+    /// never fall back to local estimation — which falsely reports 100% — just because of one network hiccup
     pub official: Mutex<Option<(OfficialUsage, Instant)>>,
-    /// 被限流后的退避截止时刻
+    /// The raw 5h utilization from the last official response (whether or not it was accepted).
+    /// Used to detect a "momentary fake 100% at the window-reset boundary": a real cap climbs through 85~99% first,
+    /// whereas after a reset the API's occasional one-shot 100% was 0~2% the tick before — use that to reject the fake 100%
+    pub official_last_raw: Mutex<Option<f64>>,
+    /// Backoff deadline after being rate-limited
     pub official_backoff: Mutex<Option<Instant>>,
-    /// 令牌刷新失败后的退避截止时刻。没有它,一份过期凭据会让每次轮询
-    /// 都去打令牌接口,把 console.anthropic.com 打到限流(实测翻过车)
+    /// Backoff deadline after a token refresh failure. Without it, an expired credential makes every poll
+    /// hit the token endpoint, rate-limiting console.anthropic.com (learned the hard way)
     pub refresh_backoff: Mutex<Option<Instant>>,
-    /// 事件驱动抓取请求:Stop 完工 / 面板打开时竖旗,尽快问一次官方用量
+    /// Event-driven fetch request: raise the flag on Stop completion / panel open to query official usage ASAP
     pub official_want: AtomicBool,
-    /// 上次尝试问官方接口的时刻(不论成败),60 秒防抖用
+    /// Instant of the last official-API attempt (regardless of success), for the 60-second debounce
     pub official_last_try: Mutex<Option<Instant>>,
 }
 
@@ -102,6 +110,7 @@ impl Shared {
             last_pos_save: Mutex::new(Instant::now()),
             last_resize: Mutex::new(Instant::now()),
             official: Mutex::new(None),
+            official_last_raw: Mutex::new(None),
             official_backoff: Mutex::new(None),
             refresh_backoff: Mutex::new(None),
             official_want: AtomicBool::new(false),
@@ -118,18 +127,18 @@ pub struct PetUpdate {
     pub last_event: Option<String>,
     pub hooks_seen: bool,
     pub usage: UsageSnapshot,
-    /// 正在干活的会话数(>1 时前端画 ×N 徽章)
+    /// Number of sessions currently working (frontend draws a ×N badge when >1)
     pub working_count: usize,
     pub session_count: usize,
-    /// 当前最长的一路工作已持续秒数
+    /// Seconds the longest current work run has lasted
     pub work_secs: u64,
-    /// 等你输入已持续秒数(最久的一路),前端做焦急升级
+    /// Seconds spent waiting for your input (the longest run); frontend escalates the "anxious" look
     pub attention_secs: u64,
     pub tool_note: Option<String>,
     pub celebrate: u8,
-    /// 工具刚报错(恼火中)
+    /// A tool just errored (currently annoyed)
     pub oops: bool,
-    /// 在轨的后台任务数
+    /// Number of in-flight background tasks
     pub bg_count: usize,
 }
 
@@ -158,8 +167,8 @@ pub fn build_update(shared: &Shared) -> PetUpdate {
         }
     }
 
-    // 只有官方数据或用户手动设的限额才有资格让宠物睡觉/报警;
-    // 自动估算(对比历史峰值)只做展示——它在刷新纪录时会假报 100%
+    // Only official data or a user-set manual limit may put the pet to sleep / raise alerts;
+    // the auto estimate (vs. historical peak) is display-only — it falsely reports 100% when setting a new record
     let pct_valid = snap.basis == "official" || snap.basis == "manual";
     let state = if attention {
         "attention"
@@ -168,7 +177,7 @@ pub fn build_update(shared: &Shared) -> PetUpdate {
     } else if done {
         "done"
     } else if snap.mode == "subscription" && pct_valid && snap.block_pct >= 1.0 {
-        "limit" // 额度到顶,睡觉——反正也干不了活
+        "limit" // Quota maxed out, go to sleep — can't do any work anyway
     } else {
         "idle"
     };
@@ -201,7 +210,7 @@ pub fn push_update(app: &AppHandle, shared: &Shared) {
     let _ = app.emit("pet-update", payload);
 }
 
-/// 处理 done / 气泡 / 工具提示的到期,清理僵尸会话。返回是否需要推送更新。
+/// Expire done / bubble / tool notes and clean up zombie sessions. Returns whether an update should be pushed.
 pub fn expire_transients(shared: &Shared) -> bool {
     let mut core = shared.core.lock().unwrap();
     let now = Instant::now();
@@ -213,8 +222,26 @@ pub fn expire_transients(shared: &Shared) -> bool {
             s.done_until = None;
             changed = true;
         }
+        // Stuck-session safety net: when Claude Code is killed by Ctrl+C it sends no Stop / SessionEnd,
+        // so the session stays Working forever (pretending to think). Add a "no hook activity" timeout to Working:
+        //   · not in a tool call (model thinking/generating), silent for over 5 min → treat as interrupted
+        //   · in a tool call (possibly a long command running) → relax to 25 min
+        // A live session refreshes last_seen via a hook every few seconds to minutes, so this won't misfire
+        if s.base == Base::Working {
+            let limit = if s.in_tool {
+                Duration::from_secs(25 * 60)
+            } else {
+                Duration::from_secs(5 * 60)
+            };
+            if now.duration_since(s.last_seen) > limit {
+                s.base = Base::Idle;
+                s.done_until = None;
+                s.in_tool = false;
+                changed = true;
+            }
+        }
     }
-    // 僵尸会话:超过 6 小时没有任何事件(比如 Claude Code 直接被杀,没发 SessionEnd)
+    // Zombie sessions: no events for over 6 hours (e.g. Claude Code was killed without sending SessionEnd)
     let before = core.sessions.len();
     core.sessions
         .retain(|_, s| now.duration_since(s.last_seen) < Duration::from_secs(6 * 3600));
@@ -245,7 +272,7 @@ pub fn expire_transients(shared: &Shared) -> bool {
         core.celebrate = 0;
         changed = true;
     }
-    // 今日战报:全员空闲满 10 分钟,当天弹一次
+    // Daily report: pops once per day after everyone has been idle for a full 10 minutes
     let all_idle = core
         .sessions
         .values()
@@ -265,16 +292,18 @@ pub fn expire_transients(shared: &Shared) -> bool {
             } else {
                 format!("{:.0}K", tokens as f64 / 1e3)
             };
-            core.bubble = Some((
-                format!("今日战报:完成 {} 轮,烧了 {} tokens", core.stops_today, fmt),
-                now + Duration::from_secs(20),
-            ));
+            let report = if i18n::is_zh() {
+                format!("今日战报:完成 {} 轮,烧了 {} tokens", core.stops_today, fmt)
+            } else {
+                format!("Today: {} runs, {} tokens burned", core.stops_today, fmt)
+            };
+            core.bubble = Some((report, now + Duration::from_secs(20)));
             changed = true;
         }
     } else {
         core.idle_since = None;
     }
-    // 有会话在干活或等输入时每秒都推,让前端的计时走起来
+    // While any session is working or waiting for input, push every second so the frontend's timers keep ticking
     changed |= core
         .sessions
         .values()
@@ -290,13 +319,13 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
         build_snapshot(&scanner.events, &cfg)
     };
 
-    // 订阅模式:优先用官方接口的真实百分比,但抓取是事件驱动的——
-    // 百分比只有干活才会涨,完全空闲时一次都不问:
-    //   · with_official(启动/切模式/连接账号)→ 直接问
-    //   · Stop 完工 / 面板打开竖了 official_want 旗 → 问(60s 防抖)
-    //   · 干活中且缓存超 5 分钟旧(长任务持续在烧)→ 问(60s 防抖)
-    //   · 重置点已过但数据还是旧窗口的 → 问(60s 防抖)
-    // 失败(限流/网络)时沿用最长 6 小时的旧值,再不行才回退本地估算
+    // Subscription mode: prefer the API's real percentage, but fetching is event-driven —
+    // the percentage only rises while working, so we never ask when fully idle:
+    //   · with_official (startup / mode switch / account connect) → ask directly
+    //   · Stop completion / panel open raised the official_want flag → ask (60s debounce)
+    //   · working and cache older than 5 min (long task still burning) → ask (60s debounce)
+    //   · reset point passed but data is still the old window's → ask (60s debounce)
+    // On failure (rate limit / network), keep the old value up to 6 hours; only then fall back to local estimation
     if snap.mode == "subscription" {
         let now = Instant::now();
         let any_working = shared
@@ -314,7 +343,7 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
             .unwrap_or(false);
         let asap = shared.official_want.swap(false, Ordering::Relaxed);
         let mut cache = shared.official.lock().unwrap();
-        // 缓存里记录的重置时刻已过 = 窗口其实已经翻篇了
+        // The reset instant recorded in the cache has passed = the window has actually rolled over
         let window_over = |o: &OfficialUsage| {
             o.five_reset_ts != 0 && chrono::Utc::now().timestamp() >= o.five_reset_ts
         };
@@ -338,21 +367,36 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
             use crate::official::FetchOutcome;
             match crate::official::fetch(shared, &cfg.oauth_token) {
                 FetchOutcome::Ok(fresh) => {
-                    let changed = cache
-                        .as_ref()
-                        .map(|(old, _)| (old.five_pct - fresh.five_pct).abs() > 0.005)
-                        .unwrap_or(true);
-                    if changed {
-                        println!(
-                            "[claude-pet] 官方用量:5h {:.0}%,7d {}",
-                            fresh.five_pct * 100.0,
-                            fresh
-                                .week_pct
-                                .map(|p| format!("{:.0}%", p * 100.0))
-                                .unwrap_or_else(|| "--".into())
+                    // Fake-100% debounce: a real cap climbs through 85~99% first, whereas at the window-reset
+                    // boundary the API's occasional one-shot 100% was 0~2% the tick before. If it jumps to ≥100%
+                    // but the previous raw reading was still low (<85%), treat it as a suspicious glitch and
+                    // discard this reading (requiring the next tick to confirm); record the raw reading — two
+                    // consecutive high values get accepted, so a real limit is never held out at the door forever
+                    let prev_raw = shared.official_last_raw.lock().unwrap().unwrap_or(0.0);
+                    *shared.official_last_raw.lock().unwrap() = Some(fresh.five_pct);
+                    let suspect = fresh.five_pct >= 1.0 && prev_raw < 0.85;
+                    if suspect {
+                        eprintln!(
+                            "[claude-pet] Official usage: ignoring a suspected 100% spike (previous tick {:.0}%), waiting for next tick to confirm",
+                            prev_raw * 100.0
                         );
+                    } else {
+                        let changed = cache
+                            .as_ref()
+                            .map(|(old, _)| (old.five_pct - fresh.five_pct).abs() > 0.005)
+                            .unwrap_or(true);
+                        if changed {
+                            println!(
+                                "[claude-pet] Official usage: 5h {:.0}%, 7d {}",
+                                fresh.five_pct * 100.0,
+                                fresh
+                                    .week_pct
+                                    .map(|p| format!("{:.0}%", p * 100.0))
+                                    .unwrap_or_else(|| "--".into())
+                            );
+                        }
+                        *cache = Some((fresh, now));
                     }
-                    *cache = Some((fresh, now));
                 }
                 FetchOutcome::RateLimited => {
                     *shared.official_backoff.lock().unwrap() =
@@ -368,8 +412,8 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
         }
         if let Some((off, _)) = cache.as_ref() {
             if window_over(off) {
-                // 重置时刻已过但还没拿到新窗口数据:按已重置归零,
-                // 绝不挂着上个窗口的旧 100% 让宠物装睡
+                // Reset instant has passed but no new-window data yet: zero it out as reset,
+                // never hold the previous window's stale 100% and let the pet fake-sleep
                 snap.block_pct = 0.0;
                 snap.block_reset_ts = 0;
             } else {
@@ -384,7 +428,7 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
     *shared.snapshot.lock().unwrap() = snap;
 }
 
-/// 用量越线通知(80% / 100%),只提醒一次,回落后重置
+/// Usage threshold notifications (80% / 100%): notify only once, reset after it drops back
 pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
     let (notify_on, mode, pct, limit, basis) = {
         let cfg = shared.cfg.lock().unwrap();
@@ -402,9 +446,9 @@ pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
         return;
     }
     if pct >= 1.0 {
-        // 额度用尽:接口已拒绝请求,还挂着"工作中/等输入"的会话其实都被
-        // 打断了(limit 时不会有 Stop 事件)。别让宠物永远装思考——
-        // 全部转入空闲,睡觉状态自然接管,并补一条气泡说明
+        // Quota exhausted: the API is already rejecting requests, so any session still marked
+        // "working / waiting for input" was actually interrupted (no Stop event arrives at limit).
+        // Don't let the pet pretend to think forever — move all to idle, let the sleep state take over, and add an explanatory bubble
         let interrupted = {
             let mut core = shared.core.lock().unwrap();
             let mut hit = false;
@@ -418,7 +462,11 @@ pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
             if hit {
                 core.tool_note = None;
                 core.bubble = Some((
-                    "额度用完了,任务被打断,先睡会儿…".to_string(),
+                    i18n::t(
+                        "额度用完了,任务被打断,先睡会儿…",
+                        "Quota's used up — tasks interrupted, taking a nap…",
+                    )
+                    .to_string(),
                     Instant::now() + Duration::from_secs(120),
                 ));
             }
@@ -426,16 +474,26 @@ pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
         };
         if !shared.warned_limit.swap(true, Ordering::Relaxed) && notify_on {
             let body = if interrupted {
-                "5 小时窗口额度已用完,运行中的任务被打断,宠物先睡了"
+                i18n::t(
+                    "5 小时窗口额度已用完,运行中的任务被打断,宠物先睡了",
+                    "5-hour window quota is used up — running tasks were interrupted, the pet is napping",
+                )
             } else {
-                "5 小时窗口额度已用完,宠物先睡了"
+                i18n::t(
+                    "5 小时窗口额度已用完,宠物先睡了",
+                    "5-hour window quota is used up — the pet is napping",
+                )
             };
-            notify(app, "额度到顶了", body);
+            notify(app, i18n::t("额度到顶了", "Quota reached"), body);
         }
     } else if pct >= 0.8 {
         shared.warned_limit.store(false, Ordering::Relaxed);
         if !shared.warned_80.swap(true, Ordering::Relaxed) && notify_on {
-            notify(app, "额度快到了", "当前 5 小时窗口用量已超过 80%");
+            notify(
+                app,
+                i18n::t("额度快到了", "Quota almost reached"),
+                i18n::t("当前 5 小时窗口用量已超过 80%", "Current 5-hour window usage is over 80%"),
+            );
         }
     } else {
         shared.warned_80.store(false, Ordering::Relaxed);

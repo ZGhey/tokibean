@@ -1,129 +1,132 @@
-# Tokibean 码豆 🫘
+# Tokibean 🫘
 
-> 一只吃 token 的桌面小豆子 —— works with Claude Code。
-> 本项目为社区作品,与 Anthropic 无关联、未获其背书;"Claude" 仅作兼容性事实描述。
-> 默认角色「拱门·墩墩」为原创形象,项目所有内置皮肤均可自由分发。
+**English** | [简体中文](README.zh-CN.md)
 
-住在桌面上的 Claude Code 状态监视宠物。不用喂食、不用养成——它只做三件事:
+> A little desktop bean that eats tokens — works with Claude Code.
+> A community project, not affiliated with or endorsed by Anthropic; "Claude" is used only as a factual compatibility reference.
+> The default mascot "Archway Dundun" (拱门·墩墩) is an original character, and every built-in skin is free to redistribute.
 
-1. **知道 Claude 在不在干活**:通过 Claude Code hooks 实时接收事件,工作中会思考冒点点,完工时开心弹跳并发系统通知,等你输入/授权时会挥手提醒。
-2. **实时 token 用量**:解析 `~/.claude/projects/` 下的本地 JSONL 记录。订阅用户(Pro/Max)看 5 小时窗口百分比和重置倒计时;API 用户看今日/近 7 天美元成本。
-3. **额度状态可视化**:窗口用量超 80% 头顶冒感叹号,额度耗尽直接躺平睡觉(反正也干不了活)。
+A desktop pet that lives on your screen and watches Claude Code. No feeding, no leveling — it does just three things:
 
-跨平台:Windows / macOS / Linux(Tauri 2)。
+1. **Knows whether Claude is working**: receives Claude Code hook events in real time — puffs thinking dots while working, bounces happily and fires a system notification when done, waves at you when it needs input or approval.
+2. **Live token usage**: parses the local JSONL logs under `~/.claude/projects/`. Subscription users (Pro/Max) see the 5-hour window percentage and reset countdown; API users see today's / last-7-days dollar cost.
+3. **Quota state at a glance**: an exclamation mark pops over its head past 80% window usage, and it flops down to sleep once the quota is spent (nothing to do anyway).
 
-## 状态图鉴
+Cross-platform: Windows / macOS / Linux (Tauri 2).
 
-每种状态一套专属动画,瞟一眼就知道 Claude 干到哪一步了:
+## State gallery
 
-| 思考中 | 跑命令 | 改代码 |
+Every state has its own animation, so a glance tells you where Claude is:
+
+| Thinking | Running a command | Editing code |
 | :---: | :---: | :---: |
 | ![thinking](docs/gifs/thinking.gif) | ![cmd](docs/gifs/cmd.gif) | ![coding](docs/gifs/coding.gif) |
-| 爱因斯坦发型+八字胡,叼烟斗背手踱步 | QWER 键帽随小手敲击随机亮起 | 想通了先亮灯泡,再戴工程帽抡镐 |
+| Einstein hair + mustache, pacing with a pipe | QWER keycaps light up as the little hands type | Lightbulb first, then a hard hat and pickaxe |
 
-| 读文件 | 搜代码 | 查资料 |
+| Reading files | Searching code | Browsing the web |
 | :---: | :---: | :---: |
 | ![reading](docs/gifs/reading.gif) | ![searching](docs/gifs/searching.gif) | ![browsing](docs/gifs/browsing.gif) |
-| 博士帽+单片眼镜,流苏轻摆慢翻书 | 举放大镜左右扫地 | 身旁小地球自转 |
+| Scholar's cap + monocle, tassel swaying, turning pages | Sweeping left and right with a magnifying glass | A tiny globe spinning beside it |
 
-| 派子任务 | 列计划 | 完工庆祝 |
+| Spawning subtasks | Planning | Celebrating a finish |
 | :---: | :---: | :---: |
 | ![agents](docs/gifs/agents.gif) | ![planning](docs/gifs/planning.gif) | ![done](docs/gifs/done.gif) |
-| 两侧冒出迷你分身同蹦 | 写字板任务逐条打勾 | 弹跳撒彩纸,气泡报耗时与摘要 |
+| Mini clones pop out on both sides, hopping in sync | Ticking off tasks on a clipboard | Bounces and throws confetti; bubble reports duration + summary |
 
-| 等你输入 | 出错了 | 被拎起来 |
+| Waiting for you | Something errored | Being picked up |
 | :---: | :---: | :---: |
 | ![attention](docs/gifs/attention.gif) | ![oops](docs/gifs/oops.gif) | ![drag](docs/gifs/drag.gif) |
-| 挥手蹦跳,久等升级喇叭/叹气 | 红色恼火纹+气得直晃 | 悬空蹬腿,松手落回 |
+| Waves and hops; if you're slow, escalates to a horn/sigh | Angry red marks, shaking with frustration | Dangles and kicks in mid-air, drops back on release |
 
-| 发呆摸鱼 | 后台任务在跑 | |
+| Idle / slacking | Background task running | |
 | :---: | :---: | :---: |
 | ![idle](docs/gifs/idle.gif) | ![satellite](docs/gifs/satellite.gif) | |
-| 溜达/打盹/伸懒腰/追蝴蝶 | 小卫星绕头顶巡航 | |
+| Strolls / naps / stretches / chases a butterfly | A little satellite orbits its head | |
 
-另有深夜矿灯、摸头冒心、额度耗尽躺平睡觉等隐藏戏份,装上自己发现。
+There are also hidden bits — a late-night miner's lamp, hearts when you pat it, flopping down to sleep when the quota runs out. Install it and find them yourself.
 
-## 运行要求
+## Requirements
 
-所有平台:
-- [Rust](https://rustup.rs/)(1.77.2+,`rustup` 安装即可)
+All platforms:
+- [Rust](https://rustup.rs/) (1.77.2+, just install via `rustup`)
 - Node.js 18+
 
-各平台额外依赖:
-- **Windows**:Microsoft C++ Build Tools(装 Rust 时会提示);WebView2 一般系统自带
-- **macOS**:`xcode-select --install`
+Per-platform extras:
+- **Windows**: Microsoft C++ Build Tools (prompted when installing Rust); WebView2 usually ships with the system.
+- **macOS**: `xcode-select --install`
 - **Linux (Debian/Ubuntu)**:
   ```bash
   sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
     libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
   ```
 
-> **WSL 用户注意**:这是图形程序,要在 Windows 侧运行(Windows 上装 Rust + Node),不要在 WSL 里跑。Claude Code 跑在 WSL 里也能被感知:面板的「安装 hooks」会自动同步到每个 WSL 发行版的 `~/.claude/settings.json`(镜像网络模式直接用 `127.0.0.1`;NAT 模式自动改用 Windows 主机网关地址,但还需在宠物配置里把 `bind` 设为 `"0.0.0.0"` 并重启宠物)。
+> **WSL users**: this is a GUI program — run it on the Windows side (install Rust + Node on Windows), not inside WSL. Claude Code running inside WSL is still detected: the panel's "Install hooks" automatically syncs to each WSL distro's `~/.claude/settings.json` (mirrored networking uses `127.0.0.1` directly; NAT mode switches to the Windows host gateway address, but you also need to set `bind` to `"0.0.0.0"` in the pet config and restart the pet).
 
-## 快速开始
+## Quick start
 
 ```bash
-cd claude-pet
+cd tokibean
 npm install
-npm run dev        # 开发模式启动
+npm run dev        # launch in dev mode
 ```
 
-宠物出现在屏幕上之后:
+Once the pet shows up on screen:
 
-1. **点宠物** → 展开用量面板
-2. 点 **「安装 Claude Code hooks」** → 自动往 `~/.claude/settings.json` 写入 5 个事件转发(写入前会备份为 `settings.json.bak-claude-pet`)
-3. **重启 Claude Code**(或在里面执行 `/hooks`)使配置生效
-4. 在 Claude Code 里随便发条消息 → 宠物应该立刻进入"思考中"状态
+1. **Click the pet** → expand the usage panel.
+2. Click **"Install Claude Code hooks"** → it writes 7 event forwarders into `~/.claude/settings.json` (backing the file up as `settings.json.bak-claude-pet` first).
+3. **Restart Claude Code** (or run `/hooks` inside it) to apply.
+4. Send any message in Claude Code → the pet should immediately switch to its "thinking" state.
 
-顶部悬停会出现拖动手柄,按住可以把宠物拖到任意位置。系统托盘图标可以隐藏/退出。
+Hovering over the top reveals a drag handle; hold it to move the pet anywhere. The system tray icon lets you hide/quit.
 
-打正式安装包:`npm run build`(macOS 打包前先跑一次 `npm run tauri icon app-icon.png` 生成 icns 图标)。
+To build an installer: `npm run build` (on macOS, run `npm run tauri icon app-icon.png` once first to generate the icns icon).
 
-## 工作原理
+## How it works
 
 ```
-Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ 状态机 ──▶ 宠物动画 + 系统通知
-~/.claude/projects/*.jsonl ──增量解析──▶ 5 小时窗口聚合 ──▶ 用量面板 + warn/limit 状态
+Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ state machine ──▶ pet animation + system notification
+~/.claude/projects/*.jsonl ──incremental parse──▶ 5-hour window aggregation ──▶ usage panel + warn/limit state
 ```
 
-- **事件映射**:`UserPromptSubmit`→工作中,`PreToolUse`→显示正在用的工具("跑命令"/"改代码"…),`Stop`→完工(气泡显示耗时和最后一条消息摘要,干满 1 分钟撒彩纸,10 分钟大庆祝),`Notification`→等你输入,`SessionStart/End`→会话边界
-- **多会话**:按 `session_id` 独立记状态,多路并行时头顶显示 ×N 徽章;任一路在干活就算干活,全部完工才庆祝
-- **通知降噪**:工作不足 30 秒的小活完工不发系统通知(配置里 `notify_min_secs` 可调)
-- **hooks 用 curl 转发**而不是 http 类型 hook,为了兼容更多 Claude Code 版本;curl 在 Win10+/macOS/主流 Linux 都自带
-- **5 小时窗口口径**:从窗口内首次活动所在的 UTC 整点开始,持续 5 小时(与 ccusage 的 blocks 口径一致)
-- **订阅限额说明**:Anthropic 不公开具体限额,且会随服务器负载浮动。默认用你**历史最高窗口用量**当估算基准;想手动指定就改配置里的 `block_limit`
-- **订阅/API 判定**:自动模式下,环境里有 `ANTHROPIC_API_KEY` 视为 API 计费,否则视为订阅。判不准就在面板里手动切
+- **Event mapping**: `UserPromptSubmit` → working, `PreToolUse` → shows the current tool ("running a command" / "editing code" …), `Stop` → done (bubble shows duration and a summary of the last message; confetti past 1 minute, a big celebration past 10), `Notification` → waiting for you, `SessionStart/End` → session boundaries.
+- **Multi-session**: state is tracked per `session_id`; a ×N badge appears over its head when several run in parallel. Any one working counts as working; it only celebrates when all are done.
+- **Notification de-noising**: finishing a task shorter than 30 seconds fires no system notification (tunable via `notify_min_secs` in the config).
+- **Hooks forward via curl** rather than http-type hooks, for compatibility with more Claude Code versions; curl ships by default on Win10+/macOS/mainstream Linux.
+- **5-hour window semantics**: starts at the UTC top-of-hour of the window's first activity and lasts 5 hours (matching ccusage's block semantics).
+- **Official usage (subscription mode)**: automatically reads the local Claude Code login credential (macOS Keychain / `~/.claude/.credentials.json` / Windows Credential Manager) and queries the Anthropic official usage endpoint for real 5-hour-window and weekly percentages. The credential is used only in memory on your machine, sent only to `api.anthropic.com`, never written to disk or shared. You can also authorize separately via "Connect Claude account" in the panel.
+- **About subscription limits**: Anthropic doesn't publish exact limits, and they float with server load. Without official data, the estimate defaults to your **historical peak window usage** as the baseline; set `block_limit` in the config to specify it manually.
+- **Subscription vs API detection**: in auto mode, `ANTHROPIC_API_KEY` in the environment means API billing, otherwise subscription. Switch manually in the panel if it guesses wrong.
 
-## 配置
+## Configuration
 
-配置文件:`~/.config/claude-pet/config.json`(Windows:`%APPDATA%\claude-pet\config.json`),首次运行自动生成:
+Config file: `~/.config/claude-pet/config.json` (macOS: `~/Library/Application Support/claude-pet/config.json`; Windows: `%APPDATA%\claude-pet\config.json`), auto-generated on first run:
 
 ```jsonc
 {
   "mode": "auto",        // auto | subscription | api
-  "port": 8737,          // hook 服务器端口,改了要重装 hooks
-  "block_limit": 0,      // 订阅窗口限额(token 数),0 = 自动学习
-  "notify": true,        // 系统通知开关
-  "prices": { ... }      // API 成本估算用的模型单价,美元/百万 token,过期了自己改
+  "port": 8737,          // hook server port; reinstall hooks after changing
+  "block_limit": 0,      // subscription window limit (token count), 0 = auto-learn
+  "notify": true,        // system notification toggle
+  "prices": { ... }      // per-model unit prices for API cost estimation, USD / million tokens; edit when stale
 }
 ```
 
-## 卸载 hooks
+## Uninstalling hooks
 
-打开 `~/.claude/settings.json`,删掉 hooks 里所有 `command` 包含 `127.0.0.1:8737/event` 的条目即可;或直接用备份文件 `settings.json.bak-claude-pet` 恢复。
+Open `~/.claude/settings.json` and delete every hook entry whose `command` contains `127.0.0.1:8737/event`; or just restore from the backup `settings.json.bak-claude-pet`.
 
-## 换皮肤
+## Skins
 
-内置皮肤:**拱门·墩墩(默认,柿子橙)** / 豆豆 / 橘猫·摸鱼,面板下拉即时切换。皮肤是 `src/skins/` 下覆盖 `window.PetRenderer` 的独立文件,可复用 `window.PetKit` 工具箱(像素/气泡/状态框/爱心/彩纸)。
+Built-in skins: **Archway Dundun (default, persimmon orange)** / Bean / Tabby cat, switchable instantly from the panel dropdown. A skin is a standalone file under `src/skins/` that overrides `window.PetRenderer` and may reuse the `window.PetKit` toolkit (pixels / bubbles / status boxes / hearts / confetti).
 
-所有绘制逻辑都在 `src/pet.js` 一个文件里,保持 `window.PetRenderer.draw(ctx, canvas, state, warn, bubble, t, extra)` 接口不变,随便怎么画。状态共 5 个:`idle / working / attention / done / limit`,外加 `warn` 叠加标记。第 7 个参数 `extra` 可选(老皮肤可忽略):`{sessions, workSecs, toolNote, celebrate, dragging, pat}`,分别用于多会话徽章、工时角标/疲惫脸、工具标签、庆祝等级、拖拽悬空、摸头。
+All drawing logic lives in the single file `src/pet.js`. Keep the `window.PetRenderer.draw(ctx, canvas, state, warn, bubble, t, extra)` interface unchanged and draw however you like. There are 5 states: `idle / working / attention / done / limit`, plus a `warn` overlay flag. The 7th argument `extra` is optional (old skins can ignore it): `{sessions, workSecs, attnSecs, toolNote, celebrate, oops, bgCount, dragging, pat}` — for the multi-session badge, work-time corner tag / tired face, tool label, celebration level, error frustration, background-task satellite, drag dangle, and head pat respectively.
 
-> 本项目与 Anthropic 无关联,"Claude Code" 仅作兼容性事实描述。
+> Not affiliated with Anthropic; "Claude Code" is used only as a factual compatibility reference.
 
-## 已知限制
+## Known limitations
 
-- **Linux Wayland**:透明、置顶的支持取决于合成器,不行就会退化成普通窗口;X11 无此问题
-- **额度百分比是估算**:官方不公开限额,80%/100% 的判定基于历史最高窗口或你手动设的值
-- **只统计 Claude Code**:claude.ai 网页版的用量不落在本地文件里,监控不到
-- **周限额**:官方口径未公开,面板里的"近 7 天"是滚动近似值
-- 端口 8737 被占用时 hook 服务器会启动失败(看终端日志),在配置里换端口后重装 hooks
+- **Linux Wayland**: transparency and always-on-top depend on the compositor; where unsupported it degrades to a normal window. X11 has no such issue.
+- **Quota percentage is an estimate**: without official data, the 80%/100% thresholds are based on your historical peak window or a manually set value.
+- **Only counts Claude Code**: usage from the claude.ai web app isn't in local files, so it can't be monitored.
+- **Weekly limit**: the official figure isn't published; the panel's "last 7 days" is a rolling approximation.
+- If port 8737 is in use, the hook server fails to start (check the terminal log); change the port in the config and reinstall hooks.

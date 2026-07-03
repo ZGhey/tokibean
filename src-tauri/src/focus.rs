@@ -1,6 +1,7 @@
-// 点气泡聚焦终端:把最上层的 Claude / 终端 / IDE 窗口带到前台
-// 说明:hook 事件里没有窗口信息,做不到精确"会话→窗口"映射,
-// 这里取 Z 序最靠前的候选窗口——单终端用户即为所想,多终端时命中最近用过的那个
+// Click the bubble to focus the terminal: bring the topmost Claude / terminal / IDE window to the front
+// Note: hook events carry no window info, so a precise "session -> window" mapping is impossible.
+// We pick the candidate window highest in Z-order -- exactly what a single-terminal user wants,
+// and for multiple terminals it hits the most recently used one
 
 #[cfg(target_os = "windows")]
 pub fn focus_terminal() -> Result<String, String> {
@@ -9,7 +10,7 @@ pub fn focus_terminal() -> Result<String, String> {
 
 #[cfg(target_os = "macos")]
 pub fn focus_terminal() -> Result<String, String> {
-    // 依次尝试激活常见终端
+    // Try activating common terminals in order
     for app in ["Claude", "iTerm2", "Terminal", "Visual Studio Code"] {
         let ok = std::process::Command::new("osascript")
             .args(["-e", &format!("tell application \"{}\" to activate", app)])
@@ -20,12 +21,12 @@ pub fn focus_terminal() -> Result<String, String> {
             return Ok(app.to_string());
         }
     }
-    Err("没找到可聚焦的终端".into())
+    Err(crate::i18n::t("没找到可聚焦的终端", "No terminal found to focus").into())
 }
 
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn focus_terminal() -> Result<String, String> {
-    Err("此平台暂不支持".into())
+    Err(crate::i18n::t("此平台暂不支持", "Not supported on this platform").into())
 }
 
 #[cfg(target_os = "windows")]
@@ -59,7 +60,7 @@ mod windows_impl {
         fn CloseHandle(h: *mut c_void) -> i32;
     }
 
-    /// 目标进程名(小写,不含 .exe),按此列表的优先级选
+    /// Target process names (lowercase, without .exe), selected by this list's priority order
     const TARGETS: [&str; 10] = [
         "claude",
         "windowsterminal",
@@ -76,7 +77,7 @@ mod windows_impl {
     struct Hit {
         hwnd: HWND,
         rank: usize,
-        z: usize, // 越小越靠前
+        z: usize, // smaller means further to the front
     }
 
     unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: isize) -> i32 {
@@ -111,7 +112,7 @@ mod windows_impl {
                 .unwrap_or("")
                 .trim_end_matches(".exe")
                 .to_string();
-            // 排除宠物自己
+            // Exclude the pet itself
             if name == "claude-pet" {
                 return 1;
             }
@@ -127,12 +128,12 @@ mod windows_impl {
         unsafe {
             EnumWindows(enum_cb, &mut state as *mut _ as isize);
         }
-        // 先按进程优先级,同级取 Z 序最前
+        // Sort by process priority first; within the same rank, take the frontmost Z-order
         let best = state
             .0
             .into_iter()
             .min_by_key(|h| (h.rank, h.z))
-            .ok_or("没找到 Claude 或终端窗口")?;
+            .ok_or_else(|| crate::i18n::t("没找到 Claude 或终端窗口", "No Claude or terminal window found"))?;
         unsafe {
             if IsIconic(best.hwnd) != 0 {
                 ShowWindow(best.hwnd, 9); // SW_RESTORE
@@ -143,6 +144,9 @@ mod windows_impl {
     }
 
     pub fn target_name(rank: usize) -> &'static str {
-        TARGETS.get(rank).copied().unwrap_or("窗口")
+        TARGETS
+            .get(rank)
+            .copied()
+            .unwrap_or_else(|| crate::i18n::t("窗口", "window"))
     }
 }

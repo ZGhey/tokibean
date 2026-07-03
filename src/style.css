@@ -23,19 +23,19 @@ body {
   z-index: 1;
 }
 
-/* 面板 */
+/* Panel */
 #panel {
   width: 224px;
-  /* 必须全不透明:窗口置顶悬浮在终端等亮色文字上方,
-     半透明会让底下的文字渗上来,看起来像面板显示错乱 */
+  /* Must be fully opaque: the window floats on top of bright text like a terminal,
+     and translucency would let the text beneath bleed through, looking like a rendering glitch */
   background: rgb(24, 22, 20);
   border: 1px solid rgba(217, 119, 87, 0.35);
   border-radius: 12px;
   padding: 12px;
   color: #e8e2d8;
   font-size: 12px;
-  /* 画布顶部约 80px 是气泡预留区,面板往下压掉大部分,
-     不然展开时面板和宠物之间有一大块空隙 */
+  /* The top ~80px of the canvas is reserved for the bubble; pull the panel up over most of it,
+     otherwise there's a big gap between the panel and the pet when expanded */
   margin-bottom: -60px;
   z-index: 2;
 }
@@ -70,6 +70,25 @@ input[type="number"] {
 }
 input[type="checkbox"] { accent-color: #d97757; }
 
+/* Boss key recording box: read-only, click to enter recording mode */
+.key-input {
+  background: #2b2825;
+  color: #f0eadf;
+  border: 1px solid #46413b;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: Consolas, "SF Mono", Menlo, monospace;
+  padding: 3px 8px;
+  min-width: 64px;
+  text-align: center;
+  outline: none;
+  cursor: pointer;
+}
+.key-input.recording {
+  border-color: #d97757;
+  color: #d97757;
+}
+
 select {
   background: #2b2825;
   color: #d8d2c6;
@@ -87,7 +106,7 @@ select {
   margin: 5px 0;
   color: #b3aca0;
 }
-/* 左侧标签不许被长数值挤断行 */
+/* Don't let a long value wrap the left-side label onto a new line */
 .label-row > span:first-child {
   flex-shrink: 0;
   white-space: nowrap;
@@ -102,7 +121,7 @@ select {
 .num.big { font-size: 16px; color: #e8916c; }
 .num.small { font-size: 11px; }
 
-/* 像素块进度条:10 格,呼应像素宠物 */
+/* Pixel-block progress bar: 10 cells, echoing the pixel pet */
 #pixel-bar {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
@@ -118,7 +137,7 @@ select {
 #pixel-bar span.on.warn { background: #e0a63b; }
 #pixel-bar span.on.full { background: #d05045; }
 
-/* 近 7 天像素趋势柱 */
+/* Last 7 days pixel trend bars */
 #trend {
   display: flex;
   gap: 3px;

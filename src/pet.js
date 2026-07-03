@@ -1,23 +1,23 @@
-// 宠物渲染器 —— 皮肤层
-// 想换皮肤只需要替换这个文件,保持 window.PetRenderer 接口不变:
+// Pet renderer — the skin layer
+// To swap skins, just replace this file, keeping the window.PetRenderer interface intact:
 //   PetRenderer.draw(ctx, canvas, state, warn, bubble, t, extra)
 // state: idle | working | attention | done | limit
-// extra(可选,老皮肤可以忽略): {
-//   sessions   正在干活的会话数(>1 画 ×N 徽章)
-//   workSecs   当前最长一路工作的持续秒数
-//   toolNote   正在用的工具短语(如"跑命令")
-//   celebrate  完工庆祝等级 0/1/2
-//   dragging   正被拖拽
-//   pat        鼠标悬停在宠物身上(摸头)
+// extra (optional, old skins may ignore it): {
+//   sessions   number of sessions currently working (>1 draws an ×N badge)
+//   workSecs   duration in seconds of the longest-running current work
+//   toolNote   stable English key for the tool in use (e.g. "cmd" / "reading")
+//   celebrate  completion-celebration level 0/1/2
+//   dragging   currently being dragged
+//   pat        mouse hovering over the pet (head pat)
 // }
-// 默认角色:拱门·墩墩(柿子橙圆拱顶),原创形象,可自由分发。
-// 本地私藏皮肤放 src/skins/tribute.js(已被 .gitignore 排除)。
+// Default character: 拱门·墩墩 (persimmon-orange arched dome), an original figure, freely distributable.
+// Local private skins go in src/skins/tribute.js (excluded via .gitignore).
 
 (function () {
-  const S = 4;            // 像素放大倍数
-  const GY = 42;          // 地面所在的网格行
-  const C = "#f2823e";    // 柿子橙(拱门·墩墩)
-  const K = "#26221d";    // 眼睛
+  const S = 4;            // pixel scale factor
+  const GY = 42;          // grid row of the ground
+  const C = "#f2823e";    // persimmon orange (拱门·墩墩)
+  const K = "#26221d";    // eyes
   const AMBER = "#e0a63b";
   const CONFETTI = ["#d97757", "#e0a63b", "#7fb4d9", "#d4537e", "#9ac47a"];
 
@@ -41,11 +41,11 @@
       px(ctx, L + 1, y0 + 3, 3, 3, K);
       px(ctx, R + 1, y0 + 3, 3, 3, K);
     } else if (mode === "tired") {
-      // 半睁:上眼皮压下来
+      // Half-open: upper eyelid pressed down
       px(ctx, L, y0 + 5, 3, 2, K);
       px(ctx, R, y0 + 5, 3, 2, K);
     } else if (mode === "wide") {
-      // 瞪大(被拎起来)
+      // Wide-eyed (being picked up)
       px(ctx, L, y0 + 3, 3, 4, K);
       px(ctx, R, y0 + 3, 3, 4, K);
     } else {
@@ -54,7 +54,7 @@
     }
   }
 
-  // 身体。返回头顶所在行,供叠加元素定位
+  // Body. Returns the head-top row so overlays can be positioned
   function body(ctx, cx, o) {
     let y0;
     if (o.lying) {
@@ -70,7 +70,7 @@
     }
     px(ctx, cx - 13, y0, 26, 15, C); px(ctx, cx - 11, y0 - 2, 22, 2, C); px(ctx, cx - 7, y0 - 4, 14, 2, C); px(ctx, cx - 12, y0 + 11, 2, 1, "#f0b8c4"); px(ctx, cx + 10, y0 + 11, 2, 1, "#f0b8c4");
     if (o.stretch) {
-      // 伸懒腰:两臂高举过头
+      // Stretching: both arms raised high overhead
       px(ctx, cx - 16, y0 + 1, 3, 2, C);
       px(ctx, cx - 17, y0 - 2, 2, 3, C);
       px(ctx, cx + 13, y0 + 1, 3, 2, C);
@@ -79,21 +79,21 @@
       return y0;
     }
     if (o.handsBack) {
-      // 背着手:正面看不到手,只在身侧露出一点点袖口
+      // Hands behind back: hands hidden from the front, just a bit of cuff showing at the sides
       px(ctx, cx - 15, y0 + 10, 2, 2, C);
       px(ctx, cx + 13, y0 + 10, 2, 2, C);
       eyes(ctx, cx + (o.faceDx || 0), y0, o.eyes || "open");
       return y0;
     }
     if (o.typing) {
-      // 敲键盘:两只小手在身前交替起落
+      // Typing: two little hands rise and fall alternately in front
       const tap = o.tap ? 1 : 0;
       px(ctx, cx - 16, y0 + 10 + tap, 3, 3, C);
       px(ctx, cx + 13, y0 + 11 - tap, 3, 3, C);
       eyes(ctx, cx, y0, o.eyes || "open");
       return y0;
     }
-    px(ctx, cx - 16, y0 + 8, 3, 3, C); // 左小手
+    px(ctx, cx - 16, y0 + 8, 3, 3, C); // left little hand
     if (o.wave) {
       if (o.waveUp) {
         px(ctx, cx + 13, y0 + 3, 3, 2, C);
@@ -103,13 +103,13 @@
         px(ctx, cx + 16, y0 + 2, 2, 3, C);
       }
     } else {
-      px(ctx, cx + 13, y0 + 8, 3, 3, C); // 右小手
+      px(ctx, cx + 13, y0 + 8, 3, 3, C); // right little hand
     }
     eyes(ctx, cx, y0, o.eyes || "open");
     return y0;
   }
 
-  // 拖拽:悬空,四条小腿乱蹬
+  // Dragging: suspended in air, all four little legs kicking
   function bodyDangling(ctx, cx, t) {
     const y0 = GY - 30 + Math.round(Math.sin(t * 0.25));
     const legs = [-11, -5, 3, 9];
@@ -118,17 +118,17 @@
       px(ctx, cx + legs[i], y0 + 15, 2, 5 + kick, C);
     }
     px(ctx, cx - 13, y0, 26, 15, C); px(ctx, cx - 11, y0 - 2, 22, 2, C); px(ctx, cx - 7, y0 - 4, 14, 2, C); px(ctx, cx - 12, y0 + 11, 2, 1, "#f0b8c4"); px(ctx, cx + 10, y0 + 11, 2, 1, "#f0b8c4");
-    // 两只小手向上张开
+    // Two little hands spread upward
     px(ctx, cx - 16, y0 + 2, 3, 2, C);
     px(ctx, cx + 13, y0 + 2, 3, 2, C);
     eyes(ctx, cx, y0, "wide");
     return y0;
   }
 
-  // 镐头:两帧挥舞(举起 / 砸地带碎屑)
+  // Pickaxe: two swing frames (raised / striking ground with debris)
   function pickaxe(ctx, cx, y0, up) {
-    const H = "#8a6b4a"; // 木柄
-    const M = "#b9c2c9"; // 铁头
+    const H = "#8a6b4a"; // wooden handle
+    const M = "#b9c2c9"; // iron head
     if (up) {
       px(ctx, cx + 14, y0 + 4, 2, 2, H);
       px(ctx, cx + 16, y0 + 1, 2, 3, H);
@@ -139,28 +139,29 @@
       px(ctx, cx + 14, y0 + 9, 2, 3, H);
       px(ctx, cx + 15, y0 + 12, 2, 3, H);
       px(ctx, cx + 13, GY - 3, 8, 2, M);
-      px(ctx, cx + 22, GY - 5, 1, 1, "#8a8478"); // 碎屑
+      px(ctx, cx + 22, GY - 5, 1, 1, "#8a8478"); // debris
       px(ctx, cx + 24, GY - 7, 1, 1, "#6b665c");
       px(ctx, cx + 21, GY - 8, 1, 1, "#a89f8c");
     }
   }
 
-  // 爱因斯坦发型 V4:精髓是"顶秃侧蓬"——头顶只留零星呆毛,
-  // 两鬓向外爆炸,再配白八字胡。盖顶式的假发会像律师
+  // Einstein hair V4: the essence is "bald on top, bushy at the sides" — only stray
+  // wisps on the crown, temples exploding outward, plus a white handlebar mustache.
+  // A wig that caps the whole top would look like a lawyer's.
   function einsteinHair(ctx, cx, y0) {
     const W = "#ddd6c8";
-    // 顶部:一冠起伏的乱发(相连但高低错落,两端露出头顶,不盖死)
+    // Top: a crest of undulating messy hair (connected but uneven; both ends leave the crown showing, not capped)
     px(ctx, cx - 9, y0 - 5, 4, 3, W);
     px(ctx, cx - 5, y0 - 7, 4, 4, W);
     px(ctx, cx - 1, y0 - 8, 4, 4, W);
     px(ctx, cx + 3, y0 - 7, 4, 4, W);
     px(ctx, cx + 7, y0 - 5, 4, 3, W);
-    // 两鬓小侧翼(和顶发之间留缝,避免连成假发)
+    // Little side wings at the temples (gap from the top hair, so it doesn't merge into a wig)
     px(ctx, cx - 16, y0 + 1, 3, 4, W);
     px(ctx, cx - 17, y0 + 3, 2, 3, W);
     px(ctx, cx + 13, y0 + 1, 3, 4, W);
     px(ctx, cx + 15, y0 + 3, 2, 3, W);
-    // 白八字胡(中间留缝)
+    // White handlebar mustache (gap in the middle)
     px(ctx, cx - 5, y0 + 9, 4, 2, W);
     px(ctx, cx + 2, y0 + 9, 4, 2, W);
   }
@@ -185,11 +186,11 @@
     ctx.globalAlpha = 1;
   }
 
-  // 完工彩纸:按等级撒像素纸屑,循环飘落
+  // Completion confetti: scatter pixel paper by level, looping as it falls
   function confetti(ctx, canvas, cx, level, t) {
     const n = level >= 2 ? 16 : 7;
     for (let i = 0; i < n; i++) {
-      const seedX = (i * 37 + i * i * 11) % 64;              // 稳定的伪随机横向分布
+      const seedX = (i * 37 + i * i * 11) % 64;              // stable pseudo-random horizontal spread
       const x = (cx - 32 + seedX) * S;
       const speed = 0.35 + (i % 4) * 0.12;
       const fall = (t * speed + i * 29) % 130;
@@ -205,11 +206,11 @@
   }
 
   function bubbleBox(ctx, canvas, text, cx, topPx) {
-    // 注意:高 DPI 下 canvas.width 是物理像素,布局要用 CSS 逻辑宽度
+    // Note: at high DPI canvas.width is physical pixels, so lay out with the CSS logical width
     const W = canvas.clientWidth || canvas.width;
     ctx.font = "12px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
-    // 逐字换行(中文没有空格可断,按字符断),最多 3 行,超出截断加省略号。
-    // 不能用 fillText 的 maxWidth 挤压——中文会被压成一团
+    // Wrap per character (Chinese has no spaces to break on, so break by character), max 3 lines,
+    // truncate the overflow with an ellipsis. Can't use fillText's maxWidth to squeeze — Chinese would get crushed together
     const maxW = W - 28;
     const lines = [];
     let line = "";
@@ -250,9 +251,9 @@
     lines.forEach((l, i) => ctx.fillText(l, x + 10, y + 16 + i * lineH));
   }
 
-  // 右上角状态框:终端风 "❯ cmd..." 绿字 + 动态省略号
+  // Top-right status box: terminal-style "❯ cmd..." green text + animated ellipsis
   function statusTag(ctx, canvas, cx, y0, text, t) {
-    if (bulbT > 0) return; // 灯泡时刻让位,不和状态框叠在一起
+    if (bulbT > 0) return; // yield during the lightbulb moment, don't overlap the status box
     const W = canvas.clientWidth || canvas.width;
     ctx.font = "bold 12px Consolas, monospace";
     const dots = ".".repeat(Math.floor(t / 20) % 4);
@@ -271,7 +272,7 @@
     ctx.fillText(text + dots, bx + 6, by + 14);
   }
 
-  // 工具提示小标签(比气泡矮一号,不抢戏)
+  // Small tooltip label (one size smaller than the bubble, doesn't steal the show)
   function toolTag(ctx, canvas, text, cx, topPx) {
     ctx.font = "11px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
     const tw = ctx.measureText(text).width;
@@ -287,18 +288,18 @@
 
   let blinkT = 0;
   let prevKey;
-  let puffT = 0;   // 切换状态时的烟尘帧
-  let patT = 0;    // 连续摸头计时
+  let puffT = 0;   // dust frames when switching states
+  let patT = 0;    // continuous head-pat timer
   let wasThinking = false;
-  let bulbT = 0;   // 灵光一闪:思考结束瞬间的灯泡帧
-  let prevState = "idle"; // 检测 limit→idle 的睡醒时刻
+  let bulbT = 0;   // flash of insight: lightbulb frames the instant thinking ends
+  let prevState = "idle"; // detect the wake-up moment of limit→idle
 
   function isNight() {
     const h = new Date().getHours();
     return h >= 23 || h < 7;
   }
 
-  // 矿灯 + 向下的光锥
+  // Miner's lamp + downward light cone
   function headlamp(ctx, cx, y0) {
     px(ctx, cx - 4, y0 - 2, 8, 2, "#f0d468");
     ctx.fillStyle = "rgba(240,212,104,0.10)";
@@ -310,8 +311,8 @@
     ctx.fill();
   }
 
-  // ---- idle 漫游状态(皮肤内部) ----
-  let wx = 0;               // 相对默认位置的网格偏移
+  // ---- idle roaming state (skin-internal) ----
+  let wx = 0;               // grid offset relative to the default position
   let wTarget = 0;
   let wMode = "stand";      // stand | walk | doze
   let wUntil = -1;
@@ -323,17 +324,17 @@
     const r = Math.random();
     if (r < (night ? 0.45 : 0.12)) {
       wMode = "doze";
-      wUntil = t + 700 + Math.random() * 900;   // 打个盹:12-27 秒
+      wUntil = t + 700 + Math.random() * 900;   // take a nap: 12-27 seconds
     } else if (r < (night ? 0.55 : 0.22)) {
-      wMode = "stretch";                         // 伸个懒腰打个哈欠
+      wMode = "stretch";                         // stretch and yawn
       wUntil = t + 55;
     } else if (r < 0.5) {
       wMode = "walk";
       wTarget = Math.round(Math.random() * 24 - 12);
-      wUntil = t + 100000; // 走到为止
+      wUntil = t + 100000; // until it arrives
     } else {
       wMode = "stand";
-      wUntil = t + 240 + Math.random() * 360;   // 发呆 4-10 秒
+      wUntil = t + 240 + Math.random() * 360;   // zone out for 4-10 seconds
     }
   }
 
@@ -342,8 +343,8 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const baseCx = 25;
 
-    // idle 才漫游;其他状态回到中间
-    // 睡醒了(额度恢复/盹结束回到 idle):先伸个懒腰
+    // Only roam while idle; other states return to the center
+    // Just woke up (quota restored / nap ended, back to idle): stretch first
     if (prevState === "limit" && state === "idle") {
       wMode = "stretch";
       wUntil = t + 60;
@@ -362,11 +363,11 @@
       }
       dx = wx;
     } else if (wx !== 0 && state !== "idle") {
-      // 一有正事,快步走回中间
+      // As soon as there's real work, briskly walk back to the center
       if (t % 2 === 0) wx += Math.sign(-wx);
       dx = wx;
     }
-    // 思考时叼着烟斗来回踱步(慢速正弦往返,转身停顿时腿不动)
+    // While thinking, pace back and forth with a pipe (slow sine round-trip; legs still during turn-around pauses)
     let pace = 0;
     let pacing = false;
     const thinkingNow = state === "working" && !x.toolNote && !x.dragging;
@@ -374,16 +375,16 @@
       pace = Math.round(Math.sin(t * 0.018) * 7);
       pacing = Math.abs(Math.cos(t * 0.018)) > 0.35;
     }
-    // 想通了!思考一结束(开始动手或直接完工)右上角弹灯泡
+    // Figured it out! The moment thinking ends (starts acting, or finishes outright), pop a lightbulb in the top-right
     if (wasThinking && !thinkingNow && (state === "working" || state === "done")) {
       bulbT = 50;
     }
     wasThinking = thinkingNow;
-    // 工具报错:恼火地小幅左右晃
+    // Tool error: shake side to side a little in annoyance
     let cx = baseCx + dx + pace;
     if (x.oops) cx += t % 6 < 3 ? 1 : -1;
 
-    // 地面小影子(被拎起来时影子缩小变淡)
+    // Small ground shadow (shrinks and fades when picked up)
     ctx.fillStyle = x.dragging ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.18)";
     ctx.beginPath();
     ctx.ellipse(cx * S, GY * S + 4, (x.dragging ? 10 : 15) * S, 2.4 * S, 0, 0, Math.PI * 2);
@@ -396,26 +397,26 @@
     let y0 = 0;
 
     if (x.dragging) {
-      // 被拎起来:悬空乱蹬,瞪大眼
+      // Picked up: suspended and kicking, wide-eyed
       y0 = bodyDangling(ctx, cx, t);
     } else if (state === "limit") {
-      // 额度耗尽:睡觉
+      // Quota exhausted: sleeping
       y0 = body(ctx, cx, { eyes: "closed", lying: true, breath: Math.sin(t * 0.045) > 0 ? 1 : 0 });
       zzz(ctx, cx, GY - 17, t, 3);
     } else if (state === "working") {
       const tired = (x.workSecs || 0) >= 600;
       const note = x.toolNote || "";
-      if (note === "跑命令") {
-        // 敲键盘 + 右上角 cmd 终端气泡
+      if (note === "cmd") {
+        // Typing + top-right cmd terminal bubble
         y0 = body(ctx, cx, {
           eyes: tired ? "tired" : "up",
           typing: true,
           tap: Math.floor(t / 5) % 2 === 0,
         });
-        // 脚边一排 QWER 键帽,随敲击随机亮起
-        px(ctx, cx - 12, GY - 7, 24, 6, "#2a2723");            // 键盘底座
+        // A row of QWER keycaps at the feet, lighting up randomly with each tap
+        px(ctx, cx - 12, GY - 7, 24, 6, "#2a2723");            // keyboard base
         const tapK = Math.floor(t / 5);
-        const lit = (tapK * 7 + (tapK >> 2)) % 4;              // 本次点亮哪颗键
+        const lit = (tapK * 7 + (tapK >> 2)) % 4;              // which key lights up this time
         const keys = ["Q", "W", "E", "R"];
         ctx.font = "bold 10px Consolas, monospace";
         ctx.textAlign = "center";
@@ -427,68 +428,68 @@
         }
         ctx.textAlign = "start";
         if (!bubble) statusTag(ctx, canvas, cx, y0, "cmd", t);
-      } else if (note === "读文件") {
-        // 戴博士帽和单片眼镜,低头仔细翻书
+      } else if (note === "reading") {
+        // Wearing a mortarboard and monocle, head bowed carefully turning pages
         y0 = body(ctx, cx, { eyes: "tired" });
-        px(ctx, cx - 8, y0 - 4, 16, 3, "#2e3440");    // 博士帽帽座(罩住穹顶)
-        px(ctx, cx - 11, y0 - 6, 22, 2, "#232a36");   // 方板(抬高越过穹顶)
-        px(ctx, cx - 11, y0 - 6, 22, 1, "#3d4759");   // 板面高光
-        px(ctx, cx - 1, y0 - 7, 2, 1, "#e0c05a");     // 顶扣
-        const sw = Math.sin(t * 0.05) > 0 ? 1 : 0;    // 流苏轻摆
+        px(ctx, cx - 8, y0 - 4, 16, 3, "#2e3440");    // mortarboard base (caps the dome)
+        px(ctx, cx - 11, y0 - 6, 22, 2, "#232a36");   // flat board (raised to clear the dome)
+        px(ctx, cx - 11, y0 - 6, 22, 1, "#3d4759");   // board-surface highlight
+        px(ctx, cx - 1, y0 - 7, 2, 1, "#e0c05a");     // top button
+        const sw = Math.sin(t * 0.05) > 0 ? 1 : 0;    // tassel swaying gently
         px(ctx, cx + 9 + sw, y0 - 4, 1, 3, "#e0c05a");
-        px(ctx, cx + 8 + sw, y0 - 1, 2, 2, "#c9a53a"); // 流苏穗
-        const G = "#e0c05a"; // 金丝镜框
-        px(ctx, cx + 1, y0 + 3, 5, 1, G);           // 单片眼镜:圈住右眼
+        px(ctx, cx + 8 + sw, y0 - 1, 2, 2, "#c9a53a"); // tassel fringe
+        const G = "#e0c05a"; // gold wire frame
+        px(ctx, cx + 1, y0 + 3, 5, 1, G);           // monocle: ringing the right eye
         px(ctx, cx + 1, y0 + 8, 5, 1, G);
         px(ctx, cx + 1, y0 + 4, 1, 4, G);
         px(ctx, cx + 5, y0 + 4, 1, 4, G);
-        px(ctx, cx + 6, y0 + 9, 1, 2, G);           // 垂下的链子
+        px(ctx, cx + 6, y0 + 9, 1, 2, G);           // dangling chain
         px(ctx, cx + 7, y0 + 12, 1, 2, G);
-        px(ctx, cx - 8, GY - 8, 7, 5, "#e8e2d8");   // 左页
-        px(ctx, cx + 1, GY - 8, 7, 5, "#f0eadf");   // 右页
-        px(ctx, cx - 1, GY - 9, 2, 6, "#8a8478");   // 书脊
-        const ph = Math.floor(t / 34) % 4;          // 慢速细读翻页
+        px(ctx, cx - 8, GY - 8, 7, 5, "#e8e2d8");   // left page
+        px(ctx, cx + 1, GY - 8, 7, 5, "#f0eadf");   // right page
+        px(ctx, cx - 1, GY - 9, 2, 6, "#8a8478");   // spine
+        const ph = Math.floor(t / 34) % 4;          // slow, careful page-turning
         if (ph === 1) px(ctx, cx - 4, GY - 10, 3, 2, "#fffdf6");
         else if (ph === 2) px(ctx, cx - 1, GY - 11, 2, 3, "#fffdf6");
         else if (ph === 3) px(ctx, cx + 2, GY - 10, 3, 2, "#fffdf6");
         if (!bubble) statusTag(ctx, canvas, cx, y0, "reading", t);
-      } else if (note === "改代码") {
-        // 工程帽 + 抡镐头挖地
+      } else if (note === "coding") {
+        // Hard hat + swinging a pickaxe to dig
         const strike = Math.floor(t / 14) % 2 === 0;
         y0 = body(ctx, cx, { eyes: "open", bounce: strike ? 0 : 1 });
-        px(ctx, cx - 8, y0 - 6, 16, 3, "#f7d02e");   // 帽顶(工地黄,扣住穹顶)
-        px(ctx, cx - 12, y0 - 3, 24, 1, "#e6eef8");  px(ctx, cx - 12, y0 - 2, 24, 1, "#c9971d");  // 反光白条+深黄檐
-        px(ctx, cx - 2, y0 - 7, 4, 1, "#fbe36a");    // 帽脊
+        px(ctx, cx - 8, y0 - 6, 16, 3, "#f7d02e");   // hat crown (site yellow, capping the dome)
+        px(ctx, cx - 12, y0 - 3, 24, 1, "#e6eef8");  px(ctx, cx - 12, y0 - 2, 24, 1, "#c9971d");  // reflective white stripe + dark-yellow brim
+        px(ctx, cx - 2, y0 - 7, 4, 1, "#fbe36a");    // hat ridge
         pickaxe(ctx, cx, y0, !strike);
         if (!bubble) statusTag(ctx, canvas, cx, y0, "coding", t);
-      } else if (note === "搜代码") {
-        // 拿放大镜在地上左右扫
+      } else if (note === "searching") {
+        // Sweeping a magnifying glass left and right across the ground
         y0 = body(ctx, cx, { eyes: "tired" });
         const mx = cx - 5 + Math.round(Math.sin(t * 0.07) * 8);
         const M = "#b9c2c9";
-        px(ctx, mx - 2, GY - 13, 4, 1, M);           // 镜圈
+        px(ctx, mx - 2, GY - 13, 4, 1, M);           // lens ring
         px(ctx, mx - 3, GY - 12, 1, 3, M);
         px(ctx, mx + 2, GY - 12, 1, 3, M);
         px(ctx, mx - 2, GY - 9, 4, 1, M);
-        if (Math.floor(t / 18) % 3 === 0) px(ctx, mx - 1, GY - 12, 1, 1, "#fffdf6"); // 镜面反光
-        px(ctx, mx + 3, GY - 8, 2, 2, "#8a6b4a");    // 手柄
+        if (Math.floor(t / 18) % 3 === 0) px(ctx, mx - 1, GY - 12, 1, 1, "#fffdf6"); // lens glare
+        px(ctx, mx + 3, GY - 8, 2, 2, "#8a6b4a");    // handle
         px(ctx, mx + 5, GY - 6, 2, 2, "#8a6b4a");
         if (!bubble) statusTag(ctx, canvas, cx, y0, "searching", t);
-      } else if (note === "查资料") {
-        // 身旁一颗自转的小地球
+      } else if (note === "browsing") {
+        // A little globe spinning beside it
         y0 = body(ctx, cx, { eyes: "up" });
         const gx = cx + 17, gy = y0 - 3;
         const B = "#5a8fd4";
         px(ctx, gx - 2, gy - 3, 4, 1, B);
         px(ctx, gx - 3, gy - 2, 6, 3, B);
         px(ctx, gx - 2, gy + 1, 4, 1, B);
-        for (let i = 0; i < 2; i++) {                // 自转的大陆
+        for (let i = 0; i < 2; i++) {                // rotating continents
           const lx = gx - 3 + ((Math.floor(t / 12) + i * 3) % 6);
           px(ctx, lx, gy - 1 + i, 2, 1, "#9ac47a");
         }
         if (!bubble) statusTag(ctx, canvas, cx, y0, "browsing", t);
-      } else if (note === "派子任务") {
-        // 左右冒出两只迷你分身一起干活
+      } else if (note === "agents") {
+        // Two mini clones pop up on either side to work together
         y0 = body(ctx, cx, { eyes: "open" });
         for (const [mx, phase] of [[cx - 20, 0], [cx + 20, 1.6]]) {
           const hop = Math.abs(Math.sin(t * 0.09 + phase)) > 0.72 ? 1 : 0;
@@ -500,26 +501,26 @@
           px(ctx, mx + 1, my + 1, 1, 1, K);
         }
         if (!bubble) statusTag(ctx, canvas, cx, y0, "agents", t);
-      } else if (note === "列计划") {
-        // 面前的写字板,任务项逐条打绿勾
+      } else if (note === "planning") {
+        // A clipboard in front, task items getting green-checked one by one
         y0 = body(ctx, cx, { eyes: "tired" });
-        px(ctx, cx - 5, GY - 13, 10, 9, "#e8e2d8");  // 板面
-        px(ctx, cx - 1, GY - 14, 3, 1, "#8a8478");   // 夹子
+        px(ctx, cx - 5, GY - 13, 10, 9, "#e8e2d8");  // board surface
+        px(ctx, cx - 1, GY - 14, 3, 1, "#8a8478");   // clip
         const done = Math.floor(t / 35) % 4;
         for (let i = 0; i < 3; i++) {
-          px(ctx, cx - 3, GY - 11 + i * 3, 4, 1, "#8a8478"); // 条目
-          if (i < done) px(ctx, cx + 2, GY - 11 + i * 3, 2, 1, "#4a9a4a"); // 绿勾
+          px(ctx, cx - 3, GY - 11 + i * 3, 4, 1, "#8a8478"); // item
+          if (i < done) px(ctx, cx + 2, GY - 11 + i * 3, 2, 1, "#4a9a4a"); // green check
         }
         if (!bubble) statusTag(ctx, canvas, cx, y0, "planning", t);
       } else if (note) {
-        // 其他工具(MCP 等):通用工作态 + 状态框显示短名
+        // Other tools (MCP, etc.): generic working pose + status box showing the short name
         y0 = body(ctx, cx, { eyes: tired ? "tired" : "up" });
         const n = Math.floor(t / 22) % 4;
         for (let i = 0; i < n; i++) px(ctx, cx + 10 + i * 3, y0 - 4, 2, 2, "#a89f8c");
-        if (!bubble) statusTag(ctx, canvas, cx, y0, note.replace(/^用 /, ""), t);
+        if (!bubble) statusTag(ctx, canvas, cx, y0, note, t);
       } else {
-        // 思考中:爱因斯坦炸毛 + 叼烟斗,背着手来回踱步。
-        // 面部朝行进方向:眼睛偏向前进侧,烟斗叼在前进侧
+        // Thinking: Einstein-frizzed hair + pipe in mouth, pacing back and forth with hands behind back.
+        // Face points in the direction of travel: eyes lean toward the leading side, pipe held on the leading side
         const dir = Math.cos(t * 0.018) >= 0 ? 1 : -1;
         y0 = body(ctx, cx, {
           eyes: tired ? "tired" : "up",
@@ -530,13 +531,13 @@
         });
         einsteinHair(ctx, cx, y0);
         if (dir > 0) {
-          px(ctx, cx + 4, y0 + 12, 6, 1, "#7a5a3a");   // 烟斗杆(朝右)
-          px(ctx, cx + 9, y0 + 11, 3, 3, "#5a4028");   // 烟斗锅
+          px(ctx, cx + 4, y0 + 12, 6, 1, "#7a5a3a");   // pipe stem (facing right)
+          px(ctx, cx + 9, y0 + 11, 3, 3, "#5a4028");   // pipe bowl
         } else {
-          px(ctx, cx - 9, y0 + 12, 6, 1, "#7a5a3a");   // 烟斗杆(朝左)
-          px(ctx, cx - 11, y0 + 11, 3, 3, "#5a4028");  // 烟斗锅
+          px(ctx, cx - 9, y0 + 12, 6, 1, "#7a5a3a");   // pipe stem (facing left)
+          px(ctx, cx - 11, y0 + 11, 3, 3, "#5a4028");  // pipe bowl
         }
-        const sx = dir > 0 ? cx + 10 : cx - 11;        // 烟从锅口升起
+        const sx = dir > 0 ? cx + 10 : cx - 11;        // smoke rising from the bowl
         for (let i = 0; i < 3; i++) {
           const ph = (t / 30 + i * 0.8) % 3;
           ctx.globalAlpha = Math.max(0, 0.6 - ph / 4);
@@ -545,16 +546,16 @@
         ctx.globalAlpha = 1;
         if (!bubble) statusTag(ctx, canvas, cx, y0 - 6, "thinking", t);
       }
-      // 干活时被摸头:不停工,但会偷偷冒小心心
+      // Patted while working: doesn't stop, but secretly leaks a little heart
       if (x.pat && Math.floor(t / 40) % 2 === 0) heart(ctx, cx - 17, y0 - 5, 0.7);
-      // 深夜加班:戴矿灯(挖矿模式已有工程帽,不叠加)
-      if (isNight() && note !== "改代码") headlamp(ctx, cx, y0);
+      // Late-night overtime: wear the miner's lamp (mining mode already has a hard hat, don't stack)
+      if (isNight() && note !== "coding") headlamp(ctx, cx, y0);
       if (tired) {
-        // 累了:头侧挂汗珠,一滴一滴往下
+        // Tired: a sweat drop hangs at the side of the head, dripping down
         const drip = Math.floor(t / 30) % 3;
         px(ctx, cx + 11, y0 + 1 + drip, 1, 2, "#7fb4d9");
       }
-      // 工时角标(干满 1 分钟显示,分钟粒度)
+      // Work-time badge (shown after a full minute, minute granularity)
       if ((x.workSecs || 0) >= 60) {
         const label = Math.floor(x.workSecs / 60) + "m";
         ctx.font = "bold 11px Consolas, monospace";
@@ -566,26 +567,26 @@
     } else if (state === "attention") {
       const waited = x.attnSecs || 0;
       if (waited >= 300) {
-        // 等太久了:坐地叹气
+        // Waited too long: sits on the ground and sighs
         y0 = body(ctx, cx, { eyes: "tired", lying: true, breath: Math.sin(t * 0.05) > 0 ? 1 : 0 });
         const ph = (t / 50) % 2;
         ctx.globalAlpha = Math.max(0, 0.5 - ph / 3);
-        px(ctx, cx + 10, GY - 20 - ph * 3, 2, 1, "#8a8478"); // 叹出的气
+        px(ctx, cx + 10, GY - 20 - ph * 3, 2, 1, "#8a8478"); // sighed-out breath
         px(ctx, cx + 12, GY - 22 - ph * 3, 1, 1, "#8a8478");
         ctx.globalAlpha = 1;
       } else if (waited >= 120) {
-        // 急了:拿小喇叭喊 + 蹦得更勤
+        // Getting anxious: shouts through a little megaphone + hops more often
         const hop = t % 45 < 8 ? 2 : 0;
         y0 = body(ctx, cx, { eyes: "wide", wave: true, waveUp: Math.floor(t / 8) % 2 === 0, bounce: hop });
-        px(ctx, cx + 15, y0 + 6, 3, 3, AMBER);       // 喇叭口
-        px(ctx, cx + 13, y0 + 7, 2, 1, "#b8862e");   // 喇叭柄
-        if (Math.floor(t / 10) % 2 === 0) {           // 声波
+        px(ctx, cx + 15, y0 + 6, 3, 3, AMBER);       // megaphone mouth
+        px(ctx, cx + 13, y0 + 7, 2, 1, "#b8862e");   // megaphone handle
+        if (Math.floor(t / 10) % 2 === 0) {           // sound waves
           px(ctx, cx + 19, y0 + 5, 1, 1, AMBER);
           px(ctx, cx + 20, y0 + 3, 1, 1, AMBER);
           px(ctx, cx + 20, y0 + 8, 1, 1, AMBER);
         }
       } else {
-        // 挥手 + 时不时蹦一下
+        // Waving + hopping now and then
         const hopPh = t % 90;
         const hop = hopPh < 10 ? (hopPh < 5 ? 2 : 1) : 0;
         y0 = body(ctx, cx, {
@@ -605,11 +606,11 @@
       if (level >= 2) heart(ctx, cx + (ph ? -19 : 17), y0 - (ph ? 2 : 6), 0.7);
       if (level >= 1) confetti(ctx, canvas, cx, level, t);
     } else {
-      // idle:摸头 > 打盹 > 站着/漫步
+      // idle: head-pat > napping > standing/roaming
       if (x.pat) {
         patT++;
         if (patT > 120) {
-          // 蹭了半天:陶醉,爱心绕圈
+          // Nuzzled for a while: blissful, hearts circling
           const wob = Math.round(Math.sin(t * 0.15));
           y0 = body(ctx, cx + wob, { eyes: "happy" });
           for (let i = 0; i < 3; i++) {
@@ -623,12 +624,12 @@
         }
       } else if (wMode === "stretch") {
         y0 = body(ctx, cx, { stretch: true });
-        px(ctx, cx - 1, y0 + 11, 3, 2, "#8a5a3a"); // 哈欠嘴
+        px(ctx, cx - 1, y0 + 11, 3, 2, "#8a5a3a"); // yawning mouth
       } else if (wMode === "doze") {
         y0 = body(ctx, cx, { eyes: "closed", lying: true, breath: Math.sin(t * 0.045) > 0 ? 1 : 0 });
         zzz(ctx, cx, GY - 17, t, 1);
       } else {
-        // 偶尔飞过一只蝴蝶,宠物抬头目送
+        // Now and then a butterfly flutters by; the pet looks up and follows it
         const cyc = t % 2200;
         const butterfly = cyc < 600;
         const moving = wMode === "walk" && wx !== wTarget;
@@ -641,15 +642,15 @@
           const bx = Math.round(-4 + (cyc / 600) * 58);
           const by = Math.round(y0 - 13 + Math.sin(t * 0.12) * 3);
           const flap = t % 8 < 4;
-          px(ctx, bx, by, 1, 1, "#d4537e");                       // 身
-          px(ctx, bx - 1, by - (flap ? 1 : 0), 1, 1, "#e0a63b");  // 左翅
-          px(ctx, bx + 1, by - (flap ? 0 : 1), 1, 1, "#e0a63b");  // 右翅
+          px(ctx, bx, by, 1, 1, "#d4537e");                       // body
+          px(ctx, bx - 1, by - (flap ? 1 : 0), 1, 1, "#e0a63b");  // left wing
+          px(ctx, bx + 1, by - (flap ? 0 : 1), 1, 1, "#e0a63b");  // right wing
         }
       }
       if (!x.pat) patT = 0;
     }
 
-    // 工具报错:头侧漫画式恼火符号(红色井字纹)
+    // Tool error: a comic-style annoyance symbol beside the head (red cross-hatch)
     if (x.oops && !x.dragging) {
       const R = "#d05045";
       const ax = cx - 18, ay = y0 - 6;
@@ -659,7 +660,7 @@
       px(ctx, ax, ay + 3, 4, 1, R);
     }
 
-    // 状态/工具切换瞬间:脚边扬起一小团烟尘
+    // The instant a state/tool switches: a little puff of dust kicks up at the feet
     const key = state + "|" + (x.toolNote || "");
     if (prevKey !== undefined && key !== prevKey) puffT = 10;
     prevKey = key;
@@ -672,17 +673,17 @@
       puffT--;
     }
 
-    // 后台任务:小卫星绕头顶椭圆轨道巡航,尾灯闪烁
+    // Background tasks: a little satellite cruises an elliptical orbit above the head, tail light blinking
     if ((x.bgCount || 0) > 0 && !x.dragging && state !== "limit") {
       const a = t * 0.035;
       const sx = cx + Math.round(Math.cos(a) * 19);
       const sy = y0 - 7 + Math.round(Math.sin(a) * 4);
-      const behind = Math.sin(a) < -0.2; // 转到"身后"时变淡
+      const behind = Math.sin(a) < -0.2; // fades when it swings "behind"
       ctx.globalAlpha = behind ? 0.35 : 1;
-      px(ctx, sx, sy, 2, 2, "#b9c2c9");            // 卫星本体
-      px(ctx, sx - 1, sy, 1, 1, "#8a92a8");        // 太阳能板
+      px(ctx, sx, sy, 2, 2, "#b9c2c9");            // satellite body
+      px(ctx, sx - 1, sy, 1, 1, "#8a92a8");        // solar panel
       px(ctx, sx + 2, sy + 1, 1, 1, "#8a92a8");
-      if (Math.floor(t / 12) % 2 === 0) px(ctx, sx + 1, sy - 1, 1, 1, "#e0a63b"); // 闪灯
+      if (Math.floor(t / 12) % 2 === 0) px(ctx, sx + 1, sy - 1, 1, 1, "#e0a63b"); // blinking light
       ctx.globalAlpha = 1;
       if (x.bgCount > 1) {
         ctx.font = "bold 10px Consolas, monospace";
@@ -691,30 +692,30 @@
       }
     }
 
-    // 多会话徽章:几路并行就标几
+    // Multi-session badge: mark however many run in parallel
     if ((x.sessions || 0) > 1 && !x.dragging) {
       ctx.font = "bold 11px Consolas, monospace";
       ctx.fillStyle = AMBER;
       ctx.fillText("×" + x.sessions, (cx + 15) * S, (y0 - 3) * S);
     }
 
-    // warn 叠加:头顶琥珀色感叹号(慢闪)
+    // warn overlay: amber exclamation mark above the head (slow blink)
     if (warn && state !== "limit" && !x.dragging && Math.floor(t / 30) % 2 === 0) {
       px(ctx, cx - 1, y0 - 8, 2, 4, AMBER);
       px(ctx, cx - 1, y0 - 3, 2, 2, AMBER);
     }
 
-    // 灵光一闪的灯泡(右上角,先亮后淡出)
+    // Flash-of-insight lightbulb (top-right, lights up then fades out)
     if (bulbT > 0) {
       const bx = cx + 13, by = y0 - 13;
       ctx.globalAlpha = Math.min(1, bulbT / 15);
-      px(ctx, bx, by, 4, 1, "#f7d060");            // 玻璃泡
+      px(ctx, bx, by, 4, 1, "#f7d060");            // glass bulb
       px(ctx, bx - 1, by + 1, 6, 3, "#f7d060");
       px(ctx, bx, by + 4, 4, 1, "#f7d060");
-      px(ctx, bx + 1, by + 1, 2, 2, "#fff6c0");    // 高光
-      px(ctx, bx + 1, by + 5, 2, 1, "#8a8478");    // 灯座
+      px(ctx, bx + 1, by + 1, 2, 2, "#fff6c0");    // highlight
+      px(ctx, bx + 1, by + 5, 2, 1, "#8a8478");    // socket
       px(ctx, bx + 1, by + 6, 2, 1, "#6b665c");
-      if (bulbT > 35) {                             // 初亮时的光芒
+      if (bulbT > 35) {                             // rays at first light-up
         px(ctx, bx - 3, by + 1, 1, 1, "#f7d060");
         px(ctx, bx + 6, by + 1, 1, 1, "#f7d060");
         px(ctx, bx + 1, by - 3, 2, 1, "#f7d060");
@@ -729,6 +730,6 @@
   }
 
   window.PetRenderer = { draw };
-  // 公共绘图工具箱:皮肤文件可复用(像素、气泡、状态框、爱心、Zzz、彩纸)
+  // Shared drawing toolkit: reusable by skin files (pixels, bubbles, status box, hearts, Zzz, confetti)
   window.PetKit = { S, GY, px, heart, zzz, bubbleBox, statusTag, confetti, isNight };
 })();
