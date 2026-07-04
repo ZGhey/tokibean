@@ -307,17 +307,64 @@
   const WIN_W = 240;
   let resizing = false;
 
-  // Resize the window to the target height while keeping the bottom edge (under the pet) fixed.
-  // Measure from the current actual height rather than assuming BASE_H, to avoid state drift
-  async function setWindowHeight(targetH) {
+  // Where the pet's canvas sits inside a window of height H, per layout:
+  //   up / collapsed → pet anchored to the bottom;  below → pet anchored to the top
+  const CANVAS_H = 184, PAD_B = 4;
+  const canvasTopIn = (H, below) => (below ? 0 : H - CANVAS_H - PAD_B);
+
+  // Resize/reposition the window to `targetH`, keeping the pet's canvas at a fixed screen Y so the
+  // pet never jumps. `below` = panel-below-pet layout (window grows downward instead of upward).
+  async function setWindowLayout(anchorScreenTop, targetH, below) {
     const win = window.__TAURI__.window.getCurrentWindow();
     const { LogicalSize, LogicalPosition } = window.__TAURI__.dpi;
     const factor = await win.scaleFactor();
-    const size = (await win.outerSize()).toLogical(factor);
-    if (Math.abs(size.height - targetH) < 1) return;
-    const pos = (await win.outerPosition()).toLogical(factor);
-    await win.setPosition(new LogicalPosition(pos.x, pos.y + (size.height - targetH)));
+    const x = (await win.outerPosition()).toLogical(factor).x;
+    // Position using the estimated canvas offset first (approximately right — minimal flicker)…
+    const estTop = Math.round(anchorScreenTop - canvasTopIn(targetH, below));
+    await win.setPosition(new LogicalPosition(x, estTop));
     await win.setSize(new LogicalSize(WIN_W, targetH));
+    // …then correct against the canvas's real position so it lands exactly on the anchor (no drift)
+    await new Promise((r) => setTimeout(r, 32));
+    const corrected = Math.round(anchorScreenTop - canvas.getBoundingClientRect().top);
+    if (Math.abs(corrected - estTop) > 1) {
+      await win.setPosition(new LogicalPosition(x, corrected));
+    }
+  }
+
+  // Lay out the (already-visible) panel: expand upward if there's room above the pet, otherwise
+  // downward (panel below the pet) so it never clips off the top of the screen.
+  async function fitPanel() {
+    const win = window.__TAURI__.window.getCurrentWindow();
+    const factor = await win.scaleFactor();
+    const winPos = (await win.outerPosition()).toLogical(factor);
+    const anchorScreenTop = winPos.y + canvas.getBoundingClientRect().top;
+    // The panel's own height is the same in either layout — measure it once so we can pick
+    // up-vs-down WITHOUT first laying it out above the pet (which caused a visible flash/jump)
+    const panelH = panel.getBoundingClientRect().height;
+    // Top edge of the screen the pet is actually on. On a stacked multi-monitor layout, the screen
+    // ABOVE is not "room" — find the monitor that contains the pet, not just the primary/current one.
+    let monTop = 0;
+    try {
+      const mons = await window.__TAURI__.window.availableMonitors();
+      for (const m of mons) {
+        const p = m.position.toLogical(factor), s = m.size.toLogical(factor);
+        if (winPos.x >= p.x && winPos.x < p.x + s.width && winPos.y >= p.y && winPos.y < p.y + s.height) {
+          monTop = p.y;
+          break;
+        }
+      }
+      if (monTop === 0) {
+        const cm = await win.currentMonitor();
+        if (cm) monTop = cm.position.toLogical(cm.scaleFactor).y;
+      }
+    } catch (e) {}
+    // Up layout overlaps the top 60px of the canvas; down overlaps the bottom 14px
+    const targetUp = Math.max(Math.round(panelH + CANVAS_H - 60 + 12), BASE_H);
+    // If expanding upward would push the window top above this screen's top (+ menu bar), go down
+    const below = anchorScreenTop - canvasTopIn(targetUp, false) < monTop + 30;
+    document.body.classList.toggle("below", below);
+    const targetH = below ? Math.max(Math.round(panelH + CANVAS_H - 14 + 12), BASE_H) : targetUp;
+    await setWindowLayout(anchorScreenTop, targetH, below);
   }
 
   async function togglePanel() {
@@ -325,19 +372,24 @@
     resizing = true;
     try {
       if (panel.classList.contains("hidden")) {
+        // Keep the panel invisible while we measure and choose up-vs-down + reposition the window,
+        // so it never flashes above then jumps below; then fade it in at the final spot.
+        panel.style.opacity = "0";
         panel.classList.remove("hidden");
         // The user wants to see data: ask the backend to refresh official usage once (it's debounced)
         invoke("panel_opened").catch(() => {});
         // Keep the whole window interactive while open so panel hover is reliable at any height
         invoke("set_panel_open", { open: true }).catch(() => {});
-        // Actual layout height from panel top to canvas bottom (auto-includes the negative-margin overlap)
-        const need = Math.ceil(
-          canvas.getBoundingClientRect().bottom - panel.getBoundingClientRect().top
-        ) + 12;
-        await setWindowHeight(Math.max(need, BASE_H));
+        await fitPanel();
+        panel.style.opacity = "";
       } else {
-        await setWindowHeight(BASE_H);
+        const win = window.__TAURI__.window.getCurrentWindow();
+        const factor = await win.scaleFactor();
+        const winPos = (await win.outerPosition()).toLogical(factor);
+        const anchorScreenTop = winPos.y + canvas.getBoundingClientRect().top;
         panel.classList.add("hidden");
+        document.body.classList.remove("below");
+        await setWindowLayout(anchorScreenTop, BASE_H, false);
         invoke("set_panel_open", { open: false }).catch(() => {});
       }
     } finally {
@@ -368,11 +420,7 @@
   el("settings-toggle").addEventListener("click", async () => {
     const nowHidden = el("settings-body").classList.toggle("hidden");
     el("settings-toggle").setAttribute("aria-expanded", nowHidden ? "false" : "true");
-    if (!panel.classList.contains("hidden")) {
-      const need =
-        Math.ceil(canvas.getBoundingClientRect().bottom - panel.getBoundingClientRect().top) + 12;
-      await setWindowHeight(Math.max(need, BASE_H));
-    }
+    if (!panel.classList.contains("hidden")) await fitPanel();
   });
 
   // Hold the pet to drag the window; releasing in place counts as a click (toggle panel).

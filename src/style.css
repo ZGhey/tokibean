@@ -43,6 +43,14 @@ body {
 /* !important so `.hidden` wins over later element/`.label-row` display rules */
 #panel.hidden, .hidden { display: none !important; }
 
+/* Panel below the pet — used when there's no room above (pet near the screen top):
+   flip the stack so the pet is on top and the panel hangs below it */
+/* column-reverse ⇒ pet on top, panel below; flex-end packs them to the TOP of the window
+   (in column-reverse, main-end is the top), so the canvas sits at window-top (offset 0) —
+   which is what the JS layout math assumes. Using flex-start here drifts the pet downward. */
+body.below { flex-direction: column-reverse; justify-content: flex-end; }
+body.below #panel { margin-bottom: 0; margin-top: -14px; }
+
 .row.head {
   display: flex;
   align-items: center;
