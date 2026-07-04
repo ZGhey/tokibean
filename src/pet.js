@@ -211,22 +211,48 @@
     // Note: at high DPI canvas.width is physical pixels, so lay out with the CSS logical width
     const W = canvas.clientWidth || canvas.width;
     ctx.font = "12px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
-    // Wrap per character (Chinese has no spaces to break on, so break by character), max 3 lines,
-    // truncate the overflow with an ellipsis. Can't use fillText's maxWidth to squeeze — Chinese would get crushed together
+    // Word-aware wrap: keep Latin words whole (never split mid-word), break CJK per character
+    // (no spaces to break on) and at spaces; max 3 lines, ellipsize any overflow. Can't use
+    // fillText's maxWidth to squeeze — Chinese would get crushed together.
     const maxW = W - 28;
+    const isCJK = (ch) => {
+      const c = ch.codePointAt(0);
+      return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) ||
+        (c >= 0xff00 && c <= 0xffef) || (c >= 0x20000 && c <= 0x3ffff);
+    };
+    // Tokens: whole Latin words, single CJK chars, and spaces (soft breaks)
+    const tokens = [];
+    let word = "";
+    for (const ch of Array.from(text)) {
+      if (ch === " ") {
+        if (word) { tokens.push(word); word = ""; }
+        tokens.push(" ");
+      } else if (isCJK(ch)) {
+        if (word) { tokens.push(word); word = ""; }
+        tokens.push(ch);
+      } else {
+        word += ch;
+      }
+    }
+    if (word) tokens.push(word);
     const lines = [];
     let line = "";
     let truncated = false;
-    for (const ch of Array.from(text)) {
-      if (line && ctx.measureText(line + ch).width > maxW) {
-        if (lines.length === 2) {
-          truncated = true;
-          break;
-        }
-        lines.push(line);
-        line = "";
+    outer: for (const tok of tokens) {
+      if (tok === " ") {
+        if (line && ctx.measureText(line + " ").width <= maxW) line += " ";
+        continue;
       }
-      line += ch;
+      // A single token wider than a whole line falls back to per-character breaking
+      const units = ctx.measureText(tok).width > maxW ? Array.from(tok) : [tok];
+      for (const unit of units) {
+        if (line && ctx.measureText(line + unit).width > maxW) {
+          if (lines.length === 2) { truncated = true; break outer; }
+          lines.push(line);
+          line = "";
+        }
+        line += unit;
+      }
     }
     if (line) lines.push(line);
     if (truncated) {
