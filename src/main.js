@@ -260,13 +260,17 @@
       ? t("hook_ok", { ev: cur.last_event || "--" }) + sess
       : t("go_install");
     // No button needed when things already work; but re-surface it when new events are missing
-    el("install-hooks").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
-    el("connect-claude").classList.toggle("hidden", u.basis === "official" || cfgConnected);
+    const acctDone = u.basis === "official" || cfgConnected;
+    const hooksDone = cur.hooks_seen && !hooksIncomplete;
+    el("install-hooks").classList.toggle("hidden", hooksDone);
+    el("connect-claude").classList.toggle("hidden", acctDone);
     // Once connected, drop the redundant "connected" status rows — show them only when action is needed
-    el("acct-row").classList.toggle("hidden", u.basis === "official" || cfgConnected);
-    el("hook-row").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
+    el("acct-row").classList.toggle("hidden", acctDone);
+    el("hook-row").classList.toggle("hidden", hooksDone);
     // The hook-install result belongs to that section — hide it too once hooks are connected
-    el("install-result").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
+    el("install-result").classList.toggle("hidden", hooksDone);
+    // Nothing below the divider when both sections are done — hide the dangling line too
+    el("conn-divider").classList.toggle("hidden", acctDone && hooksDone);
 
     // In-app updater row: only visible when an update is actually pending / downloading.
     // "Up to date" / "checking" are NOT shown here — a manual check reports those via the dialog.
