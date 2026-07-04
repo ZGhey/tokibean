@@ -109,7 +109,7 @@ Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ 状态
 - **通知降噪**:工作不足 30 秒的小活完工不发系统通知(配置里 `notify_min_secs` 可调)
 - **hooks 用 curl 转发**而不是 http 类型 hook,为了兼容更多 Claude Code 版本;curl 在 Win10+/macOS/主流 Linux 都自带
 - **5 小时窗口口径**:从窗口内首次活动所在的 UTC 整点开始,持续 5 小时(与 ccusage 的 blocks 口径一致)
-- **官方用量(订阅模式)**:自动读取本机 Claude Code 的登录凭据(macOS Keychain / `~/.claude/.credentials.json` / Windows 凭据管理器),直接查 Anthropic 官方用量接口,拿到真实的 5 小时窗口和周限额百分比;凭据只在本机内存里用,只发给 `api.anthropic.com`,不落盘不外传。也可以在面板里点「连接 Claude 账号」单独授权。
+- **官方用量(订阅模式)**:在面板里点一次**「连接 Claude 账号」**——浏览器走标准 OAuth 授权,Tokibean 存**自己的**一份凭据,再去查 Anthropic 官方用量接口,拿到真实的 5 小时窗口和周限额百分比。这份令牌由它自己在后台续期(带退避),所以**只需连接一次**:access token 过期、甚至重启电脑都不用重连。作为独立 app,它刻意**不借用** Claude Code CLI 的凭据(Keychain / `.credentials.json` / 凭据管理器);连接之前回退到本地估算。令牌只留在本机,只发给 `api.anthropic.com`。
 - **订阅限额说明**:Anthropic 不公开具体限额,且会随服务器负载浮动。没有官方数据时,默认用你**历史最高窗口用量**当估算基准;想手动指定就改配置里的 `block_limit`
 - **订阅/API 判定**:自动模式下,环境里有 `ANTHROPIC_API_KEY` 视为 API 计费,否则视为订阅。判不准就在面板里手动切
 - **自动更新**(0.2.0 起):启动时和每 24 小时检查新版本;发现后面板会出现一键「更新」提示条(或用托盘的「检查更新…」),自动下载、安装、重启。更新包经签名,托管在 GitHub Releases。现有 0.1.x 用户需手动下一次 0.2.0,之后即可应用内更新。
