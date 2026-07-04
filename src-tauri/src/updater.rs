@@ -38,6 +38,16 @@ pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
                     version: update.version.clone(),
                     notes: update.body.clone().unwrap_or_default(),
                 };
+                // Respect a version the user chose to skip — but only on automatic checks;
+                // a manual "Check for Updates" always surfaces it.
+                if !manual && shared.cfg.lock().unwrap().skip_version == info.version {
+                    {
+                        let mut st = shared.update.lock().unwrap();
+                        st.status = String::new();
+                    }
+                    state::push_update(&app, &shared);
+                    return;
+                }
                 // Only notify + bubble the first time we see a given version, so the 24h
                 // re-check doesn't nag every day
                 let is_new = {

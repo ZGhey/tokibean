@@ -25,7 +25,7 @@ fn random_urlsafe() -> String {
     b64url(&buf)
 }
 
-fn open_browser(url: &str) {
+pub fn open_browser(url: &str) {
     // Windows URL-opening pitfall: a bare `cmd start` splits on `&` into separate
     // commands, and rundll32 truncates too. The only reliable fix is to quote the
     // URL passed to `start`; Rust won't auto-quote a space-free argument, so we

@@ -75,6 +75,8 @@
       <span class="pct" id="u-pct">0%</span>
     </div>
     <div class="btns">
+      <button id="btn-skip">Skip this version</button>
+      <span style="flex:1"></span>
       <button id="btn-later">Later</button>
       <button id="btn-update" class="primary">Update Now</button>
     </div>
@@ -106,6 +108,7 @@
         whatsnew: ["更新内容", "What's new"],
         no_notes: ["查看 GitHub Release 了解本次更新详情 →", "See the GitHub release for details →"],
         later: ["稍后", "Later"],
+        skip: ["跳过此版本", "Skip this version"],
         update_now: ["立即更新", "Update Now"],
         downloading: ["下载中…", "Downloading…"],
         installing: ["安装中,即将重启…", "Installing, restarting…"],
@@ -119,6 +122,7 @@
       const RELEASES = "https://github.com/ZGhey/tokibean/releases/latest";
 
       let current = "";
+      let curVersion = "";
       async function getCurrent() {
         try { current = await window.__TAURI__.app.getVersion(); } catch (e) { current = ""; }
       }
@@ -148,6 +152,8 @@
         el("u-sub").textContent = t("sub_update", { v: u.version, cur });
         el("u-notes-label").textContent = t("whatsnew");
         renderNotes(u.notes);
+        curVersion = u.version;
+        el("btn-skip").textContent = t("skip");
         el("btn-later").textContent = t("later");
         el("btn-update").textContent = t("update_now");
       }
@@ -183,6 +189,10 @@
 
       el("btn-update").addEventListener("click", () => { invoke("install_update").catch(() => {}); });
       el("btn-later").addEventListener("click", () => win.close());
+      el("btn-skip").addEventListener("click", () => {
+        if (curVersion) invoke("skip_update", { version: curVersion }).catch(() => {});
+        win.close();
+      });
       el("btn-ok").addEventListener("click", () => win.close());
 
       listen("pet-update", (e) => { if (e.payload && e.payload.update) applyProgressOrRender(e.payload.update); });

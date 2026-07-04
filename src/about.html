@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>About Tokibean</title>
+  <style>
+    :root {
+      --bg: #f4f4f6; --fg: #1c1c1e; --sub: #6b6b70; --line: #e3e3e6;
+      --accent: #2e6b39; --accent-h: #357a42; --btn: #e8e8ec; --btn-h: #dedee3; --link: #2f6fd0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1e1e20; --fg: #f2f2f4; --sub: #9a9aa0; --line: #3a3a3e;
+        --accent: #3a8f4c; --accent-h: #45a058; --btn: #3a3a3e; --btn-h: #46464b; --link: #6ea8fe;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--bg); color: var(--fg);
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 13px; user-select: none;
+      display: flex; flex-direction: column; align-items: center;
+      text-align: center; padding: 22px 20px; gap: 4px;
+    }
+    .logo {
+      width: 68px; height: 68px; border-radius: 16px; margin-bottom: 8px;
+      background: linear-gradient(160deg, #f7a24e, #ef7a33);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 34px; box-shadow: 0 3px 10px rgba(0,0,0,0.18);
+    }
+    h1 { font-size: 18px; margin: 2px 0 0; font-weight: 650; }
+    .alias { color: var(--sub); font-size: 12px; }
+    .ver { color: var(--sub); font-size: 12px; margin-top: 2px; }
+    .desc { margin: 12px 4px; line-height: 1.55; color: var(--fg); }
+    .row { display: flex; gap: 10px; margin-top: 6px; }
+    button {
+      font: inherit; padding: 8px 16px; border-radius: 8px; border: none;
+      background: var(--btn); color: var(--fg); cursor: pointer;
+    }
+    button:hover { background: var(--btn-h); }
+    button.primary { background: var(--accent); color: #fff; }
+    button.primary:hover { background: var(--accent-h); }
+    .foot { margin-top: auto; padding-top: 14px; color: var(--sub); font-size: 11.5px; }
+    a { color: var(--link); cursor: pointer; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="logo">🫘</div>
+  <h1>Tokibean 码豆</h1>
+  <div class="alias">拱门·墩墩</div>
+  <div class="ver" id="ver">v—</div>
+  <div class="desc" id="desc"></div>
+  <div class="row">
+    <button id="btn-repo" class="primary"></button>
+    <button id="btn-check"></button>
+  </div>
+  <div class="foot">
+    <span id="copyright"></span> · <a id="link-repo"></a>
+  </div>
+
+  <script>
+    (function () {
+      const { invoke } = window.__TAURI__.core;
+      const win = window.__TAURI__.window.getCurrentWindow();
+      const ZH = (navigator.language || "en").toLowerCase().startsWith("zh");
+      const REPO = "https://github.com/ZGhey/tokibean";
+      const t = (zh, en) => (ZH ? zh : en);
+      const el = (id) => document.getElementById(id);
+
+      el("desc").textContent = t(
+        "看得见 Claude Code 在忙什么的桌面宠物,顺带盯着你的 token 用量。透明、置顶、不打扰。",
+        "A desktop pet that shows what Claude Code is doing and keeps an eye on your token usage. Transparent, always-on-top, unobtrusive."
+      );
+      el("btn-repo").textContent = t("GitHub 仓库", "GitHub Repository");
+      el("btn-check").textContent = t("检查更新", "Check for Updates");
+      el("copyright").textContent = "© 2026 Tokibean";
+      el("link-repo").textContent = "ZGhey/tokibean";
+
+      const openRepo = () => invoke("open_url", { url: REPO }).catch(() => {});
+      el("btn-repo").addEventListener("click", openRepo);
+      el("link-repo").addEventListener("click", openRepo);
+      el("btn-check").addEventListener("click", () => { invoke("check_update").catch(() => {}); win.close(); });
+
+      (async () => {
+        try { el("ver").textContent = "v" + (await window.__TAURI__.app.getVersion()); } catch (e) {}
+      })();
+    })();
+  </script>
+</body>
+</html>

@@ -58,6 +58,8 @@ pub struct Config {
     /// Boss key (global shortcut) accelerator string, e.g. "CommandOrControl+Shift+B".
     /// Summons/hides the pet in one press; same format as a Tauri accelerator (Cmd/Ctrl/Alt/Shift + key)
     pub boss_key: String,
+    /// A release version the user chose to skip; automatic update checks won't re-prompt for it
+    pub skip_version: String,
     /// Remembered window position (physical pixels), None = system default
     pub pos_x: Option<i32>,
     pub pos_y: Option<i32>,
@@ -83,6 +85,7 @@ impl Default for Config {
             sound: false,
             skin: "classic".into(),
             boss_key: "CommandOrControl+Shift+B".into(),
+            skip_version: String::new(),
             pos_x: None,
             pos_y: None,
             oauth_token: String::new(),

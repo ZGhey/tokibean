@@ -143,6 +143,57 @@ fn open_update_window(app: AppHandle) {
     show_update_window(&app);
 }
 
+#[tauri::command]
+fn skip_update(app: AppHandle, version: String) {
+    let shared = app.state::<Arc<Shared>>();
+    {
+        let mut cfg = shared.cfg.lock().unwrap();
+        cfg.skip_version = version;
+        let _ = cfg.save();
+    }
+    {
+        let mut st = shared.update.lock().unwrap();
+        st.available = None;
+        st.status = String::new();
+        st.progress = 0;
+    }
+    state::push_update(&app, &shared);
+}
+
+#[tauri::command]
+fn open_url(url: String) {
+    login::open_browser(&url);
+}
+
+#[tauri::command]
+fn open_about_window(app: AppHandle) {
+    show_about_window(&app);
+}
+
+/// Open (or focus) the About dialog window. Same macOS activation-policy handling as the updater.
+fn show_about_window(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        if let Some(w) = app.get_webview_window("about") {
+            let _ = w.show();
+            let _ = w.set_focus();
+            return;
+        }
+        let _ = tauri::WebviewWindowBuilder::new(
+            &app,
+            "about",
+            tauri::WebviewUrl::App("about.html".into()),
+        )
+        .title(i18n::t("关于 码豆", "About Tokibean"))
+        .inner_size(380.0, 430.0)
+        .resizable(false)
+        .center()
+        .build();
+    });
+}
+
 /// Open (or focus) the dedicated update dialog window (a normal decorated window showing the
 /// new version, release notes, and an Update button). On macOS, temporarily switch to a regular
 /// (Dock-visible) app so the window can come to the front and take keyboard focus — a menu-bar
@@ -300,15 +351,24 @@ fn main() {
             panel_opened,
             check_update,
             install_update,
-            open_update_window
+            open_update_window,
+            skip_update,
+            open_url,
+            open_about_window
         ])
         .on_window_event(|window, event| {
-            // Updater dialog closed: on macOS drop the temporary Dock icon (back to Accessory)
+            // Updater / About dialog closed: on macOS drop the temporary Dock icon (back to Accessory),
+            // but only once no other such window remains open
             #[cfg(target_os = "macos")]
-            if window.label() == "updater" && matches!(event, WindowEvent::Destroyed) {
-                let _ = window
-                    .app_handle()
-                    .set_activation_policy(tauri::ActivationPolicy::Accessory);
+            if matches!(window.label(), "updater" | "about") && matches!(event, WindowEvent::Destroyed) {
+                let app = window.app_handle();
+                let others_open = ["updater", "about"]
+                    .iter()
+                    .filter(|&&l| l != window.label())
+                    .any(|&l| app.get_webview_window(l).is_some());
+                if !others_open {
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
             }
             // Position persistence applies only to the pet window, never the updater dialog
             if window.label() != "main" {
@@ -379,8 +439,9 @@ fn main() {
             // System tray: show/hide + quit
             let show = MenuItem::with_id(app, "show", i18n::t("显示 / 隐藏", "Show / Hide"), true, None::<&str>)?;
             let check = MenuItem::with_id(app, "check_update", i18n::t("检查更新…", "Check for Updates…"), true, None::<&str>)?;
+            let about = MenuItem::with_id(app, "about", i18n::t("关于", "About"), true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", i18n::t("退出", "Quit"), true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &check, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &check, &about, &quit])?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("Tokibean")
@@ -403,6 +464,7 @@ fn main() {
                         let shared = app.state::<Arc<Shared>>().inner().clone();
                         updater::spawn_check(app.clone(), shared, true);
                     }
+                    "about" => show_about_window(app),
                     _ => {}
                 });
             // The macOS menu bar uses a monochrome template icon (black silhouette + transparent holes); the
