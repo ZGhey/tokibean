@@ -75,17 +75,15 @@ pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
                 crate::show_update_window(&app);
             }
             Ok(None) => {
+                // Up to date: clear any pending state silently (no "up to date" UI per design)
+                let _ = manual;
                 {
                     let mut st = shared.update.lock().unwrap();
                     st.available = None;
-                    st.status = if manual { "uptodate".to_string() } else { String::new() };
+                    st.status = String::new();
                     st.progress = 0;
                 }
                 state::push_update(&app, &shared);
-                // A user-initiated check gets visible feedback via the dialog ("up to date")
-                if manual {
-                    crate::show_update_window(&app);
-                }
             }
             Err(e) => {
                 eprintln!("[claude-pet] update check failed: {}", e);

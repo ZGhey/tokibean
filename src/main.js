@@ -67,6 +67,7 @@
     update_uptodate: ["已是最新版本", "You're up to date"],
     update_checking: ["检查更新中…", "Checking for updates…"],
     update_error: ["检查更新失败,点重试", "Update check failed — retry"],
+    settings: ["设置", "Settings"],
   };
   function t(key, vars) {
     let s = (I18N[key] ? I18N[key][LANG === "zh" ? 0 : 1] : key) || key;
@@ -255,7 +256,8 @@
     el("acct-row").classList.toggle("hidden", u.basis === "official" || cfgConnected);
     el("hook-row").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
 
-    // In-app updater row: only visible when an update is pending / downloading / just-checked
+    // In-app updater row: only visible when an update is actually pending / downloading.
+    // "Up to date" / "checking" are NOT shown here — a manual check reports those via the dialog.
     const up = cur.update || { available: null, status: "", progress: 0 };
     const urow = el("update-row");
     if (up.status === "downloading") {
@@ -264,18 +266,6 @@
       urow.disabled = true;
     } else if (up.available) {
       urow.textContent = t("update_found", { v: up.available.version });
-      urow.classList.remove("hidden");
-      urow.disabled = false;
-    } else if (up.status === "checking") {
-      urow.textContent = t("update_checking");
-      urow.classList.remove("hidden");
-      urow.disabled = true;
-    } else if (up.status === "uptodate") {
-      urow.textContent = t("update_uptodate");
-      urow.classList.remove("hidden");
-      urow.disabled = true;
-    } else if (up.status === "error") {
-      urow.textContent = t("update_error");
       urow.classList.remove("hidden");
       urow.disabled = false;
     } else {
@@ -330,7 +320,7 @@
           canvas.getBoundingClientRect().bottom - panel.getBoundingClientRect().top
         ) + 12;
         await setWindowHeight(Math.max(need, BASE_H));
-        armAutoHide(); // If the mouse never enters after opening, still collapse on schedule
+        scheduleHide(GRACE_MS); // if the mouse never comes over the panel, collapse after a grace period
       } else {
         await setWindowHeight(BASE_H);
         panel.classList.add("hidden");
@@ -340,35 +330,49 @@
     }
   }
 
-  // Panel auto fade-out: 3 seconds after opening (or after the mouse leaves), fade and collapse.
-  // Hovering the panel keeps it open; moving away restarts the 3s countdown.
-  const AUTO_HIDE_MS = 3000;
+  // Panel visibility: click the pet to open; hovering keeps it open indefinitely; it collapses
+  // when the mouse leaves the panel, when the window loses focus (app switch / click elsewhere),
+  // or — if the mouse never comes over it after opening — after a short grace period.
+  const GRACE_MS = 2500; // opened but never hovered → collapse
+  const LEAVE_MS = 350; // mouse left the panel → collapse
   let hideTimer = null;
-  function armAutoHide() {
+  function cancelHide() {
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => {
-      if (panel.classList.contains("hidden")) return;
-      if (panel.matches(":hover")) {
-        armAutoHide();
-        return;
-      }
-      // Don't interrupt while a dropdown/input is in use
-      if (panel.contains(document.activeElement) && document.activeElement !== document.body) {
-        armAutoHide();
-        return;
-      }
-      panel.style.opacity = "0";
-      setTimeout(() => {
-        panel.style.opacity = "";
-        if (!panel.classList.contains("hidden")) togglePanel();
-      }, 360);
-    }, AUTO_HIDE_MS);
+  }
+  function scheduleHide(ms) {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(collapseIfIdle, ms);
+  }
+  function collapseIfIdle() {
+    if (panel.classList.contains("hidden")) return;
+    if (panel.matches(":hover")) return; // still hovering — stay open until the mouse leaves
+    // Don't collapse while a field/dropdown is being edited
+    if (panel.contains(document.activeElement) && document.activeElement !== document.body) return;
+    panel.style.opacity = "0";
+    setTimeout(() => {
+      panel.style.opacity = "";
+      if (!panel.classList.contains("hidden")) togglePanel();
+    }, 300);
   }
   panel.addEventListener("mouseenter", () => {
-    clearTimeout(hideTimer);
+    cancelHide();
     panel.style.opacity = "";
   });
-  panel.addEventListener("mouseleave", armAutoHide);
+  panel.addEventListener("mouseleave", () => scheduleHide(LEAVE_MS));
+  // Switching to another app / clicking elsewhere collapses the panel
+  window.addEventListener("blur", () => scheduleHide(LEAVE_MS));
+
+  // Collapsible settings section: toggle it and re-fit the window to the new height
+  el("settings-toggle").addEventListener("click", async () => {
+    const nowHidden = el("settings-body").classList.toggle("hidden");
+    el("settings-toggle").setAttribute("aria-expanded", nowHidden ? "false" : "true");
+    cancelHide(); // the user is interacting — don't collapse the panel
+    if (!panel.classList.contains("hidden")) {
+      const need =
+        Math.ceil(canvas.getBoundingClientRect().bottom - panel.getBoundingClientRect().top) + 12;
+      await setWindowHeight(Math.max(need, BASE_H));
+    }
+  });
 
   // Hold the pet to drag the window; releasing in place counts as a click (toggle panel).
   // Once movement passes the threshold, hand off to the OS native drag, after which mouseup won't return to the page.
