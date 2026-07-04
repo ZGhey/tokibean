@@ -4,7 +4,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
-mod focus;
 mod hooks_install;
 mod hooks_server;
 mod i18n;
@@ -99,11 +98,6 @@ fn set_config(
     }
     state::push_update(&app, &shared);
     Ok(())
-}
-
-#[tauri::command]
-fn focus_terminal() -> Result<String, String> {
-    focus::focus_terminal()
 }
 
 #[tauri::command]
@@ -347,7 +341,6 @@ fn main() {
             set_config,
             set_boss_key,
             connect_claude,
-            focus_terminal,
             panel_opened,
             check_update,
             install_update,

@@ -40,7 +40,8 @@ body {
   z-index: 2;
 }
 #panel { transition: opacity 0.35s; }
-#panel.hidden, .hidden { display: none; }
+/* !important so `.hidden` wins over later element/`.label-row` display rules */
+#panel.hidden, .hidden { display: none !important; }
 
 .row.head {
   display: flex;

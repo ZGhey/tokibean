@@ -333,8 +333,8 @@
   // Panel visibility: click the pet to open; hovering keeps it open indefinitely; it collapses
   // when the mouse leaves the panel, when the window loses focus (app switch / click elsewhere),
   // or — if the mouse never comes over it after opening — after a short grace period.
-  const GRACE_MS = 2500; // opened but never hovered → collapse
-  const LEAVE_MS = 350; // mouse left the panel → collapse
+  const GRACE_MS = 3000; // opened but never engaged → collapse
+  const LEAVE_MS = 400; // mouse left the panel → collapse
   let hideTimer = null;
   function cancelHide() {
     clearTimeout(hideTimer);
@@ -354,12 +354,14 @@
       if (!panel.classList.contains("hidden")) togglePanel();
     }, 300);
   }
+  // Any pointer activity over the panel keeps it open (robust even if mouseenter is missed)
   panel.addEventListener("mouseenter", () => {
     cancelHide();
     panel.style.opacity = "";
   });
+  panel.addEventListener("mousemove", cancelHide);
   panel.addEventListener("mouseleave", () => scheduleHide(LEAVE_MS));
-  // Switching to another app / clicking elsewhere collapses the panel
+  // Switching to another app collapses it (unless the mouse is still on the panel)
   window.addEventListener("blur", () => scheduleHide(LEAVE_MS));
 
   // Collapsible settings section: toggle it and re-fit the window to the new height
@@ -403,16 +405,8 @@
     }
   });
   window.addEventListener("mouseup", () => {
-    if (downPos) {
-      // With a bubble, clicking the top half (where the bubble is) focuses the terminal; clicking the pet toggles the panel
-      if (cur.bubble && downPos.canvasY !== undefined && downPos.canvasY < 108) {
-        invoke("focus_terminal").catch((err) => {
-          el("install-result").textContent = String(err);
-        });
-      } else {
-        togglePanel();
-      }
-    }
+    // Clicking the pet always just toggles the usage panel
+    if (downPos) togglePanel();
     downPos = null;
   });
 
