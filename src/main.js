@@ -341,21 +341,23 @@
     // The panel's own height is the same in either layout — measure it once so we can pick
     // up-vs-down WITHOUT first laying it out above the pet (which caused a visible flash/jump)
     const panelH = panel.getBoundingClientRect().height;
-    // Top edge of the screen the pet is actually on. On a stacked multi-monitor layout, the screen
-    // ABOVE is not "room" — find the monitor that contains the pet, not just the primary/current one.
+    // Top edge of the screen the pet is on. currentMonitor() reports the monitor the pet sits on
+    // (correct on a stacked multi-monitor layout, where the screen ABOVE must not count as "room");
+    // fall back to the monitor whose bounds contain the pet.
     let monTop = 0;
     try {
-      const mons = await window.__TAURI__.window.availableMonitors();
-      for (const m of mons) {
-        const p = m.position.toLogical(factor), s = m.size.toLogical(factor);
-        if (winPos.x >= p.x && winPos.x < p.x + s.width && winPos.y >= p.y && winPos.y < p.y + s.height) {
-          monTop = p.y;
-          break;
+      const cm = await window.__TAURI__.window.currentMonitor();
+      if (cm) {
+        monTop = cm.position.toLogical(cm.scaleFactor).y;
+      } else {
+        const mons = await window.__TAURI__.window.availableMonitors();
+        for (const m of mons) {
+          const p = m.position.toLogical(m.scaleFactor), s = m.size.toLogical(m.scaleFactor);
+          if (anchorScreenTop >= p.y && anchorScreenTop < p.y + s.height) {
+            monTop = p.y;
+            break;
+          }
         }
-      }
-      if (monTop === 0) {
-        const cm = await win.currentMonitor();
-        if (cm) monTop = cm.position.toLogical(cm.scaleFactor).y;
       }
     } catch (e) {}
     // Up layout overlaps the top 60px of the canvas; down overlaps the bottom 14px
