@@ -255,6 +255,8 @@
     // Once connected, drop the redundant "connected" status rows — show them only when action is needed
     el("acct-row").classList.toggle("hidden", u.basis === "official" || cfgConnected);
     el("hook-row").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
+    // The hook-install result belongs to that section — hide it too once hooks are connected
+    el("install-result").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
 
     // In-app updater row: only visible when an update is actually pending / downloading.
     // "Up to date" / "checking" are NOT shown here — a manual check reports those via the dialog.
@@ -414,7 +416,7 @@
 
   el("mode-select").addEventListener("change", (e) => {
     invoke("set_mode", { mode: e.target.value }).catch((err) => {
-      el("install-result").textContent = String(err);
+      el("settings-result").textContent = String(err);
     });
   });
 
@@ -451,7 +453,7 @@
       notifyMinSecs: Math.max(0, parseInt(el("cfg-minsecs").value, 10) || 0),
       sound: soundOn,
       skin: el("cfg-skin").value,
-    }).catch((err) => (el("install-result").textContent = String(err)));
+    }).catch((err) => (el("settings-result").textContent = String(err)));
   }
   el("cfg-notify").addEventListener("change", saveCfg);
   el("cfg-minsecs").addEventListener("change", saveCfg);
@@ -518,10 +520,10 @@
     invoke("set_boss_key", { accel })
       .then(() => {
         bossKeyAccel = accel;
-        el("install-result").textContent = t("boss_updated", { k: prettyAccel(accel) });
+        el("settings-result").textContent = t("boss_updated", { k: prettyAccel(accel) });
       })
       .catch((err) => {
-        el("install-result").textContent = t("boss_fail", { e: err });
+        el("settings-result").textContent = t("boss_fail", { e: err });
       })
       .finally(() => {
         recording = false;
