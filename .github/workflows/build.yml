@@ -52,10 +52,22 @@ jobs:
       - name: Release notes from tag
         id: notes
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NOTES=""
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            NOTES=$(git for-each-ref "refs/tags/${{ github.ref_name }}" --format='%(contents)')
+            # Read the annotated tag's message via the API (robust: does not depend on the
+            # runner having fetched the tag object), with a local-git fallback.
+            SHA=$(gh api "repos/${{ github.repository }}/git/ref/tags/${{ github.ref_name }}" --jq '.object.sha' 2>/dev/null || echo "")
+            OTYPE=$(gh api "repos/${{ github.repository }}/git/ref/tags/${{ github.ref_name }}" --jq '.object.type' 2>/dev/null || echo "")
+            if [ "$OTYPE" = "tag" ] && [ -n "$SHA" ]; then
+              NOTES=$(gh api "repos/${{ github.repository }}/git/tags/$SHA" --jq '.message' 2>/dev/null || echo "")
+            fi
+            if [ -z "$NOTES" ]; then
+              git fetch --tags --force origin >/dev/null 2>&1 || true
+              NOTES=$(git tag -l --format='%(contents)' "${{ github.ref_name }}")
+            fi
           fi
           {
             echo "body<<__NOTES_EOF__"
