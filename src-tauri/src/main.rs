@@ -11,6 +11,7 @@ mod i18n;
 mod login;
 mod official;
 mod state;
+mod updater;
 mod usage;
 
 use std::sync::Arc;
@@ -123,6 +124,12 @@ fn connect_claude(app: AppHandle) -> Result<String, String> {
     state::refresh_usage(&shared, true);
     state::push_update(&app, &shared);
     Ok(msg)
+}
+
+#[tauri::command]
+fn check_update(app: AppHandle) {
+    let shared = app.state::<Arc<Shared>>().inner().clone();
+    updater::spawn_check(app, shared, true);
 }
 
 /// Menu-bar template icon: draw the Dundun silhouette (same 26×26 grid geometry as
@@ -251,7 +258,8 @@ fn main() {
             set_boss_key,
             connect_claude,
             focus_terminal,
-            panel_opened
+            panel_opened,
+            check_update
         ])
         .on_window_event(|window, event| {
             let shared = window.app_handle().state::<Arc<Shared>>();
