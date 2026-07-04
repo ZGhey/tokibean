@@ -25,6 +25,24 @@ pub enum Base {
     Done,
 }
 
+/// A newer release detected by the updater
+#[derive(Serialize, Clone, Default)]
+pub struct UpdateInfo {
+    pub version: String,
+    pub notes: String,
+}
+
+/// Update availability + transient download status, surfaced to the panel
+#[derive(Serialize, Clone, Default)]
+pub struct UpdateState {
+    /// Some once a newer release has been detected
+    pub available: Option<UpdateInfo>,
+    /// Transient status for the panel: "" | "checking" | "uptodate" | "downloading" | "error"
+    pub status: String,
+    /// Download progress 0-100 while status == "downloading"
+    pub progress: u8,
+}
+
 pub struct Session {
     pub base: Base,
     /// When the current base was entered (used to compute work time while Working)
@@ -83,6 +101,8 @@ pub struct Shared {
     pub official_want: AtomicBool,
     /// Instant of the last official-API attempt (regardless of success), for the 60-second debounce
     pub official_last_try: Mutex<Option<Instant>>,
+    /// In-app updater: availability + download progress, pushed to the panel
+    pub update: Mutex<UpdateState>,
 }
 
 impl Shared {
@@ -115,6 +135,7 @@ impl Shared {
             refresh_backoff: Mutex::new(None),
             official_want: AtomicBool::new(false),
             official_last_try: Mutex::new(None),
+            update: Mutex::new(UpdateState::default()),
         }
     }
 }
@@ -140,11 +161,14 @@ pub struct PetUpdate {
     pub oops: bool,
     /// Number of in-flight background tasks
     pub bg_count: usize,
+    /// In-app updater state (availability + download progress)
+    pub update: UpdateState,
 }
 
 pub fn build_update(shared: &Shared) -> PetUpdate {
     let core = shared.core.lock().unwrap();
     let snap = shared.snapshot.lock().unwrap().clone();
+    let update = shared.update.lock().unwrap().clone();
     let now = Instant::now();
 
     let mut working = 0usize;
@@ -202,6 +226,7 @@ pub fn build_update(shared: &Shared) -> PetUpdate {
         celebrate: core.celebrate,
         oops: core.oops_until.map(|u| now < u).unwrap_or(false),
         bg_count: core.bg_tasks.iter().filter(|&&u| now < u).count(),
+        update,
     }
 }
 
