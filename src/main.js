@@ -315,60 +315,46 @@
         panel.classList.remove("hidden");
         // The user wants to see data: ask the backend to refresh official usage once (it's debounced)
         invoke("panel_opened").catch(() => {});
+        // Keep the whole window interactive while open so panel hover is reliable at any height
+        invoke("set_panel_open", { open: true }).catch(() => {});
         // Actual layout height from panel top to canvas bottom (auto-includes the negative-margin overlap)
         const need = Math.ceil(
           canvas.getBoundingClientRect().bottom - panel.getBoundingClientRect().top
         ) + 12;
         await setWindowHeight(Math.max(need, BASE_H));
-        scheduleHide(GRACE_MS); // if the mouse never comes over the panel, collapse after a grace period
       } else {
         await setWindowHeight(BASE_H);
         panel.classList.add("hidden");
+        invoke("set_panel_open", { open: false }).catch(() => {});
       }
     } finally {
       resizing = false;
     }
   }
 
-  // Panel visibility: click the pet to open; hovering keeps it open indefinitely; it collapses
-  // when the mouse leaves the panel, when the window loses focus (app switch / click elsewhere),
-  // or — if the mouse never comes over it after opening — after a short grace period.
-  const GRACE_MS = 3000; // opened but never engaged → collapse
-  const LEAVE_MS = 400; // mouse left the panel → collapse
-  let hideTimer = null;
-  function cancelHide() {
-    clearTimeout(hideTimer);
-  }
-  function scheduleHide(ms) {
-    clearTimeout(hideTimer);
-    hideTimer = setTimeout(collapseIfIdle, ms);
-  }
-  function collapseIfIdle() {
+  // Panel visibility: click the pet to open. It stays open while the OS cursor is anywhere over
+  // the window (pet or panel) and collapses once the cursor has left for a moment. The decision is
+  // made in Rust from the authoritative cursor position (reliable for this transparent, click-through
+  // overlay, where webview :hover/mouseleave events are not) — the backend emits "collapse-panel".
+  function collapsePanel() {
     if (panel.classList.contains("hidden")) return;
-    if (panel.matches(":hover")) return; // still hovering — stay open until the mouse leaves
-    // Don't collapse while a field/dropdown is being edited
-    if (panel.contains(document.activeElement) && document.activeElement !== document.body) return;
+    // Don't collapse mid-edit (e.g. typing the boss key / a number); keep tracking and retry
+    if (panel.contains(document.activeElement) && document.activeElement !== document.body) {
+      invoke("set_panel_open", { open: true }).catch(() => {});
+      return;
+    }
     panel.style.opacity = "0";
     setTimeout(() => {
       panel.style.opacity = "";
       if (!panel.classList.contains("hidden")) togglePanel();
-    }, 300);
+    }, 220);
   }
-  // Any pointer activity over the panel keeps it open (robust even if mouseenter is missed)
-  panel.addEventListener("mouseenter", () => {
-    cancelHide();
-    panel.style.opacity = "";
-  });
-  panel.addEventListener("mousemove", cancelHide);
-  panel.addEventListener("mouseleave", () => scheduleHide(LEAVE_MS));
-  // Switching to another app collapses it (unless the mouse is still on the panel)
-  window.addEventListener("blur", () => scheduleHide(LEAVE_MS));
+  listen("collapse-panel", collapsePanel);
 
   // Collapsible settings section: toggle it and re-fit the window to the new height
   el("settings-toggle").addEventListener("click", async () => {
     const nowHidden = el("settings-body").classList.toggle("hidden");
     el("settings-toggle").setAttribute("aria-expanded", nowHidden ? "false" : "true");
-    cancelHide(); // the user is interacting — don't collapse the panel
     if (!panel.classList.contains("hidden")) {
       const need =
         Math.ceil(canvas.getBoundingClientRect().bottom - panel.getBoundingClientRect().top) + 12;

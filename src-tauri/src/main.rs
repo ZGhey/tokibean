@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 use state::Shared;
 
@@ -109,6 +109,16 @@ fn panel_opened(app: AppHandle) {
         .store(true, std::sync::atomic::Ordering::Relaxed);
     state::refresh_usage(&shared, false);
     state::push_update(&app, &shared);
+}
+
+#[tauri::command]
+fn set_panel_open(app: AppHandle, open: bool) {
+    // Frontend tells us the panel expanded/collapsed so the click-through thread can keep the
+    // whole window interactive while it's open (so panel hover works at any panel height)
+    let shared = app.state::<Arc<Shared>>();
+    shared
+        .panel_open
+        .store(open, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[tauri::command]
@@ -342,6 +352,7 @@ fn main() {
             set_boss_key,
             connect_claude,
             panel_opened,
+            set_panel_open,
             check_update,
             install_update,
             open_update_window,
@@ -485,8 +496,11 @@ fn main() {
             // block buttons underneath); moving onto the pet/bubble canvas region or the expanded panel restores interactivity.
             {
                 let h = handle.clone();
+                let s = shared.clone();
                 std::thread::spawn(move || {
+                    use std::sync::atomic::Ordering;
                     let mut ignoring = false;
+                    let mut left_at: Option<std::time::Instant> = None;
                     loop {
                         std::thread::sleep(Duration::from_millis(50));
                         let Some(w) = h.get_webview_window("main") else { continue };
@@ -500,9 +514,10 @@ fn main() {
                             && cur.y < (wpos.y + wsize.height as i32) as f64;
                         let h_logical = wsize.height as f64 / factor;
                         let rel_y = (cur.y - wpos.y as f64) / factor;
-                        // When the panel is expanded (window taller than its base state) the whole window is clickable;
-                        // when collapsed, only the bottom canvas strip (pet + bubble) is clickable
-                        let solid = if h_logical > 345.0 {
+                        // The whole window is clickable when the panel is open (authoritative flag from the
+                        // frontend — height alone is unreliable for a short panel) or when it's tall; otherwise
+                        // only the bottom canvas strip (pet + bubble) is clickable and the rest passes through.
+                        let solid = if s.panel_open.load(Ordering::Relaxed) || h_logical > 345.0 {
                             true
                         } else {
                             rel_y >= h_logical - 192.0
@@ -511,6 +526,25 @@ fn main() {
                         if want != ignoring {
                             let _ = w.set_ignore_cursor_events(want);
                             ignoring = want;
+                        }
+                        // Auto-collapse: while the panel is open, keep it open as long as the cursor is
+                        // within the window (over the panel or the pet); collapse once it has left for a
+                        // moment. Uses the OS cursor position — reliable for this transparent overlay,
+                        // unlike webview :hover/mouseleave events.
+                        if s.panel_open.load(Ordering::Relaxed) {
+                            if inside {
+                                left_at = None;
+                            } else {
+                                let now = std::time::Instant::now();
+                                let since = *left_at.get_or_insert(now);
+                                if now.duration_since(since) > Duration::from_millis(450) {
+                                    s.panel_open.store(false, Ordering::Relaxed);
+                                    let _ = h.emit("collapse-panel", ());
+                                    left_at = None;
+                                }
+                            }
+                        } else {
+                            left_at = None;
                         }
                     }
                 });

@@ -86,6 +86,9 @@ pub struct Shared {
     pub hooks_seen: AtomicBool,
     pub warned_80: AtomicBool,
     pub warned_limit: AtomicBool,
+    /// Whether the usage panel is currently expanded (set by the frontend). While open, the
+    /// whole window is made interactive so panel hover works regardless of its pixel height.
+    pub panel_open: AtomicBool,
     /// Throttling for window-position persistence: last save instant / instant of the last programmatic window resize
     pub last_pos_save: Mutex<Instant>,
     pub last_resize: Mutex<Instant>,
@@ -132,6 +135,7 @@ impl Shared {
             hooks_seen: AtomicBool::new(false),
             warned_80: AtomicBool::new(false),
             warned_limit: AtomicBool::new(false),
+            panel_open: AtomicBool::new(false),
             last_pos_save: Mutex::new(Instant::now()),
             last_resize: Mutex::new(Instant::now()),
             official: Mutex::new(None),
