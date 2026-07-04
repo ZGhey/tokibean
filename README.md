@@ -112,6 +112,7 @@ Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ state 
 - **Official usage (subscription mode)**: automatically reads the local Claude Code login credential (macOS Keychain / `~/.claude/.credentials.json` / Windows Credential Manager) and queries the Anthropic official usage endpoint for real 5-hour-window and weekly percentages. The credential is used only in memory on your machine, sent only to `api.anthropic.com`, never written to disk or shared. You can also authorize separately via "Connect Claude account" in the panel.
 - **About subscription limits**: Anthropic doesn't publish exact limits, and they float with server load. Without official data, the estimate defaults to your **historical peak window usage** as the baseline; set `block_limit` in the config to specify it manually.
 - **Subscription vs API detection**: in auto mode, `ANTHROPIC_API_KEY` in the environment means API billing, otherwise subscription. Switch manually in the panel if it guesses wrong.
+- **Auto-update** (from 0.2.0): checks for new releases on launch and every 24h; when one is found the panel shows a one-click "Update" banner (or use the tray's *Check for Updates…*), which downloads, installs, and relaunches. Update packages are signed and served from GitHub Releases. Existing 0.1.x users download 0.2.0 manually once — updates are in-app from there on.
 
 ## Configuration
 

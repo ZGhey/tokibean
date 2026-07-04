@@ -49,6 +49,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing: with these present, tauri-action signs each bundle (.sig)
+          # and generates + uploads latest.json to the Release
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # 推标签时创建 Release 并上传安装包;手动触发时只构建
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
