@@ -22,12 +22,15 @@ already publishes.
   project's private key. A minisign keypair is generated once; the public key
   ships in the app config, the private key lives only in GitHub Secrets.
 - **Only protects future versions.** The updater takes effect starting from the
-  first release that bundles it. Existing 0.1.10 users must manually download the
-  first updater-enabled release (0.1.11) once; from 0.1.11 → 0.1.12+ updates are
-  in-app. This is inherent to every auto-update scheme, not specific to this one.
+  first release that bundles it. The baseline is **0.2.0** (auto-update is a real
+  feature, so it lands on a minor-version milestone, not a 0.1.x patch): existing
+  0.1.x users manually download 0.2.0 once, and from 0.2.0 → 0.2.1/0.3+ updates
+  are in-app. This is inherent to every auto-update scheme, not specific to this
+  one. Caveat on timing: if several 0.1.x patches are expected before 0.2.0, land
+  the updater in the next patch instead so those releases also auto-propagate.
 - **Full end-to-end verification needs two updater-enabled releases.** During
   development we verify with `cargo check` and a local manifest; the real
-  0.1.11 → 0.1.12 upgrade can only be exercised once both exist.
+  0.2.0 → 0.2.1 upgrade can only be exercised once both exist.
 
 ## UX
 
@@ -136,11 +139,12 @@ No test harness exists in this repo. Verification steps:
 2. Config validation — `tauri.conf.json` schema accepts the updater block.
 3. Logic dry-run — temporarily point `endpoints` at a local/test `latest.json`
    describing a higher version to confirm the check/notify/panel path fires.
-4. Real end-to-end (deferred): after 0.1.11 ships with the updater, cut 0.1.12 and
-   confirm an installed 0.1.11 auto-detects and applies it on macOS and Windows.
+4. Real end-to-end (deferred): after 0.2.0 ships with the updater, cut 0.2.1 and
+   confirm an installed 0.2.0 auto-detects and applies it on macOS and Windows.
 
 ## Rollout
 
-- 0.1.11 is the "baseline" updater-enabled release. Its own release notes should
-  tell existing users this is the last manual download.
+- **0.2.0** is the "baseline" updater-enabled release, cut when the 0.2 milestone
+  is ready (the updater may ship alongside other 0.2 features). Its release notes
+  should tell existing users this is the last manual download.
 - README (both `README.md` and `README.zh-CN.md`) gets a short "auto-update" note.
