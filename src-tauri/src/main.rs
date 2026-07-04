@@ -132,6 +132,12 @@ fn check_update(app: AppHandle) {
     updater::spawn_check(app, shared, true);
 }
 
+#[tauri::command]
+fn install_update(app: AppHandle) {
+    let shared = app.state::<Arc<Shared>>().inner().clone();
+    updater::spawn_install(app, shared);
+}
+
 /// Menu-bar template icon: draw the Dundun silhouette (same 26×26 grid geometry as
 /// pet.js / gen-icon.js) as pure black + transparent RGBA. macOS treats it as a template
 /// image, using only the alpha channel as the shape — rendered black on a light menu bar,
@@ -259,7 +265,8 @@ fn main() {
             connect_claude,
             focus_terminal,
             panel_opened,
-            check_update
+            check_update,
+            install_update
         ])
         .on_window_event(|window, event| {
             let shared = window.app_handle().state::<Arc<Shared>>();
@@ -326,8 +333,9 @@ fn main() {
 
             // System tray: show/hide + quit
             let show = MenuItem::with_id(app, "show", i18n::t("显示 / 隐藏", "Show / Hide"), true, None::<&str>)?;
+            let check = MenuItem::with_id(app, "check_update", i18n::t("检查更新…", "Check for Updates…"), true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", i18n::t("退出", "Quit"), true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &check, &quit])?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("Tokibean")
@@ -346,6 +354,10 @@ fn main() {
                         app.exit(0)
                     }
                     "show" => toggle_pet_visibility(app),
+                    "check_update" => {
+                        let shared = app.state::<Arc<Shared>>().inner().clone();
+                        updater::spawn_check(app.clone(), shared, true);
+                    }
                     _ => {}
                 });
             // The macOS menu bar uses a monochrome template icon (black silhouette + transparent holes); the
@@ -439,10 +451,24 @@ fn main() {
                                 }
                             }
                         }
+                        // Re-check for updates once a day (silent unless a new version appears)
+                        if tick % 86_400 == 0 {
+                            updater::spawn_check(h.clone(), s.clone(), false);
+                        }
                         if changed {
                             state::push_update(&h, &s);
                         }
                     }
+                });
+            }
+
+            // Check for updates a few seconds after launch (background; silent if up to date)
+            {
+                let h = handle.clone();
+                let s = shared.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(5));
+                    updater::spawn_check(h, s, false);
                 });
             }
 

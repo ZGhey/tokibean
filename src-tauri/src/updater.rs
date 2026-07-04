@@ -99,3 +99,85 @@ fn set_status(shared: &Arc<Shared>, status: &str) {
     let mut st = shared.update.lock().unwrap();
     st.status = status.to_string();
 }
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Download and install the pending update, streaming progress into shared.update, then relaunch.
+pub fn spawn_install(app: AppHandle, shared: Arc<Shared>) {
+    tauri::async_runtime::spawn(async move {
+        {
+            let mut st = shared.update.lock().unwrap();
+            st.status = "downloading".to_string();
+            st.progress = 0;
+        }
+        state::push_update(&app, &shared);
+
+        let updater = match app.updater() {
+            Ok(u) => u,
+            Err(e) => return fail(&app, &shared, &format!("updater unavailable: {}", e)),
+        };
+        let update = match updater.check().await {
+            Ok(Some(u)) => u,
+            Ok(None) => {
+                // Nothing to install anymore
+                set_status(&shared, "");
+                {
+                    let mut st = shared.update.lock().unwrap();
+                    st.available = None;
+                }
+                state::push_update(&app, &shared);
+                return;
+            }
+            Err(e) => return fail(&app, &shared, &format!("re-check failed: {}", e)),
+        };
+
+        let downloaded = Arc::new(AtomicU64::new(0));
+        let app_cb = app.clone();
+        let shared_cb = shared.clone();
+        let dl = downloaded.clone();
+        let res = update
+            .download_and_install(
+                move |chunk, total| {
+                    let got = dl.fetch_add(chunk as u64, Ordering::Relaxed) + chunk as u64;
+                    let Some(total) = total else { return };
+                    if total == 0 {
+                        return;
+                    }
+                    let pct = ((got.min(total) as f64 / total as f64) * 100.0) as u8;
+                    // Push only when the integer percentage advances (<=101 pushes total)
+                    let advanced = {
+                        let mut st = shared_cb.update.lock().unwrap();
+                        if st.progress != pct {
+                            st.progress = pct;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if advanced {
+                        state::push_update(&app_cb, &shared_cb);
+                    }
+                },
+                || {},
+            )
+            .await;
+
+        match res {
+            Ok(_) => {
+                println!("[claude-pet] update installed, restarting");
+                app.restart();
+            }
+            Err(e) => fail(&app, &shared, &format!("install failed: {}", e)),
+        }
+    });
+}
+
+fn fail(app: &AppHandle, shared: &Arc<Shared>, msg: &str) {
+    eprintln!("[claude-pet] {}", msg);
+    {
+        let mut st = shared.update.lock().unwrap();
+        st.status = "error".to_string();
+        st.progress = 0;
+    }
+    state::push_update(app, shared);
+}
