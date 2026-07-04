@@ -13,7 +13,6 @@
 //   agentCount number of active subagents (draws a mini-clone each, beside the pet)
 // }
 // Default character: 拱门·墩墩 (persimmon-orange arched dome), an original figure, freely distributable.
-// Local private skins go in src/skins/tribute.js (excluded via .gitignore).
 
 (function () {
   const S = 4;            // pixel scale factor

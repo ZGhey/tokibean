@@ -174,6 +174,35 @@ fn open_about_window(app: AppHandle) {
     show_about_window(&app);
 }
 
+#[tauri::command]
+fn open_settings_window(app: AppHandle) {
+    show_settings_window(&app);
+}
+
+/// Open (or focus) the Settings window. Same macOS activation-policy handling as the updater/about.
+fn show_settings_window(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        if let Some(w) = app.get_webview_window("settings") {
+            let _ = w.show();
+            let _ = w.set_focus();
+            return;
+        }
+        let _ = tauri::WebviewWindowBuilder::new(
+            &app,
+            "settings",
+            tauri::WebviewUrl::App("settings.html".into()),
+        )
+        .title(i18n::t("码豆 · 设置", "Tokibean · Settings"))
+        .inner_size(360.0, 350.0)
+        .resizable(false)
+        .center()
+        .build();
+    });
+}
+
 /// Open (or focus) the About dialog window. Same macOS activation-policy handling as the updater.
 fn show_about_window(app: &AppHandle) {
     let app = app.clone();
@@ -358,15 +387,16 @@ fn main() {
             open_update_window,
             skip_update,
             open_url,
-            open_about_window
+            open_about_window,
+            open_settings_window
         ])
         .on_window_event(|window, event| {
             // Updater / About dialog closed: on macOS drop the temporary Dock icon (back to Accessory),
             // but only once no other such window remains open
             #[cfg(target_os = "macos")]
-            if matches!(window.label(), "updater" | "about") && matches!(event, WindowEvent::Destroyed) {
+            if matches!(window.label(), "updater" | "about" | "settings") && matches!(event, WindowEvent::Destroyed) {
                 let app = window.app_handle();
-                let others_open = ["updater", "about"]
+                let others_open = ["updater", "about", "settings"]
                     .iter()
                     .filter(|&&l| l != window.label())
                     .any(|&l| app.get_webview_window(l).is_some());
@@ -442,10 +472,11 @@ fn main() {
 
             // System tray: show/hide + quit
             let show = MenuItem::with_id(app, "show", i18n::t("显示 / 隐藏", "Show / Hide"), true, None::<&str>)?;
+            let settings = MenuItem::with_id(app, "settings", i18n::t("设置…", "Settings…"), true, None::<&str>)?;
             let check = MenuItem::with_id(app, "check_update", i18n::t("检查更新…", "Check for Updates…"), true, None::<&str>)?;
             let about = MenuItem::with_id(app, "about", i18n::t("关于", "About"), true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", i18n::t("退出", "Quit"), true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &check, &about, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &settings, &check, &about, &quit])?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("Tokibean")
@@ -469,6 +500,7 @@ fn main() {
                         updater::spawn_check(app.clone(), shared, true);
                     }
                     "about" => show_about_window(app),
+                    "settings" => show_settings_window(app),
                     _ => {}
                 });
             // The macOS menu bar uses a monochrome template icon (black silhouette + transparent holes); the

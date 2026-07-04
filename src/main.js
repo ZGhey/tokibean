@@ -34,7 +34,6 @@
     skin_classic: ["墩墩(默认)", "Dundun (default)"],
     skin_bean: ["豆豆", "Bean"],
     skin_tabby: ["橘猫·摸鱼", "Tabby"],
-    skin_tribute: ["私藏款(需本地文件)", "Tribute (local file)"],
     hook_events: ["hook 事件", "Hook events"],
     not_received: ["还没收到", "Nothing yet"],
     install_hooks: ["安装 Claude Code hooks", "Install Claude Code hooks"],
@@ -418,13 +417,6 @@
   }
   listen("collapse-panel", collapsePanel);
 
-  // Collapsible settings section: toggle it and re-fit the window to the new height
-  el("settings-toggle").addEventListener("click", async () => {
-    const nowHidden = el("settings-body").classList.toggle("hidden");
-    el("settings-toggle").setAttribute("aria-expanded", nowHidden ? "false" : "true");
-    if (!panel.classList.contains("hidden")) await fitPanel();
-  });
-
   // Hold the pet to drag the window; releasing in place counts as a click (toggle panel).
   // Once movement passes the threshold, hand off to the OS native drag, after which mouseup won't return to the page.
   // During native dragging the page receives no mouse events, so the window Moved event keeps the dragging flag alive;
@@ -501,121 +493,37 @@
 
   el("mode-select").addEventListener("change", (e) => {
     invoke("set_mode", { mode: e.target.value }).catch((err) => {
-      el("settings-result").textContent = String(err);
+      el("acct-result").textContent = String(err);
     });
   });
 
-  // ---------- Settings ----------
+  // ---------- Config (settings now live in the tray Settings window) ----------
   let cfgConnected = false;
   let soundOn = false;
   let hooksIncomplete = false;
-  let bossKeyAccel = "CommandOrControl+Shift+B";
-  invoke("get_config").then((c) => {
-    el("cfg-notify").checked = c.notify;
-    el("cfg-minsecs").value = c.notify_min_secs;
-    el("cfg-sound").checked = c.sound;
+  let currentSkin = "classic";
+  function applyConfig(c) {
     soundOn = c.sound;
     cfgConnected = c.connected;
     hooksIncomplete = !!c.hooks_incomplete;
-    if (c.boss_key) {
-      bossKeyAccel = c.boss_key;
-      el("cfg-bosskey").value = prettyAccel(c.boss_key);
-    }
-    el("cfg-skin").value = c.skin || "classic";
-    // Non-default skin: dynamically load it to override PetRenderer
-    if (c.skin && c.skin !== "classic") {
-      const s = document.createElement("script");
-      s.src = "skins/" + encodeURIComponent(c.skin) + ".js";
-      document.body.appendChild(s);
-    }
+    currentSkin = c.skin || "classic";
     if (hooksIncomplete) el("install-hooks").textContent = t("update_hooks");
     if (c.connected) el("acct-status").textContent = t("connected");
-  });
-  function saveCfg() {
-    soundOn = el("cfg-sound").checked;
-    return invoke("set_config", {
-      notify: el("cfg-notify").checked,
-      notifyMinSecs: Math.max(0, parseInt(el("cfg-minsecs").value, 10) || 0),
-      sound: soundOn,
-      skin: el("cfg-skin").value,
-    }).catch((err) => (el("settings-result").textContent = String(err)));
   }
-  el("cfg-notify").addEventListener("change", saveCfg);
-  el("cfg-minsecs").addEventListener("change", saveCfg);
-  el("cfg-sound").addEventListener("change", saveCfg);
-  el("cfg-skin").addEventListener("change", () => {
-    // Reload the page after switching skins so the new one takes effect
-    Promise.resolve(saveCfg()).then(() => location.reload());
-  });
-
-  // ---------- Boss key recording ----------
-  const IS_MAC = navigator.userAgent.includes("Mac");
-  // Render an accelerator string nicely: symbols on mac (⌘⇧B), text elsewhere (Ctrl+Shift+B)
-  function prettyAccel(a) {
-    const parts = a.split("+").map((t) => {
-      const u = t.trim().toLowerCase();
-      if (["commandorcontrol", "cmdorctrl"].includes(u)) return IS_MAC ? "⌘" : "Ctrl";
-      if (["super", "meta", "cmd", "command"].includes(u)) return IS_MAC ? "⌘" : "Win";
-      if (["control", "ctrl"].includes(u)) return IS_MAC ? "⌃" : "Ctrl";
-      if (["alt", "option"].includes(u)) return IS_MAC ? "⌥" : "Alt";
-      if (u === "shift") return IS_MAC ? "⇧" : "Shift";
-      return t.trim().toUpperCase();
-    });
-    return IS_MAC ? parts.join("") : parts.join("+");
-  }
-  // Build an accelerator string from a keyboard event (needs at least one modifier + one main key)
-  function accelFromEvent(e) {
-    const mods = [];
-    if (e.metaKey) mods.push("Super"); // Cmd on mac
-    if (e.ctrlKey) mods.push("Control");
-    if (e.altKey) mods.push("Alt");
-    if (e.shiftKey) mods.push("Shift");
-    let key = null;
-    if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
-    else if (/^Digit[0-9]$/.test(e.code)) key = e.code.slice(5);
-    else if (/^F[0-9]{1,2}$/.test(e.code)) key = e.code;
-    else if (e.code === "Space") key = "Space";
-    if (!key || mods.length === 0) return null;
-    return mods.concat(key).join("+");
-  }
-
-  const bossInput = el("cfg-bosskey");
-  let recording = false;
-  bossInput.addEventListener("focus", () => {
-    recording = true;
-    bossInput.classList.add("recording");
-    bossInput.value = t("press_shortcut");
-  });
-  bossInput.addEventListener("blur", () => {
-    if (recording) {
-      recording = false;
-      bossInput.classList.remove("recording");
-      bossInput.value = prettyAccel(bossKeyAccel);
+  invoke("get_config").then((c) => {
+    applyConfig(c);
+    // Non-default skin: dynamically load it to override PetRenderer
+    if (currentSkin !== "classic") {
+      const s = document.createElement("script");
+      s.src = "skins/" + encodeURIComponent(currentSkin) + ".js";
+      document.body.appendChild(s);
     }
   });
-  bossInput.addEventListener("keydown", (e) => {
-    if (!recording) return;
-    e.preventDefault();
-    if (e.key === "Escape") {
-      bossInput.blur();
-      return;
-    }
-    const accel = accelFromEvent(e);
-    if (!accel) return; // Only modifiers pressed, keep waiting for the main key
-    invoke("set_boss_key", { accel })
-      .then(() => {
-        bossKeyAccel = accel;
-        el("settings-result").textContent = t("boss_updated", { k: prettyAccel(accel) });
-      })
-      .catch((err) => {
-        el("settings-result").textContent = t("boss_fail", { e: err });
-      })
-      .finally(() => {
-        recording = false;
-        bossInput.classList.remove("recording");
-        bossInput.value = prettyAccel(bossKeyAccel);
-        bossInput.blur();
-      });
+  // The Settings window persists changes and emits "config-changed" — re-sync here (reload on skin change)
+  listen("config-changed", (e) => {
+    const newSkin = e && e.payload && e.payload.skin;
+    if (newSkin && newSkin !== currentSkin) return location.reload();
+    invoke("get_config").then(applyConfig).catch(() => {});
   });
 
   // ---------- 8-bit sound effects (WebAudio, no audio files) ----------
