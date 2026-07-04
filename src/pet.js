@@ -327,14 +327,30 @@
     return h >= 23 || h < 7;
   }
 
-  // Miner's lamp + downward light cone
-  function headlamp(ctx, cx, y0) {
-    px(ctx, cx - 4, y0 - 2, 8, 2, "#f0d468");
-    ctx.fillStyle = "rgba(240,212,104,0.10)";
+  // Night ambience: a crescent moon in the sky + a street lamp at the edge casting a warm pool of light
+  function nightScene(ctx, cx) {
+    // Crescent moon, upper-right (full disc minus an offset disc)
+    const mx = 43 * S, my = 7 * S, mr = 3.5 * S;
+    ctx.save();
+    ctx.fillStyle = "#f3e7a6";
+    ctx.beginPath(); ctx.arc(mx, my, mr, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.beginPath(); ctx.arc(mx + mr * 0.7, my - mr * 0.35, mr, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    px(ctx, 35, 4, 1, 1, "#fff6c0"); // a few tiny stars
+    px(ctx, 47, 13, 1, 1, "#fff6c0");
+    px(ctx, 38, 11, 1, 1, "#fff6c0");
+    // Street lamp on the left edge
+    const lx = 2;
+    px(ctx, lx, 9, 2, GY - 9, "#413d37"); // post
+    px(ctx, lx - 1, 7, 5, 2, "#524d45");  // lamp housing
+    px(ctx, lx, 8, 3, 1, "#fff2b0");      // bulb glow
+    // Warm light pool spreading toward the pet
+    ctx.fillStyle = "rgba(255,224,150,0.08)";
     ctx.beginPath();
-    ctx.moveTo(cx * S, (y0 + 1) * S);
-    ctx.lineTo((cx - 9) * S, (GY + 2) * S);
-    ctx.lineTo((cx + 9) * S, (GY + 2) * S);
+    ctx.moveTo((lx + 1) * S, 9 * S);
+    ctx.lineTo((cx + 13) * S, (GY + 2) * S);
+    ctx.lineTo((lx - 1) * S, (GY + 2) * S);
     ctx.closePath();
     ctx.fill();
   }
@@ -411,6 +427,9 @@
     // Tool error: shake side to side a little in annoyance
     let cx = baseCx + dx + pace;
     if (x.oops) cx += t % 6 < 3 ? 1 : -1;
+
+    // Night ambience (moon + street lamp) drawn behind the pet
+    if (isNight() && !x.dragging) nightScene(ctx, cx);
 
     // Small ground shadow (shrinks and fades when picked up)
     ctx.fillStyle = x.dragging ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.18)";
@@ -563,8 +582,6 @@
       }
       // Patted while working: doesn't stop, but secretly leaks a little heart
       if (x.pat && Math.floor(t / 40) % 2 === 0) heart(ctx, cx - 17, y0 - 5, 0.7);
-      // Late-night overtime: wear the miner's lamp (mining mode already has a hard hat, don't stack)
-      if (isNight() && note !== "coding") headlamp(ctx, cx, y0);
       if (tired) {
         // Tired: a sweat drop hangs at the side of the head, dripping down
         const drip = Math.floor(t / 30) % 3;
