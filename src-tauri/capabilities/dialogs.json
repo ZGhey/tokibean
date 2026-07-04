@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "dialogs",
+  "description": "关于 / 设置 / 更新 对话框窗口所需权限(读取版本、事件收发、关闭窗口)",
+  "windows": ["about", "settings", "updater"],
+  "permissions": [
+    "core:default"
+  ]
+}
