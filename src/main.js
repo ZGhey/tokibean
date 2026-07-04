@@ -435,7 +435,31 @@
     clearTimeout(dragEndTimer);
     dragEndTimer = setTimeout(() => {
       dragging = false;
+      if (panel.classList.contains("hidden")) clampToScreen();
     }, 350);
+  }
+  // Keep the window fully on its current screen so the panel can't be clipped at the left/right
+  // edge (and the pet stays visible top/bottom). Left/right multi-monitor still works — this
+  // clamps to whichever monitor the pet was dragged onto; it never limits panel up/down expansion.
+  async function clampToScreen() {
+    const win = window.__TAURI__.window.getCurrentWindow();
+    const { LogicalPosition } = window.__TAURI__.dpi;
+    const factor = await win.scaleFactor();
+    const pos = (await win.outerPosition()).toLogical(factor);
+    const size = (await win.outerSize()).toLogical(factor);
+    let mon;
+    try {
+      mon = await window.__TAURI__.window.currentMonitor();
+    } catch (e) {}
+    if (!mon) return;
+    const mp = mon.position.toLogical(mon.scaleFactor);
+    const ms = mon.size.toLogical(mon.scaleFactor);
+    const petTop = size.height - CANVAS_H; // empty (bubble) space above the pet within the window
+    const x = Math.max(mp.x, Math.min(pos.x, mp.x + ms.width - size.width));
+    const y = Math.max(mp.y - petTop, Math.min(pos.y, mp.y + ms.height - size.height));
+    if (Math.round(x) !== Math.round(pos.x) || Math.round(y) !== Math.round(pos.y)) {
+      await win.setPosition(new LogicalPosition(Math.round(x), Math.round(y)));
+    }
   }
   window.__TAURI__.window.getCurrentWindow().onMoved(() => {
     if (dragging) armDragEnd();
