@@ -38,7 +38,6 @@
     hook_events: ["hook 事件", "Hook events"],
     not_received: ["还没收到", "Nothing yet"],
     install_hooks: ["安装 Claude Code hooks", "Install Claude Code hooks"],
-    listen_hint: ["监听 127.0.0.1:8737 · 点宠物收起面板", "Listening on 127.0.0.1:8737 · click pet to collapse"],
     pet_title: ["点我看用量", "Click me for usage"],
     reset_done: ["已重置", "reset"],
     official_data: ["官方数据", "official data"],
