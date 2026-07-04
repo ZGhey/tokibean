@@ -147,6 +147,10 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                     sess.since = now;
                 }
                 sess.in_tool = true;
+                // Real activity = tokens being burned; follow it like Claude Code does,
+                // refreshing official usage on the action itself rather than on a wall clock
+                // (the 60s debounce in refresh_usage caps a tool-heavy turn at ~1 fetch/min)
+                shared.official_want.store(true, Ordering::Relaxed);
                 let tool = v["tool_name"].as_str().unwrap_or("");
                 if tool == "Task" || tool == "Agent" {
                     // A subagent was launched: track it as its own counted, persistent

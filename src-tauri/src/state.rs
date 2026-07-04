@@ -359,22 +359,16 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
         build_snapshot(&scanner.events, &cfg)
     };
 
-    // Subscription mode: prefer the API's real percentage, but fetching is event-driven —
-    // the percentage only rises while working, so we never ask when fully idle:
+    // Subscription mode: prefer the API's real percentage, but fetching follows Claude's actions,
+    // not a wall clock — the percentage only moves when Claude burns tokens, so we ask on hook
+    // events, never on a timer and never when idle:
     //   · with_official (startup / mode switch / account connect) → ask directly
-    //   · Stop completion / panel open raised the official_want flag → ask (60s debounce)
-    //   · working and cache older than 5 min (long task still burning) → ask (60s debounce)
-    //   · reset point passed but data is still the old window's → ask (60s debounce)
+    //   · official_want flag raised by a hook (PreToolUse activity / Stop completion) or panel open → ask
+    //   · reset point passed but data is still the old window's → one-shot correction
+    // All flag-driven asks share a 60s debounce, so a tool-heavy turn caps at ~1 fetch/min.
     // On failure (rate limit / network), keep the old value up to 6 hours; only then fall back to local estimation
     if snap.mode == "subscription" {
         let now = Instant::now();
-        let any_working = shared
-            .core
-            .lock()
-            .unwrap()
-            .sessions
-            .values()
-            .any(|s| s.base == Base::Working);
         let backoff = shared
             .official_backoff
             .lock()
@@ -387,9 +381,6 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
         let window_over = |o: &OfficialUsage| {
             o.five_reset_ts != 0 && chrono::Utc::now().timestamp() >= o.five_reset_ts
         };
-        let cache_age = cache.as_ref().map(|(_, at)| now.duration_since(*at));
-        let working_stale =
-            any_working && cache_age.map(|a| a > Duration::from_secs(300)).unwrap_or(true);
         let reset_stale = cache
             .as_ref()
             .map(|(o, at)| window_over(o) && now.duration_since(*at) > Duration::from_secs(60))
@@ -401,7 +392,7 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
             .map(|t| now.duration_since(t) < Duration::from_secs(60))
             .unwrap_or(false);
         let should = !backoff
-            && (with_official || ((asap || working_stale || reset_stale) && !tried_recently));
+            && (with_official || ((asap || reset_stale) && !tried_recently));
         if should {
             *shared.official_last_try.lock().unwrap() = Some(now);
             use crate::official::FetchOutcome;
