@@ -125,6 +125,12 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
             "PostToolUse" => {
                 // Tool finished, exit the "in tool call" state
                 sess.in_tool = false;
+                // A subagent (Task/Agent) finished: drop one mini-clone
+                if let Some(tool) = v["tool_name"].as_str() {
+                    if tool == "Task" || tool == "Agent" {
+                        core.agent_tasks.pop();
+                    }
+                }
                 // Tool error -> a brief annoyed animation
                 let r = &v["tool_response"];
                 let is_err = r["is_error"].as_bool().unwrap_or(false)
@@ -141,12 +147,22 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                     sess.since = now;
                 }
                 sess.in_tool = true;
-                if let Some(tool) = v["tool_name"].as_str() {
-                    core.tool_note = Some((friendly_tool(tool), now + Duration::from_secs(10)));
-                }
-                // Background task launched: a little satellite enters orbit
-                if v["tool_input"]["run_in_background"].as_bool().unwrap_or(false) {
-                    core.bg_tasks.push(now + Duration::from_secs(15 * 60));
+                let tool = v["tool_name"].as_str().unwrap_or("");
+                if tool == "Task" || tool == "Agent" {
+                    // A subagent was launched: track it as its own counted, persistent
+                    // indicator (a mini-clone per active subagent) that coexists with the
+                    // main tool animation instead of occupying the single tool_note slot.
+                    // Popped on the matching PostToolUse; the 30-minute expiry is only a
+                    // fallback for a missed completion event (e.g. Ctrl+C).
+                    core.agent_tasks.push(now + Duration::from_secs(30 * 60));
+                } else {
+                    if !tool.is_empty() {
+                        core.tool_note = Some((friendly_tool(tool), now + Duration::from_secs(10)));
+                    }
+                    // Background shell launched (run_in_background): a little satellite enters orbit
+                    if v["tool_input"]["run_in_background"].as_bool().unwrap_or(false) {
+                        core.bg_tasks.push(now + Duration::from_secs(15 * 60));
+                    }
                 }
             }
             "Stop" => {

@@ -54,6 +54,10 @@ pub struct Core {
     /// Expiry instants of background tasks (run_in_background).
     /// Hooks have no completion event, so decay over 15 minutes — better early than wrong
     pub bg_tasks: Vec<Instant>,
+    /// Safety-expiry instants of in-flight subagents (Task/Agent tools): one entry per
+    /// active subagent, pushed on PreToolUse and popped on the matching PostToolUse.
+    /// The 30-minute decay is only a fallback for a missed completion event (e.g. Ctrl+C).
+    pub agent_tasks: Vec<Instant>,
 }
 
 pub struct Shared {
@@ -100,6 +104,7 @@ impl Shared {
                 idle_since: None,
                 oops_until: None,
                 bg_tasks: Vec::new(),
+                agent_tasks: Vec::new(),
             }),
             scanner: Mutex::new(Scanner::new()),
             snapshot: Mutex::new(UsageSnapshot::default()),
@@ -140,6 +145,8 @@ pub struct PetUpdate {
     pub oops: bool,
     /// Number of in-flight background tasks
     pub bg_count: usize,
+    /// Number of in-flight subagents (Task/Agent), for the mini-clone overlay
+    pub agent_count: usize,
 }
 
 pub fn build_update(shared: &Shared) -> PetUpdate {
@@ -202,6 +209,7 @@ pub fn build_update(shared: &Shared) -> PetUpdate {
         celebrate: core.celebrate,
         oops: core.oops_until.map(|u| now < u).unwrap_or(false),
         bg_count: core.bg_tasks.iter().filter(|&&u| now < u).count(),
+        agent_count: core.agent_tasks.iter().filter(|&&u| now < u).count(),
     }
 }
 
@@ -268,6 +276,9 @@ pub fn expire_transients(shared: &Shared) -> bool {
     let bg_before = core.bg_tasks.len();
     core.bg_tasks.retain(|&u| now < u);
     changed |= core.bg_tasks.len() != bg_before;
+    let agent_before = core.agent_tasks.len();
+    core.agent_tasks.retain(|&u| now < u);
+    changed |= core.agent_tasks.len() != agent_before;
     if core.celebrate > 0 && !core.sessions.values().any(|s| s.base == Base::Done) {
         core.celebrate = 0;
         changed = true;

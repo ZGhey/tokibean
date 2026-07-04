@@ -9,6 +9,8 @@
 //   celebrate  completion-celebration level 0/1/2
 //   dragging   currently being dragged
 //   pat        mouse hovering over the pet (head pat)
+//   bgCount    number of background shells running (draws an orbiting satellite)
+//   agentCount number of active subagents (draws a mini-clone each, beside the pet)
 // }
 // Default character: 拱门·墩墩 (persimmon-orange arched dome), an original figure, freely distributable.
 // Local private skins go in src/skins/tribute.js (excluded via .gitignore).
@@ -488,19 +490,6 @@
           px(ctx, lx, gy - 1 + i, 2, 1, "#9ac47a");
         }
         if (!bubble) statusTag(ctx, canvas, cx, y0, "browsing", t);
-      } else if (note === "agents") {
-        // Two mini clones pop up on either side to work together
-        y0 = body(ctx, cx, { eyes: "open" });
-        for (const [mx, phase] of [[cx - 20, 0], [cx + 20, 1.6]]) {
-          const hop = Math.abs(Math.sin(t * 0.09 + phase)) > 0.72 ? 1 : 0;
-          const my = GY - 7 - hop;
-          px(ctx, mx - 4, my, 8, 5, C);
-          px(ctx, mx - 3, my + 5, 1, 2 + hop, C);
-          px(ctx, mx + 2, my + 5, 1, 2 + hop, C);
-          px(ctx, mx - 2, my + 1, 1, 1, K);
-          px(ctx, mx + 1, my + 1, 1, 1, K);
-        }
-        if (!bubble) statusTag(ctx, canvas, cx, y0, "agents", t);
       } else if (note === "planning") {
         // A clipboard in front, task items getting green-checked one by one
         y0 = body(ctx, cx, { eyes: "tired" });
@@ -689,6 +678,36 @@
         ctx.font = "bold 10px Consolas, monospace";
         ctx.fillStyle = "#b9c2c9";
         ctx.fillText("×" + x.bgCount, (cx - 22) * S, (y0 - 8) * S);
+      }
+    }
+
+    // Active subagents: a mini persimmon clone per running subagent, sitting at the bottom
+    // corners. Independent overlay (does NOT occupy tool_note), so it coexists with whatever
+    // the main agent is doing (thinking / cmd / reading / …); distinct from the satellite
+    // above, which marks a background shell. Positions are fixed to the canvas — NOT the pet,
+    // which paces around — and capped at two so they never clip the narrow canvas; a ×N badge
+    // reports the total when there are more.
+    if ((x.agentCount || 0) > 0 && !x.dragging && state !== "limit") {
+      const n = x.agentCount;
+      // Wide flanking positions relative to the pet, so they pace along with it and stay clear
+      // of its feet. Two shown (they may run off the narrow canvas edges while pacing — that's
+      // fine); a ×N badge reports the total when there are more.
+      const slots = [[cx - 20, GY - 7], [cx + 20, GY - 7]];
+      const shown = Math.min(n, slots.length);
+      for (let i = 0; i < shown; i++) {
+        const [mx, my0] = slots[i];
+        const hop = Math.abs(Math.sin(t * 0.09 + i * 1.6)) > 0.72 ? 1 : 0;
+        const my = my0 - hop;
+        px(ctx, mx - 4, my, 8, 5, C);            // clone body
+        px(ctx, mx - 3, my + 5, 1, 2 + hop, C);  // legs
+        px(ctx, mx + 2, my + 5, 1, 2 + hop, C);
+        px(ctx, mx - 2, my + 1, 1, 1, K);        // eyes
+        px(ctx, mx + 1, my + 1, 1, 1, K);
+      }
+      if (n > slots.length) {
+        ctx.font = "bold 9px Consolas, monospace";
+        ctx.fillStyle = C;
+        ctx.fillText("×" + n, (cx - 22) * S, (GY - 10) * S); // total, by the left clone
       }
     }
 

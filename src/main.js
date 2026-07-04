@@ -105,6 +105,8 @@
     work_secs: 0,
     tool_note: null,
     celebrate: 0,
+    bg_count: 0,
+    agent_count: 0,
   };
   let frame = 0;
   let dragging = false;
@@ -121,6 +123,7 @@
       celebrate: cur.celebrate,
       oops: cur.oops,
       bgCount: cur.bg_count,
+      agentCount: cur.agent_count,
       dragging,
       pat,
     });
