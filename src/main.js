@@ -238,11 +238,23 @@
     }
     el("tok-today").textContent = fmtTokens(u.today_tokens);
     el("tok-week").textContent = fmtTokens(u.week_tokens);
-    el("models").textContent = u.models.length
-      ? u.models.map((m) => `${m.model} ${fmtTokens(m.tokens)}`).join(" · ")
-      : u.has_data
-      ? "--"
-      : t("no_claude_data");
+    const mbox = el("models");
+    mbox.textContent = "";
+    if (u.models.length) {
+      u.models.forEach((m) => {
+        const line = document.createElement("div");
+        const name = document.createElement("span");
+        name.className = "m-name";
+        name.textContent = "· " + m.model;
+        const val = document.createElement("span");
+        val.textContent = fmtTokens(m.tokens);
+        line.appendChild(name);
+        line.appendChild(val);
+        mbox.appendChild(line);
+      });
+    } else {
+      mbox.textContent = u.has_data ? "--" : t("no_claude_data");
+    }
 
     const sess = cur.session_count > 1 ? t("sessions_n", { n: cur.session_count }) : "";
     el("hook-status").textContent = cur.hooks_seen
