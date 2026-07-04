@@ -172,3 +172,18 @@ button {
 }
 button:hover { background: rgba(217, 119, 87, 0.26); }
 button:active { transform: scale(0.98); }
+
+/* In-app updater row: prominent green banner, only shown when an update is pending */
+#update-row.update-row {
+  width: 100%;
+  margin: 6px 0 2px;
+  padding: 7px 8px;
+  border: 1px solid #3a7d44;
+  border-radius: 8px;
+  background: #2e6b39;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+#update-row.update-row:hover { background: #357a42; }
+#update-row.update-row:disabled { opacity: 0.75; cursor: default; }

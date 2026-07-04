@@ -62,6 +62,11 @@
     boss_updated: ["老板键已更新:{k}", "Boss key updated: {k}"],
     boss_fail: ["老板键设置失败:{e}", "Failed to set boss key: {e}"],
     press_shortcut: ["按下快捷键…", "Press a shortcut…"],
+    update_found: ["发现新版本 {v} → 更新", "v{v} available → Update"],
+    update_downloading: ["下载中 {p}%", "Downloading {p}%"],
+    update_uptodate: ["已是最新版本", "You're up to date"],
+    update_checking: ["检查更新中…", "Checking for updates…"],
+    update_error: ["检查更新失败,点重试", "Update check failed — retry"],
   };
   function t(key, vars) {
     let s = (I18N[key] ? I18N[key][LANG === "zh" ? 0 : 1] : key) || key;
@@ -107,6 +112,7 @@
     celebrate: 0,
     bg_count: 0,
     agent_count: 0,
+    update: { available: null, status: "", progress: 0 },
   };
   let frame = 0;
   let dragging = false;
@@ -245,6 +251,33 @@
     // No button needed when things already work; but re-surface it when new events are missing
     el("install-hooks").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
     el("connect-claude").classList.toggle("hidden", u.basis === "official" || cfgConnected);
+
+    // In-app updater row: only visible when an update is pending / downloading / just-checked
+    const up = cur.update || { available: null, status: "", progress: 0 };
+    const urow = el("update-row");
+    if (up.status === "downloading") {
+      urow.textContent = t("update_downloading", { p: up.progress || 0 });
+      urow.classList.remove("hidden");
+      urow.disabled = true;
+    } else if (up.available) {
+      urow.textContent = t("update_found", { v: up.available.version });
+      urow.classList.remove("hidden");
+      urow.disabled = false;
+    } else if (up.status === "checking") {
+      urow.textContent = t("update_checking");
+      urow.classList.remove("hidden");
+      urow.disabled = true;
+    } else if (up.status === "uptodate") {
+      urow.textContent = t("update_uptodate");
+      urow.classList.remove("hidden");
+      urow.disabled = true;
+    } else if (up.status === "error") {
+      urow.textContent = t("update_error");
+      urow.classList.remove("hidden");
+      urow.disabled = false;
+    } else {
+      urow.classList.add("hidden");
+    }
   }
 
   // Refresh the countdown every second
@@ -564,5 +597,15 @@
         hooksIncomplete = false;
       })
       .catch((err) => (el("install-result").textContent = t("fail", { e: err })));
+  });
+
+  el("update-row").addEventListener("click", () => {
+    const up = cur.update || {};
+    if (up.status === "error") {
+      invoke("check_update").catch(() => {}); // retry a check
+      return;
+    }
+    if (!up.available) return;
+    invoke("install_update").catch(() => {});
   });
 })();
