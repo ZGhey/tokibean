@@ -123,9 +123,21 @@
         try { current = await window.__TAURI__.app.getVersion(); } catch (e) { current = ""; }
       }
 
+      // Bilingual release notes convention: Chinese section, a divider line (———/---/===),
+      // then the English section. Show only the half matching the system language.
+      function pickLang(notes) {
+        if (!notes || !notes.trim()) return "";
+        const m = notes.match(/\n[ \t]*[—\-=─]{3,}[ \t]*\n/);
+        if (m) {
+          const zh = notes.slice(0, m.index).trim();
+          const en = notes.slice(m.index + m[0].length).trim();
+          return (ZH ? zh : en) || notes.trim();
+        }
+        return notes.trim();
+      }
       function renderNotes(notes) {
-        const box = el("u-notes");
-        box.textContent = (notes && notes.trim()) ? notes.trim() : t("no_notes");
+        const picked = pickLang(notes);
+        el("u-notes").textContent = picked || t("no_notes");
       }
 
       function showUpdate(u) {
