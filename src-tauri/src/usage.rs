@@ -30,7 +30,9 @@ impl UsageEvent {
 /// Incremental scanner: remembers the read offset per file and only parses appended data
 pub struct Scanner {
     offsets: HashMap<PathBuf, u64>,
-    seen: HashSet<String>,
+    /// Dedup keys (message.id:requestId) mapped to the event timestamp, so stale keys can be
+    /// pruned alongside events instead of accumulating for the lifetime of the process
+    seen: HashMap<String, i64>,
     pub events: Vec<UsageEvent>,
     /// projects directories inside WSL distros (accessed from Windows via \\wsl$), refreshed periodically
     wsl_roots: Vec<PathBuf>,
@@ -41,7 +43,7 @@ impl Scanner {
     pub fn new() -> Self {
         Scanner {
             offsets: HashMap::new(),
-            seen: HashSet::new(),
+            seen: HashMap::new(),
             events: Vec::new(),
             wsl_roots: Vec::new(),
             wsl_checked: None,
@@ -123,12 +125,18 @@ impl Scanner {
         for root in self.wsl_projects_dirs() {
             collect_jsonl(&root, &mut files, 0);
         }
-        for f in files {
-            self.scan_file(&f);
+        for f in &files {
+            self.scan_file(f);
         }
-        // Keep only the last 8 days to prevent unbounded memory growth
+        // Drop read offsets for files that no longer exist (Claude Code prunes old transcripts),
+        // so the map doesn't accumulate dead paths for the lifetime of the process
+        let live: HashSet<&PathBuf> = files.iter().collect();
+        self.offsets.retain(|p, _| live.contains(&p));
+        // Keep only the last 8 days to prevent unbounded memory growth; prune dedup keys on the
+        // same cutoff (session-resume duplicates only span nearby files, so 8 days is ample)
         let cutoff = Utc::now().timestamp() - 8 * 24 * 3600;
         self.events.retain(|e| e.ts >= cutoff);
+        self.seen.retain(|_, ts| *ts >= cutoff);
     }
 
     fn scan_file(&mut self, path: &PathBuf) {
@@ -171,19 +179,20 @@ impl Scanner {
         if !usage.is_object() {
             return;
         }
+        let ts_str = v["timestamp"].as_str().unwrap_or("");
+        let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) else { return };
+        let ts = dt.timestamp();
         // Dedup: on session resume the same message can appear in multiple files
         let msg_id = v["message"]["id"].as_str().unwrap_or("");
         let req_id = v["requestId"].as_str().unwrap_or("");
         if !msg_id.is_empty() || !req_id.is_empty() {
             let key = format!("{}:{}", msg_id, req_id);
-            if !self.seen.insert(key) {
+            if self.seen.insert(key, ts).is_some() {
                 return;
             }
         }
-        let ts_str = v["timestamp"].as_str().unwrap_or("");
-        let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) else { return };
         let ev = UsageEvent {
-            ts: dt.timestamp(),
+            ts,
             input: usage["input_tokens"].as_u64().unwrap_or(0),
             output: usage["output_tokens"].as_u64().unwrap_or(0),
             cache_w: usage["cache_creation_input_tokens"].as_u64().unwrap_or(0),
