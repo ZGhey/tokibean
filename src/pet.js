@@ -267,7 +267,7 @@
     );
     const h = lines.length * lineH + 8;
     const x = Math.min(Math.max(cx * S - w / 2, 4), W - w - 4);
-    const y = Math.max(topPx - h - 10, 2);
+    const y = Math.max(topPx - h - 24, 2); // clear the dome (~16px above the body top) with a small gap
     ctx.fillStyle = "rgba(24,22,20,0.92)";
     ctx.strokeStyle = "rgba(217,119,87,0.6)";
     ctx.lineWidth = 1;
