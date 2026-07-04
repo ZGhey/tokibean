@@ -71,19 +71,20 @@ pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
                     println!("[claude-pet] update available: {}", info.version);
                 }
                 state::push_update(&app, &shared);
+                // Pop the dedicated update dialog (version + release notes + Update button)
+                crate::show_update_window(&app);
             }
             Ok(None) => {
-                set_status(&shared, if manual { "uptodate" } else { "" });
+                {
+                    let mut st = shared.update.lock().unwrap();
+                    st.available = None;
+                    st.status = if manual { "uptodate".to_string() } else { String::new() };
+                    st.progress = 0;
+                }
                 state::push_update(&app, &shared);
+                // A user-initiated check gets visible feedback via the dialog ("up to date")
                 if manual {
-                    let notify_on = shared.cfg.lock().unwrap().notify;
-                    if notify_on {
-                        state::notify(
-                            &app,
-                            i18n::t("已是最新", "Up to date"),
-                            i18n::t("已经是最新版本啦", "You're on the latest version"),
-                        );
-                    }
+                    crate::show_update_window(&app);
                 }
             }
             Err(e) => {

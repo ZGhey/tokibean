@@ -138,6 +138,39 @@ fn install_update(app: AppHandle) {
     updater::spawn_install(app, shared);
 }
 
+#[tauri::command]
+fn open_update_window(app: AppHandle) {
+    show_update_window(&app);
+}
+
+/// Open (or focus) the dedicated update dialog window (a normal decorated window showing the
+/// new version, release notes, and an Update button). On macOS, temporarily switch to a regular
+/// (Dock-visible) app so the window can come to the front and take keyboard focus — a menu-bar
+/// (Accessory) app's windows otherwise stay behind; reverted to Accessory when the dialog closes.
+fn show_update_window(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        if let Some(w) = app.get_webview_window("updater") {
+            let _ = w.show();
+            let _ = w.set_focus();
+            return;
+        }
+        let _ = tauri::WebviewWindowBuilder::new(
+            &app,
+            "updater",
+            tauri::WebviewUrl::App("update.html".into()),
+        )
+        .title(i18n::t("码豆 · 更新", "Tokibean · Update"))
+        .inner_size(460.0, 440.0)
+        .min_inner_size(380.0, 320.0)
+        .resizable(true)
+        .center()
+        .build();
+    });
+}
+
 /// Menu-bar template icon: draw the Dundun silhouette (same 26×26 grid geometry as
 /// pet.js / gen-icon.js) as pure black + transparent RGBA. macOS treats it as a template
 /// image, using only the alpha channel as the shape — rendered black on a light menu bar,
@@ -266,9 +299,21 @@ fn main() {
             focus_terminal,
             panel_opened,
             check_update,
-            install_update
+            install_update,
+            open_update_window
         ])
         .on_window_event(|window, event| {
+            // Updater dialog closed: on macOS drop the temporary Dock icon (back to Accessory)
+            #[cfg(target_os = "macos")]
+            if window.label() == "updater" && matches!(event, WindowEvent::Destroyed) {
+                let _ = window
+                    .app_handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+            // Position persistence applies only to the pet window, never the updater dialog
+            if window.label() != "main" {
+                return;
+            }
             let shared = window.app_handle().state::<Arc<Shared>>();
             match event {
                 // Record the moment of a programmatic resize: expanding/collapsing the panel moves then resizes,

@@ -251,6 +251,9 @@
     // No button needed when things already work; but re-surface it when new events are missing
     el("install-hooks").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
     el("connect-claude").classList.toggle("hidden", u.basis === "official" || cfgConnected);
+    // Once connected, drop the redundant "connected" status rows — show them only when action is needed
+    el("acct-row").classList.toggle("hidden", u.basis === "official" || cfgConnected);
+    el("hook-row").classList.toggle("hidden", cur.hooks_seen && !hooksIncomplete);
 
     // In-app updater row: only visible when an update is pending / downloading / just-checked
     const up = cur.update || { available: null, status: "", progress: 0 };
@@ -337,7 +340,9 @@
     }
   }
 
-  // Panel auto fade-out: 1 second after the mouse leaves the panel, fade and collapse without another click
+  // Panel auto fade-out: 3 seconds after opening (or after the mouse leaves), fade and collapse.
+  // Hovering the panel keeps it open; moving away restarts the 3s countdown.
+  const AUTO_HIDE_MS = 3000;
   let hideTimer = null;
   function armAutoHide() {
     clearTimeout(hideTimer);
@@ -357,7 +362,7 @@
         panel.style.opacity = "";
         if (!panel.classList.contains("hidden")) togglePanel();
       }, 360);
-    }, 1000);
+    }, AUTO_HIDE_MS);
   }
   panel.addEventListener("mouseenter", () => {
     clearTimeout(hideTimer);
@@ -606,6 +611,6 @@
       return;
     }
     if (!up.available) return;
-    invoke("install_update").catch(() => {});
+    invoke("open_update_window").catch(() => {});
   });
 })();
