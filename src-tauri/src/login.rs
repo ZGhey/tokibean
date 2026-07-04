@@ -87,12 +87,14 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
                 .find_map(|p| p.strip_prefix(&format!("{}=", k)))
                 .map(|s| s.to_string())
         };
+        // The token exchange still has to run after this (and can fail, e.g. rate-limited),
+        // so don't claim success here — tell the user to check the pet for the real result.
         let ok_body = format!(
             "<meta charset=utf-8><body style='font-family:sans-serif;text-align:center;padding-top:20vh'>\
              {}</body>",
             crate::i18n::t(
-                "✅ 已连接,可以关掉这个页面回到宠物了",
-                "✅ Connected. You can close this page and go back to the pet."
+                "授权已收到,正在完成连接…请回到宠物查看结果",
+                "Authorization received — finishing up… check the pet for the result."
             )
         );
         let ok_page = tiny_http::Response::from_data(ok_body.into_bytes())

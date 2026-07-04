@@ -53,6 +53,7 @@
     hook_ok: ["已连通(最近:{ev})", "Connected (last: {ev})"],
     sessions_n: [" · {n} 会话", " · {n} sessions"],
     go_install: ["还没收到,去装 hooks →", "Nothing yet — install hooks →"],
+    hook_installed: ["已安装 · 重启 Claude Code 后生效", "Installed · restart Claude Code to take effect"],
     update_hooks: ["更新 Claude Code hooks(有新事件)", "Update Claude Code hooks (new events)"],
     connect_fail: ["连接失败:{e}", "Connect failed: {e}"],
     installing: ["安装中…", "Installing…"],
@@ -256,21 +257,26 @@
     }
 
     const sess = cur.session_count > 1 ? t("sessions_n", { n: cur.session_count }) : "";
+    // hooksIncomplete = a port marker is missing from settings.json (something to install).
+    // hooks_seen = at least one event has actually reached us (end-to-end proven).
+    const hooksInstalled = !hooksIncomplete;
     el("hook-status").textContent = cur.hooks_seen
       ? t("hook_ok", { ev: cur.last_event || "--" }) + sess
+      : hooksInstalled
+      ? t("hook_installed") // installed but no event yet — likely needs a Claude Code restart
       : t("go_install");
-    // No button needed when things already work; but re-surface it when new events are missing
     const acctDone = u.basis === "official" || cfgConnected;
-    const hooksDone = cur.hooks_seen && !hooksIncomplete;
-    el("install-hooks").classList.toggle("hidden", hooksDone);
+    // Install button only when something is genuinely missing — not merely because no event
+    // has arrived yet (installed + waiting for a restart shouldn't nag to reinstall)
+    el("install-hooks").classList.toggle("hidden", hooksInstalled);
     el("connect-claude").classList.toggle("hidden", acctDone);
-    // Once connected, drop the redundant "connected" status rows — show them only when action is needed
+    // Once connected / working, drop the redundant status rows — show them only when action is needed
     el("acct-row").classList.toggle("hidden", acctDone);
-    el("hook-row").classList.toggle("hidden", hooksDone);
-    // The hook-install result belongs to that section — hide it too once hooks are connected
-    el("install-result").classList.toggle("hidden", hooksDone);
-    // Nothing below the divider when both sections are done — hide the dangling line too
-    el("conn-divider").classList.toggle("hidden", acctDone && hooksDone);
+    el("hook-row").classList.toggle("hidden", cur.hooks_seen);
+    // The install-result text belongs to the button — hide it once there's nothing to install
+    el("install-result").classList.toggle("hidden", hooksInstalled);
+    // Nothing below the divider when both sections are fully done
+    el("conn-divider").classList.toggle("hidden", acctDone && cur.hooks_seen);
 
     // In-app updater row: only visible when an update is actually pending / downloading.
     // "Up to date" / "checking" are NOT shown here — a manual check reports those via the dialog.
