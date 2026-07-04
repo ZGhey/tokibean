@@ -133,9 +133,9 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
     if let Some(tok) = macos_keychain_peek() {
         return Some(tok);
     }
-    // credentials.json in WSL distros: the CLI uses it daily, so the token is always fresh.
-    // Read-only, no refresh -- the refresh token is rotated, and refreshing on its behalf would kick the WSL CLI offline;
-    // for that reason only unexpired tokens are accepted
+    // credentials.json in WSL distros: the CLI uses it daily, so the token is usually fresh.
+    // Peek here (zero network); if expired, Pass 2 refreshes it in place and writes the
+    // rotated token back to the same file, so the WSL CLI reads the fresh token too
     #[cfg(target_os = "windows")]
     if let Some(tok) = token_from_wsl_credentials() {
         return Some(tok);
@@ -143,6 +143,14 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
 
     // -- Pass 2: only refresh when everything has expired (shared 15-minute backoff) --
     if let Some(tok) = pet_token(shared) {
+        return Some(tok);
+    }
+    // WSL credential: refresh in place using its own refreshToken and write the rotated
+    // token back to the same WSL file. The credential stays shared with the WSL CLI
+    // (which reads that file) -- it's not kicked offline, and its own stale-token retry
+    // loop gets healed. Shared 15-min backoff means a genuinely dead refreshToken can't hammer.
+    #[cfg(target_os = "windows")]
+    if let Some(tok) = refresh_wsl_credentials(shared) {
         return Some(tok);
     }
     // macOS safeguard: the credential source of truth is the Keychain; ~/.claude/.credentials.json is
@@ -261,6 +269,50 @@ fn token_from_wsl_credentials() -> Option<String> {
         if expires_at == 0 || now_ms < expires_at - 120_000 {
             return Some(access.to_string());
         }
+    }
+    None
+}
+
+/// Each WSL distro's credentials.json: when expired, renew via its own refreshToken and write the
+/// rotated token back to the same file, keeping it in sync with the WSL CLI (which reads the same file).
+/// Shares the 15-minute refresh backoff, so a dead refreshToken can't hammer the token endpoint.
+#[cfg(target_os = "windows")]
+fn refresh_wsl_credentials(shared: &Shared) -> Option<String> {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    for dir in crate::hooks_install::wsl_claude_dirs() {
+        let path = dir.join(".credentials.json");
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let Some(oauth) = root.get("claudeAiOauth").cloned() else { continue };
+        let access = oauth["accessToken"].as_str().unwrap_or("");
+        if access.is_empty() {
+            continue;
+        }
+        let expires_at = oauth["expiresAt"].as_i64().unwrap_or(0);
+        if expires_at == 0 || now_ms < expires_at - 120_000 {
+            return Some(access.to_string()); // still valid (Pass 1 normally catches this)
+        }
+        let refresh = oauth["refreshToken"].as_str().unwrap_or("");
+        if refresh.is_empty() || !refresh_allowed(shared) {
+            continue; // can't refresh / in backoff -- let a later source try
+        }
+        let Some((new_access, new_refresh, expires_in)) = refresh_grant(refresh) else {
+            note_refresh(shared, false);
+            continue;
+        };
+        note_refresh(shared, true);
+        // Write back in Claude Code's own format so the WSL CLI picks up the rotated token
+        if let Some(obj) = root.get_mut("claudeAiOauth").and_then(|o| o.as_object_mut()) {
+            obj.insert("accessToken".into(), serde_json::Value::String(new_access.clone()));
+            obj.insert("refreshToken".into(), serde_json::Value::String(new_refresh));
+            obj.insert(
+                "expiresAt".into(),
+                serde_json::Value::Number((now_ms + expires_in * 1000).into()),
+            );
+            let _ = std::fs::write(&path, serde_json::to_string(&root).unwrap_or(text));
+        }
+        eprintln!("[claude-pet] official mode: WSL credentials.json token renewed");
+        return Some(new_access);
     }
     None
 }
