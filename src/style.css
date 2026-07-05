@@ -43,6 +43,12 @@ body {
 /* !important so `.hidden` wins over later element/`.label-row` display rules */
 #panel.hidden, .hidden { display: none !important; }
 
+/* Windows: the collapsed window is pre-allocated to a fixed full height (never resized, to avoid the
+   DWM jump/flicker on open). Bound the panel so a taller-than-usual panel (only the pre-setup state,
+   with the connect + install-hooks sections shown) can't overflow past the window edge in either
+   layout — it scrolls internally instead. The common connected panel fits well under this, no scroll. */
+body.winos #panel { max-height: 430px; overflow-y: auto; }
+
 /* Panel below the pet — used when there's no room above (pet near the screen top):
    flip the stack so the pet is on top and the panel hangs below it */
 /* column-reverse ⇒ pet on top, panel below; flex-end packs them to the TOP of the window

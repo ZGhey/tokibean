@@ -89,6 +89,10 @@ pub struct Shared {
     /// Whether the usage panel is currently expanded (set by the frontend). While open, the
     /// whole window is made interactive so panel hover works regardless of its pixel height.
     pub panel_open: AtomicBool,
+    /// Windows only: whether the pet currently sits at the TOP of its (pre-allocated, full-height)
+    /// window — i.e. the below-panel layout. Set by the frontend so the click-through thread knows
+    /// which strip of the collapsed window is the solid pet region (top vs. bottom).
+    pub pet_at_top: AtomicBool,
     /// Throttling for window-position persistence: last save instant / instant of the last programmatic window resize
     pub last_pos_save: Mutex<Instant>,
     pub last_resize: Mutex<Instant>,
@@ -142,6 +146,7 @@ impl Shared {
             warned_80: AtomicBool::new(false),
             warned_limit: AtomicBool::new(false),
             panel_open: AtomicBool::new(false),
+            pet_at_top: AtomicBool::new(false),
             last_pos_save: Mutex::new(Instant::now()),
             last_resize: Mutex::new(Instant::now()),
             official: Mutex::new(None),

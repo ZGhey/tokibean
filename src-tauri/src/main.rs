@@ -120,6 +120,28 @@ fn set_panel_open(app: AppHandle, open: bool) {
         .store(open, std::sync::atomic::Ordering::Relaxed);
 }
 
+#[tauri::command]
+fn set_pet_at_top(app: AppHandle, v: bool) {
+    // Frontend tells us which layout the pre-allocated collapsed window is in (below-panel =>
+    // pet at the window top). The click-through thread uses it to pick the solid pet strip.
+    let shared = app.state::<Arc<Shared>>();
+    shared
+        .pet_at_top
+        .store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn set_pet_pos(app: AppHandle, x: i32, y: i32) {
+    // Windows: the frontend persists the pet's on-screen anchor (x = window left, y = pet
+    // canvas-top, both physical px). The full-height collapsed window's own top-left is
+    // layout-dependent, so we store the layout-independent anchor and rebuild position on launch.
+    let shared = app.state::<Arc<Shared>>();
+    let mut cfg = shared.cfg.lock().unwrap();
+    cfg.pos_x = Some(x);
+    cfg.pet_anchor_y = Some(y);
+    let _ = cfg.save();
+}
+
 /// Set window position AND size atomically (one repaint). Tauri's set_position + set_size are two
 /// separate calls, so growing the panel upward flashed the pet hundreds of px up then back. On
 /// Windows we hand both to a single SetWindowPos. Args are LOGICAL px; converted to physical here.
@@ -435,6 +457,8 @@ fn main() {
             connect_claude,
             panel_opened,
             set_panel_open,
+            set_pet_at_top,
+            set_pet_pos,
             check_update,
             install_update,
             open_update_window,
@@ -470,6 +494,12 @@ fn main() {
                     *shared.last_resize.lock().unwrap() = std::time::Instant::now();
                 }
                 WindowEvent::Moved(pos) => {
+                    // Never persist a hidden/parked window: Windows parks hidden windows at (-32000,
+                    // -32000), and saving that would relaunch the pet off-screen (it can't be dragged
+                    // back because it isn't visible). Real monitors never sit that far negative.
+                    if pos.x <= -30000 || pos.y <= -30000 {
+                        return;
+                    }
                     let now = std::time::Instant::now();
                     if now.duration_since(*shared.last_resize.lock().unwrap()).as_millis() < 1200 {
                         return;
@@ -498,7 +528,9 @@ fn main() {
             #[cfg(target_os = "macos")]
             let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            // Restore the last remembered window position
+            // Restore the last remembered window position (macOS: pos_x/pos_y ARE the window top-left).
+            // Windows restores from the pet anchor instead (below), so skip this there.
+            #[cfg(not(target_os = "windows"))]
             {
                 let cfg = shared.cfg.lock().unwrap();
                 if let (Some(x), Some(y)) = (cfg.pos_x, cfg.pos_y) {
@@ -508,13 +540,60 @@ fn main() {
                 }
             }
 
-            // Windows: collapse the window to the canvas height (CANVAS_H + PAD_B = 188) so the canvas
-            // fills it — no empty space above the pet, so opening the panel in the below layout can't
-            // shift the pet (the "jump on open"). The frontend keeps it at this height thereafter.
+            // Windows: pre-allocate the FULL panel height when collapsed so opening the panel never
+            // resizes the window. A resize (SetWindowPos growing the window upward) is what made the
+            // pet jump/flicker — DWM re-composites the old webview frame into the new geometry before
+            // it repaints. With the space already allocated, opening only reveals the (hidden) panel.
+            // The pet is placed in the default up-panel layout (at the window BOTTOM); the frontend
+            // lazily flips to below-layout on open if the pet sits too near the screen top.
             // (tauri.conf.json's 340 is the macOS collapsed height, left untouched.)
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_size(tauri::LogicalSize::new(240.0, 188.0));
+                const FULL_H: f64 = 600.0; // keep in sync with FULL_H in src/main.js
+                const CANVAS_H: f64 = 184.0;
+                const PAD_B: f64 = 4.0;
+                let f = w.scale_factor().unwrap_or(1.0);
+                let _ = w.set_size(tauri::LogicalSize::new(240.0, FULL_H));
+                let mut cfg = shared.cfg.lock().unwrap();
+                // Migrate once: the old collapsed window was canvas-height with the pet at offset 0,
+                // so the old saved pos_y equalled the pet's canvas-top — adopt it as the new anchor.
+                if cfg.pet_anchor_y.is_none() && cfg.pos_y.is_some() {
+                    cfg.pet_anchor_y = cfg.pos_y;
+                    let _ = cfg.save();
+                }
+                if let (Some(x), Some(anchor)) = (cfg.pos_x, cfg.pet_anchor_y) {
+                    // Up-layout: pet canvas top sits at (window top + FULL_H - CANVAS_H - PAD_B).
+                    let off_up = ((FULL_H - CANVAS_H - PAD_B) * f).round() as i32;
+                    let (mut wx, mut wy) = (x, anchor - off_up);
+                    // Recover an off-screen saved position (e.g. a config left at Windows' hidden-window
+                    // park of -32000, or a monitor that has since been unplugged): clamp so the pet's
+                    // solid strip (the bottom CANVAS_H+PAD_B of the window) lands on a real monitor.
+                    // Prefer the monitor that contains the saved spot; fall back to the primary.
+                    let mon = w
+                        .available_monitors()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|m| {
+                            let (p, s) = (m.position(), m.size());
+                            wx >= p.x
+                                && wx < p.x + s.width as i32
+                                && wy >= p.y
+                                && wy < p.y + s.height as i32
+                        })
+                        .or_else(|| w.primary_monitor().ok().flatten());
+                    if let Some(mon) = mon {
+                        let (mp, ms) = (mon.position(), mon.size());
+                        let win_w = (240.0 * f).round() as i32;
+                        let full_h = (FULL_H * f).round() as i32;
+                        let pet_h = ((CANVAS_H + PAD_B) * f).round() as i32; // solid pet strip
+                        wx = wx.clamp(mp.x, (mp.x + ms.width as i32 - win_w).max(mp.x));
+                        // pet flush to monitor top ≤ window top ≤ pet strip flush to monitor bottom
+                        let y_min = mp.y - (full_h - pet_h);
+                        let y_max = mp.y + ms.height as i32 - full_h;
+                        wy = wy.clamp(y_min, y_max.max(y_min));
+                    }
+                    let _ = w.set_position(tauri::PhysicalPosition::new(wx, wy));
+                }
             }
 
             // macOS: turn the pet into a floating panel that can hover above another app's full screen and stays present on all Spaces
@@ -545,14 +624,17 @@ fn main() {
                 .tooltip("Tokibean")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
-                        // Record the current position before quitting
+                        // Record the current position before quitting (skip a hidden/parked window
+                        // at -32000 so we don't relaunch the pet off-screen)
                         if let Some(w) = app.get_webview_window("main") {
                             if let Ok(pos) = w.outer_position() {
-                                let shared = app.state::<Arc<Shared>>();
-                                let mut cfg = shared.cfg.lock().unwrap();
-                                cfg.pos_x = Some(pos.x);
-                                cfg.pos_y = Some(pos.y);
-                                let _ = cfg.save();
+                                if pos.x > -30000 && pos.y > -30000 {
+                                    let shared = app.state::<Arc<Shared>>();
+                                    let mut cfg = shared.cfg.lock().unwrap();
+                                    cfg.pos_x = Some(pos.x);
+                                    cfg.pos_y = Some(pos.y);
+                                    let _ = cfg.save();
+                                }
                             }
                         }
                         app.exit(0)
@@ -609,13 +691,22 @@ fn main() {
                             && cur.y < (wpos.y + wsize.height as i32) as f64;
                         let h_logical = wsize.height as f64 / factor;
                         let rel_y = (cur.y - wpos.y as f64) / factor;
-                        // The whole window is clickable when the panel is open (authoritative flag from the
-                        // frontend — height alone is unreliable for a short panel) or when it's tall; otherwise
-                        // only the bottom canvas strip (pet + bubble) is clickable and the rest passes through.
-                        let solid = if s.panel_open.load(Ordering::Relaxed) || h_logical > 345.0 {
+                        // Solid (mouse captured) only where the pet/panel actually is; the rest of the
+                        // transparent window passes clicks through. When the panel is open the whole window
+                        // is solid. When collapsed, only the ~192px canvas strip holding the pet is solid —
+                        // its position depends on the layout: on Windows the collapsed window is pre-allocated
+                        // to the full panel height, so the pet sits at the TOP (below-panel layout, pet_at_top)
+                        // or the BOTTOM (up-panel layout). macOS keeps its height-based rule (unchanged).
+                        let solid = if s.panel_open.load(Ordering::Relaxed) {
                             true
+                        } else if cfg!(target_os = "windows") {
+                            if s.pet_at_top.load(Ordering::Relaxed) {
+                                rel_y < 192.0
+                            } else {
+                                rel_y >= h_logical - 192.0
+                            }
                         } else {
-                            rel_y >= h_logical - 192.0
+                            h_logical > 345.0 || rel_y >= h_logical - 192.0
                         };
                         let want = inside && !solid;
                         if want != ignoring {
@@ -668,11 +759,15 @@ fn main() {
                             changed = true;
                         }
                         if tick % 30 == 0 {
-                            // Fallback save of the window position (drag throttling may miss the last bit of movement)
+                            // Fallback save of the window position (drag throttling may miss the last bit of movement).
+                            // Skip a hidden/parked window at -32000 so the pet can't relaunch off-screen.
                             if let Some(w) = h.get_webview_window("main") {
                                 if let Ok(pos) = w.outer_position() {
                                     let mut cfg = s.cfg.lock().unwrap();
-                                    if cfg.pos_x != Some(pos.x) || cfg.pos_y != Some(pos.y) {
+                                    if pos.x > -30000
+                                        && pos.y > -30000
+                                        && (cfg.pos_x != Some(pos.x) || cfg.pos_y != Some(pos.y))
+                                    {
                                         cfg.pos_x = Some(pos.x);
                                         cfg.pos_y = Some(pos.y);
                                         let _ = cfg.save();
