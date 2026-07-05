@@ -65,7 +65,11 @@
     (function () {
       const { invoke } = window.__TAURI__.core;
       const win = window.__TAURI__.window.getCurrentWindow();
-      const ZH = (navigator.language || "en").toLowerCase().startsWith("zh");
+      // Language injected by the backend (system locale) as __PET_ZH__; navigator.language is
+      // unreliable in WebView2 on Windows, so it's only a last-resort fallback.
+      const ZH = typeof window.__PET_ZH__ === "boolean"
+        ? window.__PET_ZH__
+        : (navigator.language || "en").toLowerCase().startsWith("zh");
       const REPO = "https://github.com/ZGhey/tokibean";
       const t = (zh, en) => (ZH ? zh : en);
       const el = (id) => document.getElementById(id);

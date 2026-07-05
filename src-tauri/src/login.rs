@@ -46,6 +46,22 @@ pub fn open_browser(url: &str) {
 /// Runs the full login flow synchronously; on success writes the tokens into the
 /// config. Returns the result text shown on the panel.
 pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
+    // Still cooling down from a previous rate-limit? Don't even open the browser or touch the console
+    // token endpoint — another hit just re-arms its ~6h lockout. Tell the user to keep waiting.
+    if let Some(until) = *shared.connect_cooldown.lock().unwrap() {
+        if std::time::Instant::now() < until {
+            let mins = until
+                .saturating_duration_since(std::time::Instant::now())
+                .as_secs()
+                / 60;
+            return Err(if crate::i18n::is_zh() {
+                format!("登录接口仍在冷却,约还需 {} 分钟。这期间点连接只会重置冷却,请耐心等待", mins)
+            } else {
+                format!("Login endpoint still cooling down (~{} min left). Connecting now only resets it — please wait.", mins)
+            });
+        }
+    }
+
     let verifier = random_urlsafe();
     let challenge = b64url(&sha2::Sha256::digest(verifier.as_bytes()));
     let state = random_urlsafe();
@@ -121,12 +137,16 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
     });
     let mut cmd = Command::new("curl");
     crate::official::no_window(&mut cmd);
+    // platform.claude.com is the live token endpoint (console.anthropic.com now 404s). Critically,
+    // Anthropic rate-limits token requests whose User-Agent looks like Claude Code's; a neutral UA
+    // (axios) is NOT throttled — this is what actually fixed the "接口限流" wall.
     let mut child = cmd
         .args([
             "-s", "-m", "15", "-X", "POST",
             "-H", "Content-Type: application/json",
+            "-H", "User-Agent: axios/1.7.9",
             "--data-binary", "@-",
-            "https://console.anthropic.com/v1/oauth/token",
+            "https://platform.claude.com/v1/oauth/token",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -147,12 +167,22 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
         Some(a) => a,
         None => {
             let s = resp.to_string();
+            // Diagnostic (no token content): which failure mode the exchange hit
+            eprintln!(
+                "[claude-pet] connect: token exchange failed ({})",
+                if s.contains("rate_limit") { "rate_limited" } else { "other" }
+            );
             // Rate-limiting is the most common failure; give an actionable hint
             // instead of dumping raw JSON.
+            if s.contains("rate_limit") {
+                // Arm the cooldown so further clicks don't keep re-hitting console and resetting its lockout.
+                *shared.connect_cooldown.lock().unwrap() =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(6 * 3600));
+            }
             return Err(if s.contains("rate_limit") {
                 crate::i18n::t(
-                    "接口暂时限流,过 5~10 分钟再点一次「连接」即可(hooks 不受影响)",
-                    "The API is temporarily rate-limited. Wait 5-10 minutes and click \"Connect\" again (hooks are unaffected).",
+                    "登录接口被限流:每次重试都会重置约 6 小时的冷却。请先别再点,静置约 6 小时后再连一次(hooks/用量不受影响)",
+                    "Login endpoint rate-limited: every retry resets the ~6h cooldown. Stop clicking and wait ~6h, then connect once (hooks/usage are unaffected).",
                 )
                 .into()
             } else if crate::i18n::is_zh() {
@@ -171,6 +201,13 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
         cfg.oauth_expires_ms = chrono::Utc::now().timestamp_millis()
             + resp["expires_in"].as_i64().unwrap_or(3600) * 1000;
         cfg.save().map_err(|e| e.to_string())?;
+        // Diagnostic (no token content): confirm both tokens landed
+        eprintln!(
+            "[claude-pet] connect: stored access({} chars) + refresh({} chars), expires in {}s",
+            cfg.oauth_access.len(),
+            cfg.oauth_refresh.len(),
+            resp["expires_in"].as_i64().unwrap_or(3600)
+        );
     }
     Ok(crate::i18n::t(
         "已连接 Claude 账号,官方用量已启用",

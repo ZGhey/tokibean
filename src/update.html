@@ -100,7 +100,12 @@
       const { invoke } = window.__TAURI__.core;
       const { listen } = window.__TAURI__.event;
       const win = window.__TAURI__.window.getCurrentWindow();
-      const ZH = (navigator.language || "en").toLowerCase().startsWith("zh");
+      // Language from the backend (system locale), injected as __PET_ZH__ before this script runs.
+      // navigator.language is unreliable in WebView2 on Windows (it broke the zh/en split there),
+      // so only fall back to it if the injection is somehow missing.
+      const ZH = typeof window.__PET_ZH__ === "boolean"
+        ? window.__PET_ZH__
+        : (navigator.language || "en").toLowerCase().startsWith("zh");
       const T = {
         title_update: ["发现新版本", "New version available"],
         sub_update: ["码豆 {v} 已发布{cur}", "Tokibean {v} is available{cur}"],

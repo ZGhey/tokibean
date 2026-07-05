@@ -109,8 +109,8 @@ Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ state 
 - **Notification de-noising**: finishing a task shorter than 30 seconds fires no system notification (tunable via `notify_min_secs` in the config).
 - **Hooks forward via curl** rather than http-type hooks, for compatibility with more Claude Code versions; curl ships by default on Win10+/macOS/mainstream Linux.
 - **5-hour window semantics**: starts at the UTC top-of-hour of the window's first activity and lasts 5 hours (matching ccusage's block semantics).
-- **Official usage (subscription mode)**: click **"Connect Claude account"** in the panel once — a standard OAuth flow opens in your browser and Tokibean stores its **own** credential, then queries the Anthropic official usage endpoint for real 5-hour-window and weekly percentages. It refreshes that token itself in the background (with backoff), so you only connect once — no re-login when the access token expires or after a reboot. As a standalone app it deliberately does **not** borrow the Claude Code CLI's credential (Keychain / `.credentials.json` / Credential Manager); before you connect, it falls back to local estimation. The token stays on your machine, sent only to `api.anthropic.com`.
-- **About subscription limits**: Anthropic doesn't publish exact limits, and they float with server load. Without official data, the estimate defaults to your **historical peak window usage** as the baseline; set `block_limit` in the config to specify it manually.
+- **Official usage (subscription mode)**: click **"Connect Claude account"** in the panel once — a standard OAuth flow opens in your browser and Tokibean stores its **own** credential, then queries the Anthropic official usage endpoint for real 5-hour-window and weekly percentages. It refreshes that token itself in the background (with backoff), so you only connect once — no re-login when the access token expires or after a reboot. As a standalone app it deliberately does **not** borrow the Claude Code CLI's credential (Keychain / `.credentials.json` / Credential Manager); before you connect there is no 5-hour-window percentage unless you set a manual limit. The token stays on your machine, sent only to `api.anthropic.com`. (If the stored credential ever goes stale, the panel simply prompts you to reconnect.)
+- **About subscription limits**: Anthropic doesn't publish exact limits, and they float with server load. Without official data the panel shows no window percentage; to get one without connecting, set `block_limit` (a token count) in the config manually.
 - **Subscription vs API detection**: in auto mode, `ANTHROPIC_API_KEY` in the environment means API billing, otherwise subscription. Switch manually in the panel if it guesses wrong.
 - **Auto-update** (from 0.2.0): checks for new releases on launch and every 24h; when one is found the panel shows a one-click "Update" banner (or use the tray's *Check for Updates…*), which downloads, installs, and relaunches. Update packages are signed and served from GitHub Releases. Existing 0.1.x users download 0.2.0 manually once — updates are in-app from there on.
 
@@ -122,7 +122,7 @@ Config file: `~/.config/claude-pet/config.json` (macOS: `~/Library/Application S
 {
   "mode": "auto",        // auto | subscription | api
   "port": 8737,          // hook server port; reinstall hooks after changing
-  "block_limit": 0,      // subscription window limit (token count), 0 = auto-learn
+  "block_limit": 0,      // subscription window limit (token count), 0 = no local % (connect an account for official usage)
   "notify": true,        // system notification toggle
   "prices": { ... }      // per-model unit prices for API cost estimation, USD / million tokens; edit when stale
 }
@@ -143,7 +143,7 @@ All drawing logic lives in the single file `src/pet.js`. Keep the `window.PetRen
 ## Known limitations
 
 - **Linux Wayland**: transparency and always-on-top depend on the compositor; where unsupported it degrades to a normal window. X11 has no such issue.
-- **Quota percentage is an estimate**: without official data, the 80%/100% thresholds are based on your historical peak window or a manually set value.
+- **Quota percentage needs official data or a manual limit**: connect an account for real percentages, or set `block_limit`. With neither, there's no window percentage and no 80%/100% alert (an earlier auto-estimate from your historical peak was removed as too unreliable).
 - **Only counts Claude Code**: usage from the claude.ai web app isn't in local files, so it can't be monitored.
 - **Weekly limit**: the official figure isn't published; the panel's "last 7 days" is a rolling approximation.
 - If port 8737 is in use, the hook server fails to start (check the terminal log); change the port in the config and reinstall hooks.

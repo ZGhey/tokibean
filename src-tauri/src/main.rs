@@ -102,11 +102,10 @@ fn set_config(
 
 #[tauri::command]
 fn panel_opened(app: AppHandle) {
-    // User is looking at the data: raise the flag to request a refresh (refresh_usage has an internal 60s debounce)
+    // Opening the panel just shows what we already have — official usage is fetched only on
+    // hook activity (a run finishing), never on "click to view". Rescan local JSONL (cheap,
+    // updates token counts) and re-render; do NOT raise official_want / hit the usage API.
     let shared = app.state::<Arc<Shared>>();
-    shared
-        .official_want
-        .store(true, std::sync::atomic::Ordering::Relaxed);
     state::refresh_usage(&shared, false);
     state::push_update(&app, &shared);
 }
@@ -121,10 +120,53 @@ fn set_panel_open(app: AppHandle, open: bool) {
         .store(open, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Set window position AND size atomically (one repaint). Tauri's set_position + set_size are two
+/// separate calls, so growing the panel upward flashed the pet hundreds of px up then back. On
+/// Windows we hand both to a single SetWindowPos. Args are LOGICAL px; converted to physical here.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn set_window_rect(app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
+    if let Some(win) = app.get_webview_window("main") {
+        let f = win.scale_factor().unwrap_or(1.0);
+        if let Ok(hwnd) = win.hwnd() {
+            win_rect::set_rect(
+                hwnd.0 as isize,
+                (x * f).round() as i32,
+                (y * f).round() as i32,
+                (w * f).round() as i32,
+                (h * f).round() as i32,
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod win_rect {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+    }
+    pub fn set_rect(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
+        // SWP_NOZORDER (0x0004) | SWP_NOACTIVATE (0x0010)
+        unsafe {
+            let _ = SetWindowPos(hwnd, 0, x, y, w, h, 0x0004 | 0x0010);
+        }
+    }
+}
+
+/// Non-Windows stub so the command can be registered unconditionally (macOS uses its own JS layout path).
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn set_window_rect(_app: AppHandle, _x: f64, _y: f64, _w: f64, _h: f64) {}
+
 #[tauri::command]
 fn connect_claude(app: AppHandle) -> Result<String, String> {
+    use std::sync::atomic::Ordering;
     let shared = app.state::<Arc<Shared>>().inner().clone();
     let msg = login::connect(shared.clone())?;
+    // Freshly connected — clear any "reconnect needed" state
+    shared.reconnect_needed.store(false, Ordering::Relaxed);
+    shared.reconnect_notified.store(false, Ordering::Relaxed);
     state::refresh_usage(&shared, true);
     state::push_update(&app, &shared);
     Ok(msg)
@@ -169,6 +211,14 @@ fn open_url(url: String) {
     login::open_browser(&url);
 }
 
+/// JS injected into dialog webviews BEFORE their scripts run, so they read the OS UI language
+/// synchronously from the backend (`window.__PET_ZH__`) instead of the unreliable navigator.language.
+/// WebView2 on Windows doesn't reflect the OS UI language via navigator.language (WKWebView on macOS
+/// does), which broke the zh/en split of the dialogs in the Windows release build.
+fn lang_init() -> String {
+    format!("window.__PET_ZH__ = {};", i18n::is_zh())
+}
+
 #[tauri::command]
 fn open_about_window(app: AppHandle) {
     show_about_window(&app);
@@ -195,6 +245,7 @@ fn show_settings_window(app: &AppHandle) {
             "settings",
             tauri::WebviewUrl::App("settings.html".into()),
         )
+        .initialization_script(lang_init())
         .title(i18n::t("码豆 · 设置", "Tokibean · Settings"))
         .inner_size(360.0, 350.0)
         .resizable(false)
@@ -219,6 +270,7 @@ fn show_about_window(app: &AppHandle) {
             "about",
             tauri::WebviewUrl::App("about.html".into()),
         )
+        .initialization_script(lang_init())
         .title(i18n::t("关于 码豆", "About Tokibean"))
         .inner_size(380.0, 430.0)
         .resizable(false)
@@ -246,6 +298,7 @@ fn show_update_window(app: &AppHandle) {
             "updater",
             tauri::WebviewUrl::App("update.html".into()),
         )
+        .initialization_script(lang_init())
         .title(i18n::t("码豆 · 更新", "Tokibean · Update"))
         .inner_size(460.0, 440.0)
         .min_inner_size(380.0, 320.0)
@@ -388,7 +441,8 @@ fn main() {
             skip_update,
             open_url,
             open_about_window,
-            open_settings_window
+            open_settings_window,
+            set_window_rect
         ])
         .on_window_event(|window, event| {
             // Updater / About dialog closed: on macOS drop the temporary Dock icon (back to Accessory),
@@ -452,6 +506,15 @@ fn main() {
                         let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
                     }
                 }
+            }
+
+            // Windows: collapse the window to the canvas height (CANVAS_H + PAD_B = 188) so the canvas
+            // fills it — no empty space above the pet, so opening the panel in the below layout can't
+            // shift the pet (the "jump on open"). The frontend keeps it at this height thereafter.
+            // (tauri.conf.json's 340 is the macOS collapsed height, left untouched.)
+            #[cfg(target_os = "windows")]
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_size(tauri::LogicalSize::new(240.0, 188.0));
             }
 
             // macOS: turn the pet into a floating panel that can hover above another app's full screen and stays present on all Spaces

@@ -73,7 +73,11 @@
     (function () {
       const { invoke } = window.__TAURI__.core;
       const { emit } = window.__TAURI__.event;
-      const ZH = (navigator.language || "en").toLowerCase().startsWith("zh");
+      // Language injected by the backend (system locale) as __PET_ZH__; navigator.language is
+      // unreliable in WebView2 on Windows, so it's only a last-resort fallback.
+      const ZH = typeof window.__PET_ZH__ === "boolean"
+        ? window.__PET_ZH__
+        : (navigator.language || "en").toLowerCase().startsWith("zh");
       const IS_MAC = navigator.userAgent.includes("Mac");
       const el = (id) => document.getElementById(id);
       const T = {

@@ -293,15 +293,15 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
     }
 
     let max_block = blocks.iter().map(|b| b.2).max().unwrap_or(0);
-    let max_block_cost = blocks.iter().map(|b| b.3).fold(0.0_f64, f64::max);
-    let (block_tokens, block_cost, block_reset) = match blocks.last() {
-        Some(b) if now < b.1 => (b.2, b.3, b.1),
-        _ => (0, 0.0, 0),
+    let (block_tokens, block_reset) = match blocks.last() {
+        Some(b) if now < b.1 => (b.2, b.1),
+        _ => (0, 0),
     };
 
-    // The official quota weights by per-model price (cache reads are far cheaper than normal input);
-    // using raw token counts as the basis would inflate the denominator with massive cache reads and badly underestimate the ratio.
-    // If block_limit was set manually, compute by token count; otherwise by weighted cost vs. the historical peak window
+    // 5-hour window percentage. Only two trustworthy bases: a manually configured token limit,
+    // or the official API (filled in later by state::refresh_usage). The old "auto" estimate
+    // (weighted cost vs. the historical peak window) was too inaccurate to show, so it's gone —
+    // without a manual limit or official data we report no percentage at all (basis "none").
     let (pct, limit, basis) = if cfg.block_limit > 0 {
         (
             block_tokens as f64 / cfg.block_limit as f64,
@@ -309,8 +309,7 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
             "manual",
         )
     } else {
-        let p = if max_block_cost > 0.0 { block_cost / max_block_cost } else { 0.0 };
-        (p, max_block, "auto")
+        (0.0, 0u64, "none")
     };
 
     // Today: from local-timezone midnight

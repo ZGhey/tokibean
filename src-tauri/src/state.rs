@@ -99,11 +99,17 @@ pub struct Shared {
     /// Used to detect a "momentary fake 100% at the window-reset boundary": a real cap climbs through 85~99% first,
     /// whereas after a reset the API's occasional one-shot 100% was 0~2% the tick before — use that to reject the fake 100%
     pub official_last_raw: Mutex<Option<f64>>,
-    /// Backoff deadline after being rate-limited
+    /// Backoff deadline after the usage endpoint rate-limits
     pub official_backoff: Mutex<Option<Instant>>,
-    /// Backoff deadline after a token refresh failure. Without it, an expired credential makes every poll
-    /// hit the token endpoint, rate-limiting console.anthropic.com (learned the hard way)
+    /// Backoff deadline after a token-refresh failure (safety net; refresh runs against claude.ai)
     pub refresh_backoff: Mutex<Option<Instant>>,
+    /// Set when the stored credential's refresh token turned out dead (invalid_grant): the pet wiped
+    /// it and needs the user to reconnect. The panel surfaces this and a one-time notification fires.
+    pub reconnect_needed: AtomicBool,
+    pub reconnect_notified: AtomicBool,
+    /// After a rate-limited "connect account", refuse to hit the console token endpoint again until
+    /// this deadline — every attempt resets the endpoint's ~6h lockout, so retrying only prolongs it.
+    pub connect_cooldown: Mutex<Option<Instant>>,
     /// Event-driven fetch request: raise the flag on Stop completion / panel open to query official usage ASAP
     pub official_want: AtomicBool,
     /// Instant of the last official-API attempt (regardless of success), for the 60-second debounce
@@ -142,6 +148,9 @@ impl Shared {
             official_last_raw: Mutex::new(None),
             official_backoff: Mutex::new(None),
             refresh_backoff: Mutex::new(None),
+            reconnect_needed: AtomicBool::new(false),
+            reconnect_notified: AtomicBool::new(false),
+            connect_cooldown: Mutex::new(None),
             official_want: AtomicBool::new(false),
             official_last_try: Mutex::new(None),
             update: Mutex::new(UpdateState::default()),
@@ -172,6 +181,8 @@ pub struct PetUpdate {
     pub bg_count: usize,
     /// Number of in-flight subagents (Task/Agent), for the mini-clone overlay
     pub agent_count: usize,
+    /// The stored credential's refresh token died — the panel should prompt the user to reconnect
+    pub reconnect: bool,
     /// In-app updater state (availability + download progress)
     pub update: UpdateState,
 }
@@ -238,6 +249,7 @@ pub fn build_update(shared: &Shared) -> PetUpdate {
         oops: core.oops_until.map(|u| now < u).unwrap_or(false),
         bg_count: core.bg_tasks.iter().filter(|&&u| now < u).count(),
         agent_count: core.agent_tasks.iter().filter(|&&u| now < u).count(),
+        reconnect: shared.reconnect_needed.load(Ordering::Relaxed),
         update,
     }
 }
@@ -461,6 +473,22 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
 
 /// Usage threshold notifications (80% / 100%): notify only once, reset after it drops back
 pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
+    // Refresh token died → fire a one-time "please reconnect" notification
+    if shared.reconnect_needed.load(Ordering::Relaxed)
+        && !shared.reconnect_notified.swap(true, Ordering::Relaxed)
+    {
+        let cfg_notify = shared.cfg.lock().unwrap().notify;
+        if cfg_notify {
+            notify(
+                app,
+                &crate::i18n::t("Claude 账号连接已失效", "Claude account disconnected"),
+                &crate::i18n::t(
+                    "请在宠物面板点「连接 Claude 账号」重新登录",
+                    "Click \"Connect Claude account\" in the pet panel to sign in again",
+                ),
+            );
+        }
+    }
     let (notify_on, mode, pct, limit, basis) = {
         let cfg = shared.cfg.lock().unwrap();
         let snap = shared.snapshot.lock().unwrap();

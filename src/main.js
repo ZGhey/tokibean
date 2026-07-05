@@ -41,8 +41,9 @@
     reset_done: ["已重置", "reset"],
     official_data: ["官方数据", "official data"],
     limit_manual: ["限额 {v}(手动设置)", "limit {v} (manual)"],
-    limit_auto: ["按加权用量·历史峰值窗口估算", "estimated vs. weighted peak window"],
     limit_nodata: ["还没有足够数据估算限额", "not enough data to estimate the limit"],
+    usage_need_connect: ["连接 Claude 账号查看官方用量", "Connect Claude account for official usage"],
+    reconnect_needed: ["连接已失效,请重新连接", "Connection expired — reconnect"],
     reset_line: ["{hh}:{mm} 重置(剩 {left})· {note}", "resets {hh}:{mm} ({left} left) · {note}"],
     no_window_official: ["当前无活动窗口 · 官方数据", "No active window · official data"],
     no_window2: ["当前无活动窗口", "No active window"],
@@ -175,15 +176,13 @@
     el("api-block").classList.toggle("hidden", isSub);
 
     if (isSub) {
+      // Only official data or a manually configured limit yield a real percentage; otherwise
+      // show nothing (the inaccurate local estimate was removed).
+      const known = u.basis === "official" || u.basis === "manual";
       const pct = Math.min(u.block_pct, 1.5);
-      // Prefix estimates with ≈ to signal they're approximate, so "100%" isn't alarming
-      const approx = u.basis === "official" || u.basis === "manual" ? "" : "≈";
-      el("block-pct").textContent =
-        u.block_limit > 0 || u.basis === "official"
-          ? approx + Math.round(u.block_pct * 100) + "%"
-          : "--%";
+      el("block-pct").textContent = known ? Math.round(u.block_pct * 100) + "%" : "--%";
       const cells = bar.children;
-      const lit = Math.round(Math.min(pct, 1) * 10);
+      const lit = known ? Math.round(Math.min(pct, 1) * 10) : 0;
       for (let i = 0; i < 10; i++) {
         const c = cells[i];
         c.className = "";
@@ -201,11 +200,7 @@
         const limitNote =
           u.basis === "official"
             ? t("official_data")
-            : u.block_limit > 0
-            ? u.basis === "manual"
-              ? t("limit_manual", { v: fmtTokens(u.block_limit) })
-              : t("limit_auto")
-            : t("limit_nodata");
+            : t("limit_manual", { v: fmtTokens(u.block_limit) });
         el("block-reset").textContent = t("reset_line", {
           hh,
           mm,
@@ -213,8 +208,12 @@
           note: limitNote,
         });
       } else {
-        el("block-reset").textContent =
-          u.basis === "official" ? t("no_window_official") : t("no_window2");
+        // No active window (official/manual) or not connected at all
+        el("block-reset").textContent = u.basis === "official"
+          ? t("no_window_official")
+          : known
+          ? t("no_window2")
+          : t("usage_need_connect");
       }
       if (u.basis === "official") el("acct-status").textContent = t("connected_official");
       // Weekly quota (only available in official mode)
@@ -265,7 +264,9 @@
       : hooksInstalled
       ? t("hook_installed") // installed but no event yet — likely needs a Claude Code restart
       : t("go_install");
-    const acctDone = u.basis === "official" || cfgConnected;
+    // A dead refresh token (reconnect) counts as NOT connected — re-surface the connect button/row.
+    const acctDone = (u.basis === "official" || cfgConnected) && !u.reconnect;
+    if (u.reconnect) el("acct-status").textContent = t("reconnect_needed");
     // Install button only when something is genuinely missing — not merely because no event
     // has arrived yet (installed + waiting for a restart shouldn't nag to reinstall)
     el("install-hooks").classList.toggle("hidden", hooksInstalled);
@@ -319,6 +320,16 @@
   // Where the pet's canvas sits inside a window of height H, per layout:
   //   up / collapsed → pet anchored to the bottom;  below → pet anchored to the top
   const CANVAS_H = 184, PAD_B = 4;
+  // Bubble/empty space inside the canvas ABOVE the pet drawing (dome top ≈ 64px down): the
+  // after-drag clamp needs to allow for it so the pet can be dragged all the way to the screen top.
+  const PET_CANVAS_TOP = 64;
+  // Windows needs the manual-drag path AND the atomic window-rect path (defined once, used by both
+  // the layout and the drag code below).
+  const IS_WIN_DRAG = navigator.userAgent.includes("Windows");
+  // Collapsed-window height. On Windows the canvas FILLS the collapsed window (no empty space above
+  // the pet): switching to the panel-below layout (column-reverse) then can't shift the pet within
+  // the window, which was the "jump up then back" on panel open. macOS keeps the original 340.
+  const COLLAPSED_H = IS_WIN_DRAG ? CANVAS_H + PAD_B : BASE_H;
   const canvasTopIn = (H, below) => (below ? 0 : H - CANVAS_H - PAD_B);
 
   // Resize/reposition the window to `targetH`, keeping the pet's canvas at a fixed screen Y so the
@@ -328,11 +339,26 @@
     const { LogicalSize, LogicalPosition } = window.__TAURI__.dpi;
     const factor = await win.scaleFactor();
     const x = (await win.outerPosition()).toLogical(factor).x;
-    // Position using the estimated canvas offset first (approximately right — minimal flicker)…
     const estTop = Math.round(anchorScreenTop - canvasTopIn(targetH, below));
+    if (IS_WIN_DRAG) {
+      // Windows: one atomic SetWindowPos (no measure-correct — the estimate is exact for this layout).
+      // The "jump" is a DWM artifact: when SetWindowPos grows the window UPWARD, Windows re-composites
+      // the CURRENT webview surface into the new, taller geometry BEFORE the webview repaints — so the
+      // old frame (pet at its old offset) flashes at a shifted spot, then snaps back after reflow.
+      // Fix: hide the pet and WAIT until that hidden state has actually PAINTED to the surface (a bare
+      // style change is only queued — the earlier attempt failed because it resized before the paint),
+      // THEN resize. Now the frame Windows re-composites has no pet in it, so nothing visibly jumps.
+      const raf2 = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      canvas.style.visibility = "hidden";
+      await raf2(); // paint the hide to the surface BEFORE the resize, not just queue it
+      await invoke("set_window_rect", { x, y: estTop, w: WIN_W, h: targetH }).catch(() => {});
+      await raf2(); // let the webview reflow the pet to the new bottom before revealing it
+      canvas.style.visibility = "";
+      return;
+    }
+    // macOS: original two-step + measure-correct (untouched).
     await win.setPosition(new LogicalPosition(x, estTop));
     await win.setSize(new LogicalSize(WIN_W, targetH));
-    // …then correct against the canvas's real position so it lands exactly on the anchor (no drift)
     await new Promise((r) => setTimeout(r, 32));
     const corrected = Math.round(anchorScreenTop - canvas.getBoundingClientRect().top);
     if (Math.abs(corrected - estTop) > 1) {
@@ -346,7 +372,8 @@
     const win = window.__TAURI__.window.getCurrentWindow();
     const factor = await win.scaleFactor();
     const winPos = (await win.outerPosition()).toLogical(factor);
-    const anchorScreenTop = winPos.y + canvas.getBoundingClientRect().top;
+    const canvasTopNow = canvas.getBoundingClientRect().top;
+    const anchorScreenTop = winPos.y + canvasTopNow;
     // The panel's own height is the same in either layout — measure it once so we can pick
     // up-vs-down WITHOUT first laying it out above the pet (which caused a visible flash/jump)
     const panelH = panel.getBoundingClientRect().height;
@@ -400,7 +427,7 @@
         const anchorScreenTop = winPos.y + canvas.getBoundingClientRect().top;
         panel.classList.add("hidden");
         document.body.classList.remove("below");
-        await setWindowLayout(anchorScreenTop, BASE_H, false);
+        await setWindowLayout(anchorScreenTop, COLLAPSED_H, false);
         invoke("set_panel_open", { open: false }).catch(() => {});
       }
     } finally {
@@ -428,9 +455,10 @@
   listen("collapse-panel", collapsePanel);
 
   // Hold the pet to drag the window; releasing in place counts as a click (toggle panel).
-  // Once movement passes the threshold, hand off to the OS native drag, after which mouseup won't return to the page.
-  // During native dragging the page receives no mouse events, so the window Moved event keeps the dragging flag alive;
-  // treat it as released 350ms after movement stops
+  // macOS uses the OS native drag (startDragging). Windows uses a MANUAL drag (follow the cursor with
+  // setPosition) because a native caption-drag there can't push the window top above the screen top
+  // (y=0), which would trap the pet ~200px down — the manual drag reaches negative y, so the pet can be
+  // placed freely anywhere, including flush to the top. (IS_WIN_DRAG is defined up top.)
   let downPos = null;
   let dragEndTimer = null;
   function armDragEnd() {
@@ -456,31 +484,66 @@
     if (!mon) return;
     const mp = mon.position.toLogical(mon.scaleFactor);
     const ms = mon.size.toLogical(mon.scaleFactor);
-    const petTop = size.height - CANVAS_H; // empty (bubble) space above the pet within the window
+    // Empty space above the pet = space above the canvas, PLUS (Windows only) the bubble area inside
+    // the canvas above the pet drawing, so the pet can sit flush at the top of the screen.
+    // macOS keeps the original allowance untouched (per its own tuning — do not change it here).
+    // Highest the window may sit = pet's dome flush at the screen top (Windows adds the in-canvas
+    // bubble space so the pet, not just the canvas, can reach the top). This only keeps the pet from
+    // sliding OFF the top — it never pulls it up (no snap); the manual drag places it freely.
+    // macOS keeps its original allowance untouched.
+    const petTop = size.height - CANVAS_H + (IS_WIN_DRAG ? PET_CANVAS_TOP : 0);
     const x = Math.max(mp.x, Math.min(pos.x, mp.x + ms.width - size.width));
     const y = Math.max(mp.y - petTop, Math.min(pos.y, mp.y + ms.height - size.height));
     if (Math.round(x) !== Math.round(pos.x) || Math.round(y) !== Math.round(pos.y)) {
       await win.setPosition(new LogicalPosition(Math.round(x), Math.round(y)));
     }
   }
+  // Native macOS drag keeps the dragging flag alive via Moved events (the page gets none mid-drag);
+  // the manual Windows drag is driven by mouse events, so it doesn't use this.
   window.__TAURI__.window.getCurrentWindow().onMoved(() => {
-    if (dragging) armDragEnd();
+    if (dragging && !IS_WIN_DRAG) armDragEnd();
   });
-  canvas.addEventListener("mousedown", (e) => {
+  canvas.addEventListener("mousedown", async (e) => {
     if (e.button !== 0) return;
-    downPos = { x: e.screenX, y: e.screenY, canvasY: e.offsetY };
+    downPos = { x: e.screenX, y: e.screenY, canvasY: e.offsetY, winX: 0, winY: 0, captured: !IS_WIN_DRAG };
+    if (IS_WIN_DRAG) {
+      try {
+        const win = window.__TAURI__.window.getCurrentWindow();
+        const p = (await win.outerPosition()).toLogical(await win.scaleFactor());
+        if (downPos) { downPos.winX = p.x; downPos.winY = p.y; downPos.captured = true; }
+      } catch (err) {}
+    }
   });
   window.addEventListener("mousemove", (e) => {
     if (!downPos) return;
-    if (Math.abs(e.screenX - downPos.x) + Math.abs(e.screenY - downPos.y) > 4) {
-      downPos = null;
+    const moved = Math.abs(e.screenX - downPos.x) + Math.abs(e.screenY - downPos.y);
+    if (!dragging && moved > 4) {
       dragging = true;
-      armDragEnd();
-      window.__TAURI__.window.getCurrentWindow().startDragging();
+      if (!IS_WIN_DRAG) {
+        downPos = null; // macOS: hand off to the native drag (original behavior)
+        window.__TAURI__.window.getCurrentWindow().startDragging();
+      }
+    }
+    // Windows manual drag: move the window with the cursor (screenX/Y and logical position share
+    // the same CSS-pixel space at a given scale), allowing a negative y the native drag can't reach.
+    // No 350ms timer here — pausing mid-drag must not end it; mouseup ends the drag.
+    if (dragging && IS_WIN_DRAG && downPos && downPos.captured) {
+      const { LogicalPosition } = window.__TAURI__.dpi;
+      const nx = downPos.winX + (e.screenX - downPos.x);
+      const ny = downPos.winY + (e.screenY - downPos.y);
+      window.__TAURI__.window.getCurrentWindow().setPosition(new LogicalPosition(Math.round(nx), Math.round(ny)));
     }
   });
   window.addEventListener("mouseup", () => {
-    // Clicking the pet always just toggles the usage panel
+    if (IS_WIN_DRAG && dragging) {
+      // End the manual drag; clamp only keeps the pet from sliding off the edges (no snap).
+      dragging = false;
+      clearTimeout(dragEndTimer);
+      if (panel.classList.contains("hidden")) clampToScreen();
+      downPos = null;
+      return;
+    }
+    // A click in place (no drag) toggles the usage panel.
     if (downPos) togglePanel();
     downPos = null;
   });
