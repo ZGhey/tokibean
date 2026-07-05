@@ -54,7 +54,7 @@
     hook_ok: ["已连通(最近:{ev})", "Connected (last: {ev})"],
     sessions_n: [" · {n} 会话", " · {n} sessions"],
     go_install: ["还没收到,去装 hooks →", "Nothing yet — install hooks →"],
-    hook_installed: ["已安装 · 重启 Claude Code 后生效", "Installed · restart Claude Code to take effect"],
+    hook_installed: ["已安装 · 等待首个事件", "Installed · waiting for first event"],
     update_hooks: ["更新 Claude Code hooks(有新事件)", "Update Claude Code hooks (new events)"],
     connect_fail: ["连接失败:{e}", "Connect failed: {e}"],
     installing: ["安装中…", "Installing…"],
