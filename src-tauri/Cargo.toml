@@ -1,6 +1,6 @@
 [package]
 name = "claude-pet"
-version = "0.3.2"
+version = "0.3.3"
 description = "住在桌面上的 Claude Code 状态监视宠物"
 edition = "2021"
 rust-version = "1.77.2"
@@ -22,6 +22,7 @@ getrandom = "0.2"
 base64 = "0.22"
 sys-locale = "0.3"
 tauri-plugin-updater = "2"
+tauri-plugin-autostart = "2"
 
 # macOS 专用:直接设 NSWindow 集合行为(FullScreenAuxiliary),
 # 让宠物能浮在别的全屏应用/全屏游戏之上——tao 只暴露了 CanJoinAllSpaces

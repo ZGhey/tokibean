@@ -446,6 +446,13 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Launch at login: writes HKCU\...\Run on Windows, a LaunchAgent on macOS, a .desktop on
+        // Linux. State lives in the OS (registry/agent), not our config, so there's no second copy
+        // to drift; the Settings window reads/writes it via the plugin's is_enabled/enable/disable.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(shared.clone())
         .invoke_handler(tauri::generate_handler![
             get_update,

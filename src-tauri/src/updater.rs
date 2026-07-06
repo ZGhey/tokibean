@@ -11,8 +11,10 @@ use tauri_plugin_updater::UpdaterExt;
 use crate::i18n;
 use crate::state::{self, Shared, UpdateInfo};
 
-/// Spawn an async update check. `manual` = user-triggered (surface an "up to date" / "error"
-/// result in the panel and, for up-to-date, a notification); auto checks stay silent otherwise.
+/// Spawn an async update check. `manual` = user-triggered: an available update pops the update
+/// dialog, an up-to-date result pops the same dialog in its "you're up to date" view, and a
+/// failure surfaces an "error" state in the panel. Auto (24h) checks stay silent unless a new
+/// version is found.
 pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
     tauri::async_runtime::spawn(async move {
         // Show "checking" while the request is in flight
@@ -85,8 +87,10 @@ pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
                 crate::show_update_window(&app);
             }
             Ok(None) => {
-                // Up to date: clear any pending state silently (no "up to date" UI per design)
-                let _ = manual;
+                // Up to date: clear any pending state. Auto checks stay silent; a manual
+                // "Check for Updates" pops the update dialog in its "you're up to date" view
+                // (update.html already renders that when there's no pending update) so the
+                // click gives visible feedback instead of appearing to do nothing.
                 {
                     let mut st = shared.update.lock().unwrap();
                     st.available = None;
@@ -94,6 +98,9 @@ pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
                     st.progress = 0;
                 }
                 state::push_update(&app, &shared);
+                if manual {
+                    crate::show_update_window(&app);
+                }
             }
             Err(e) => {
                 eprintln!("[claude-pet] update check failed: {}", e);

@@ -56,6 +56,10 @@
     <input type="checkbox" id="cfg-sound" />
   </div>
   <div class="row">
+    <label id="l-autostart">开机启动</label>
+    <input type="checkbox" id="cfg-autostart" />
+  </div>
+  <div class="row">
     <label id="l-hotkey">快捷键</label>
     <input type="text" id="cfg-bosskey" class="hotkey" readonly />
   </div>
@@ -85,6 +89,7 @@
         notify: ["系统通知", "Notifications"],
         minsecs: ["不足此秒数不提醒", "Skip notify under N sec"],
         sound: ["提示音", "Sound"],
+        autostart: ["开机启动", "Launch at login"],
         hotkey: ["快捷键", "Hotkey"],
         skin: ["皮肤", "Skin"],
         s_classic: ["墩墩(默认)", "Dundun (default)"],
@@ -100,6 +105,7 @@
       el("l-notify").textContent = t("notify");
       el("l-minsecs").textContent = t("minsecs");
       el("l-sound").textContent = t("sound");
+      el("l-autostart").textContent = t("autostart");
       el("l-hotkey").textContent = t("hotkey");
       el("l-skin").textContent = t("skin");
       const opts = { classic: "s_classic", bean: "s_bean", tabby: "s_tabby" };
@@ -149,6 +155,13 @@
       el("cfg-sound").addEventListener("change", () => saveCfg());
       el("cfg-skin").addEventListener("change", () => saveCfg(true));
 
+      // Launch-at-login is OS-level (registry / LaunchAgent / .desktop), owned by the autostart
+      // plugin — kept out of saveCfg/config.json so the two can't drift.
+      el("cfg-autostart").addEventListener("change", (e) => {
+        invoke(`plugin:autostart|${e.target.checked ? "enable" : "disable"}`)
+          .catch((err) => (el("result").textContent = String(err)));
+      });
+
       // Hotkey recorder
       const bossInput = el("cfg-bosskey");
       let recording = false;
@@ -174,6 +187,10 @@
         el("cfg-skin").value = c.skin || "classic";
         if (c.boss_key) { bossKeyAccel = c.boss_key; bossInput.value = prettyAccel(c.boss_key); }
       });
+      // Reflect the real OS-level autostart state, not a stored copy
+      invoke("plugin:autostart|is_enabled")
+        .then((on) => { el("cfg-autostart").checked = !!on; })
+        .catch(() => {});
     })();
   </script>
 </body>
