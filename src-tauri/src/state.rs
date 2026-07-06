@@ -52,6 +52,9 @@ pub struct Session {
     /// Whether a tool call is in progress (PreToolUse arrived, PostToolUse hasn't yet).
     /// A long command (build/test) can go minutes without any hook; use this to tell "stuck" from "tool running slowly"
     pub in_tool: bool,
+    /// Basename of this session's working directory (from the hook event's `cwd`), so the panel
+    /// list can label each anonymous session by its project folder.
+    pub cwd: Option<String>,
 }
 
 pub struct Core {
@@ -163,6 +166,17 @@ impl Shared {
     }
 }
 
+/// One session's glanceable status, for the tally chip + panel list.
+#[derive(Serialize, Clone)]
+pub struct SessionBrief {
+    /// "working" | "attention" | "done" | "idle"
+    pub state: String,
+    /// Seconds spent in the current base state
+    pub secs: u64,
+    /// Working-directory basename (project folder), for labeling the session
+    pub cwd: Option<String>,
+}
+
 #[derive(Serialize, Clone)]
 pub struct PetUpdate {
     pub state: String, // idle | working | attention | done | limit
@@ -174,6 +188,9 @@ pub struct PetUpdate {
     /// Number of sessions currently working (frontend draws a ×N badge when >1)
     pub working_count: usize,
     pub session_count: usize,
+    /// Per-session brief, sorted by session id so the order is stable across snapshots. Drives the
+    /// multi-session status-tally chip on the pet and the per-session list in the usage panel.
+    pub sessions: Vec<SessionBrief>,
     /// Seconds the longest current work run has lasted
     pub work_secs: u64,
     /// Seconds spent waiting for your input (the longest run); frontend escalates the "anxious" look
@@ -218,6 +235,28 @@ pub fn build_update(shared: &Shared) -> PetUpdate {
         }
     }
 
+    // Per-session brief for the tally chip + panel list, sorted by session id for a stable order
+    let mut sessions: Vec<(&String, SessionBrief)> = core
+        .sessions
+        .iter()
+        .map(|(id, s)| {
+            let state = match s.base {
+                Base::Attention => "attention",
+                Base::Working => "working",
+                Base::Done => "done",
+                Base::Idle => "idle",
+            };
+            let brief = SessionBrief {
+                state: state.to_string(),
+                secs: now.duration_since(s.since).as_secs(),
+                cwd: s.cwd.clone(),
+            };
+            (id, brief)
+        })
+        .collect();
+    sessions.sort_by(|a, b| a.0.cmp(b.0));
+    let sessions: Vec<SessionBrief> = sessions.into_iter().map(|(_, b)| b).collect();
+
     // Only official data or a user-set manual limit may put the pet to sleep / raise alerts;
     // the auto estimate (vs. historical peak) is display-only — it falsely reports 100% when setting a new record
     let pct_valid = snap.basis == "official" || snap.basis == "manual";
@@ -247,6 +286,7 @@ pub fn build_update(shared: &Shared) -> PetUpdate {
         usage: snap,
         working_count: working,
         session_count: core.sessions.len(),
+        sessions,
         work_secs,
         attention_secs,
         tool_note: core.tool_note.as_ref().map(|(t, _)| t.clone()),

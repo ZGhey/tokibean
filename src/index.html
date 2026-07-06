@@ -58,6 +58,17 @@
     </div>
     <button id="install-hooks" data-i18n="install_hooks">安装 Claude Code hooks</button>
     <div class="hint" id="install-result"></div>
+
+    <!-- Per-session breakdown, pinned to the very bottom so it never pushes the usage numbers around.
+         The divider is inside the block, so both appear/disappear together (only when >1 session). -->
+    <div id="sessions-block" class="hidden">
+      <div class="divider"></div>
+      <div class="label-row">
+        <span data-i18n="sessions_label">会话</span>
+        <span id="sessions-count" class="num small"></span>
+      </div>
+      <div id="session-list"></div>
+    </div>
   </div>
 
   <canvas id="pet" width="200" height="184" data-i18n-title="pet_title"></canvas>

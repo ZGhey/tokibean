@@ -11,6 +11,10 @@
 //   pat        mouse hovering over the pet (head pat)
 //   bgCount    number of background shells running (draws an orbiting satellite)
 //   agentCount number of active subagents (draws a mini-clone each, beside the pet)
+//   resetSecs  seconds until the 5-hour window resets (or null); drives the "waking up" stir in limit
+//   gazeX/gazeY cursor position in canvas-logical px (or null) → pupils follow the cursor
+//   tickle     fast cursor wiggle over the pet → giggling squirm
+//   forceWeather demo/test override for the weather layer ("rain"|"wind"); real app uses the clock
 // }
 // Default character: 拱门·墩墩 (persimmon-orange arched dome), an original figure, freely distributable.
 
@@ -29,6 +33,8 @@
 
   function eyes(ctx, cx, y0, mode) {
     const L = cx - 9, R = cx + 2;
+    // Open-eyed modes nudge the pupils ±1px toward the cursor (module var `gaze`, set in draw)
+    const gx = gaze ? gaze.x : 0, gy = gaze ? gaze.y : 0;
     if (mode === "closed") {
       px(ctx, L, y0 + 6, 3, 1, K);
       px(ctx, R, y0 + 6, 3, 1, K);
@@ -39,19 +45,19 @@
         px(ctx, ex + 2, y0 + 5, 1, 1, K);
       }
     } else if (mode === "up") {
-      px(ctx, L + 1, y0 + 3, 3, 3, K);
-      px(ctx, R + 1, y0 + 3, 3, 3, K);
+      px(ctx, L + 1 + gx, y0 + 3 + gy, 3, 3, K);
+      px(ctx, R + 1 + gx, y0 + 3 + gy, 3, 3, K);
     } else if (mode === "tired") {
       // Half-open: upper eyelid pressed down
       px(ctx, L, y0 + 5, 3, 2, K);
       px(ctx, R, y0 + 5, 3, 2, K);
     } else if (mode === "wide") {
       // Wide-eyed (being picked up)
-      px(ctx, L, y0 + 3, 3, 4, K);
-      px(ctx, R, y0 + 3, 3, 4, K);
+      px(ctx, L + gx, y0 + 3 + gy, 3, 4, K);
+      px(ctx, R + gx, y0 + 3 + gy, 3, 4, K);
     } else {
-      px(ctx, L, y0 + 4, 3, 3, K);
-      px(ctx, R, y0 + 4, 3, 3, K);
+      px(ctx, L + gx, y0 + 4 + gy, 3, 3, K);
+      px(ctx, R + gx, y0 + 4 + gy, 3, 3, K);
     }
   }
 
@@ -165,6 +171,21 @@
     // White handlebar mustache (gap in the middle)
     px(ctx, cx - 5, y0 + 9, 4, 2, W);
     px(ctx, cx + 2, y0 + 9, 4, 2, W);
+  }
+
+  // Umbrella held overhead when it's raining: a red canopy sheltering the head, pole down the right
+  // side into a little hand. Offset right so the pole never crosses the face.
+  function umbrella(ctx, cx, y0) {
+    const U = "#d0544e", D = "#a83f3a", P = "#8a6b4a";
+    const uy = y0 - 11;
+    px(ctx, cx - 1, uy, 2, 1, U);          // top nub
+    px(ctx, cx - 3, uy + 1, 6, 1, U);
+    px(ctx, cx - 6, uy + 2, 12, 1, U);
+    px(ctx, cx - 8, uy + 3, 16, 1, U);     // widest canopy row
+    px(ctx, cx - 8, uy + 4, 16, 1, D);     // rim (shadowed underside)
+    for (const sx of [cx - 7, cx - 3, cx + 2, cx + 6]) px(ctx, sx, uy + 5, 1, 1, D); // scalloped drips
+    px(ctx, cx + 6, uy + 5, 1, 8, P);      // pole down the right side
+    px(ctx, cx + 5, uy + 12, 3, 2, C);     // little hand gripping the pole
   }
 
   function heart(ctx, x, y, a) {
@@ -314,6 +335,7 @@
   }
 
   let blinkT = 0;
+  let gaze = null; // {x,y} pupil offset toward the cursor (−1..1 px), set per-frame in draw
   let prevKey;
   let puffT = 0;   // dust frames when switching states
   let patT = 0;    // continuous head-pat timer
@@ -326,19 +348,204 @@
     return h >= 23 || h < 7;
   }
 
-  // Night ambience: a crescent moon + a few stars in the upper-left sky
-  function nightScene(ctx) {
-    // Upper-left so the status tag / badges on the right never cover it (full disc minus an offset disc)
-    const mx = 8 * S, my = 7 * S, mr = 3.5 * S;
-    ctx.save();
-    ctx.fillStyle = "#f3e7a6";
-    ctx.beginPath(); ctx.arc(mx, my, mr, 0, Math.PI * 2); ctx.fill();
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.beginPath(); ctx.arc(mx + mr * 0.7, my - mr * 0.35, mr, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-    px(ctx, 15, 5, 1, 1, "#fff6c0"); // a few tiny stars
-    px(ctx, 4, 14, 1, 1, "#fff6c0");
-    px(ctx, 14, 12, 1, 1, "#fff6c0");
+  // ---- Calendar-driven ambience: moon phase / seasons / festivals ----
+  // Everything here derives from the local date/time, so it needs no backend data and behaves
+  // identically in every skin. Skins opt in by calling PetKit.ambient(ctx, canvas, t) once, early
+  // in draw() — it paints the background layer (sky + drifting particles + festival decor) behind
+  // the pet. All decor sits at fixed canvas coordinates (never pet-relative), so it stays put while
+  // the pet paces around and works regardless of a skin's own geometry.
+
+  const SYNODIC = 29.530588853;        // mean synodic (lunar) month, in days
+  const NEW_MOON_REF = 947182440000;   // 2000-01-06 18:14 UTC — a known new moon (Unix ms)
+
+  // Fraction through the current lunation: 0 = new, 0.5 = full, → 1 back to new.
+  function moonPhase(now) {
+    const days = (now.getTime() - NEW_MOON_REF) / 86400000;
+    return (((days % SYNODIC) + SYNODIC) % SYNODIC) / SYNODIC;
+  }
+
+  // A tiny pixel moon at grid (mcx, mcy), radius R (grid cells), lit for the given phase. The disc is
+  // only ~7 cells wide, so a per-pixel terminator is cheap and exact: a front-hemisphere point with
+  // normal n=(x,y,z) is lit when the sun vector s=(sinθ,0,−cosθ) faces it, i.e. x·sinθ − z·cosθ > 0,
+  // where θ = 2π·phase (θ=0 new → sun behind; θ=π full → sun toward us).
+  function drawMoon(ctx, mcx, mcy, R, phase) {
+    const th = phase * Math.PI * 2;
+    const sinT = Math.sin(th), cosT = Math.cos(th);
+    for (let gx = Math.floor(mcx - R); gx <= Math.ceil(mcx + R); gx++) {
+      for (let gy = Math.floor(mcy - R); gy <= Math.ceil(mcy + R); gy++) {
+        const nx = (gx + 0.5 - mcx) / R, ny = (gy + 0.5 - mcy) / R;
+        const d2 = nx * nx + ny * ny;
+        if (d2 > 1) continue;
+        const nz = Math.sqrt(1 - d2);
+        px(ctx, gx, gy, 1, 1, nx * sinT - nz * cosT > 0 ? "#f3e7a6" : "#3a3a4a");
+      }
+    }
+  }
+
+  // Northern-hemisphere season from the month (the user base is CN-centric).
+  function season(now) {
+    const m = now.getMonth(); // 0-11
+    if (m <= 1 || m === 11) return "winter";
+    if (m <= 4) return "spring";
+    if (m <= 7) return "summer";
+    return "autumn";
+  }
+
+  // Subtle seasonal particle drift across the whole canvas (grid-pixel dots, low alpha so it never
+  // fights the pet): winter snow, spring blossom, summer fireflies (float + blink), autumn leaves.
+  function drawSeason(ctx, t, s, gridW, dusk, windy) {
+    if (s === "summer" && !dusk) return; // fireflies only come out around dusk/night
+    let color, N, speed, sway;
+    if (s === "winter") { color = "#e8eef7"; N = 9; speed = 0.06; sway = 2; }
+    else if (s === "spring") { color = "#f2b8cf"; N = 8; speed = 0.07; sway = 3; }
+    else if (s === "summer") { color = "#d8e87a"; N = 6; speed = 0.02; sway = 4; }
+    else { color = "#d98a4a"; N = 8; speed = 0.09; sway = 3; }
+    for (let i = 0; i < N; i++) {
+      const baseX = (i * 13 + i * i * 7) % gridW;
+      let x, y, a;
+      if (s === "summer") {
+        // Fireflies bob in mid-air and blink instead of falling
+        y = 11 + Math.sin(t * 0.02 + i * 2) * 8;
+        x = baseX + Math.cos(t * 0.025 + i) * sway;
+        a = 0.25 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.08 + i * 1.3));
+      } else {
+        y = (t * speed + i * 7) % (GY + 6);
+        x = baseX + Math.sin(t * 0.03 + i) * sway;
+        if (windy) x = (x + y * 0.9 + t * 0.2) % gridW; // blown rightward, more the lower it falls
+        a = Math.max(0.12, 0.5 * (1 - y / (GY + 6)));
+      }
+      if (y > GY) continue;
+      ctx.globalAlpha = a;
+      px(ctx, Math.round(x), Math.round(y), 1, 1, color);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Lunar-calendar festivals can't be derived cheaply, so the day-of dates are pinned per year.
+  const CNY = { 2025: "01-29", 2026: "02-17", 2027: "02-06", 2028: "01-26", 2029: "02-13", 2030: "02-03" };
+  const MIDAUTUMN = { 2025: "10-06", 2026: "09-25", 2027: "09-15", 2028: "10-03", 2029: "09-22", 2030: "09-12" };
+  function within(now, iso, before, after) {
+    const diff = (now.getTime() - new Date(iso + "T00:00:00").getTime()) / 86400000;
+    return diff >= -before && diff < after + 1;
+  }
+  // Which festival is on today (null if none). Solar dates are computed; lunar ones use the tables.
+  function festival(now) {
+    const y = now.getFullYear(), m = now.getMonth() + 1, d = now.getDate();
+    if ((m === 1 && d === 1) || (m === 12 && d === 31)) return "newyear";
+    if (within(now, y + "-12-25", 1, 1)) return "xmas";
+    if (within(now, y + "-10-31", 1, 0)) return "halloween";
+    if (CNY[y] && within(now, y + "-" + CNY[y], 1, 4)) return "cny";
+    if (MIDAUTUMN[y] && within(now, y + "-" + MIDAUTUMN[y], 1, 1)) return "midautumn";
+    return null;
+  }
+
+  // Festival decorations at fixed canvas corners (grid coords), so they never clash with the pet's
+  // state-specific headgear (hard hat / mortarboard / Einstein hair) the way a worn prop would.
+  function drawFestival(ctx, t, key, gridW) {
+    if (key === "cny") {
+      // A red lantern swaying on a string from each top corner
+      for (const lx of [3, gridW - 6]) {
+        const gx = lx + Math.round(Math.sin(t * 0.04 + lx) * 1.5), gy = 5;
+        px(ctx, gx + 1, 0, 1, gy, "#8a6b4a");     // string
+        px(ctx, gx, gy, 4, 1, "#e0c05a");         // top cap
+        px(ctx, gx - 1, gy + 1, 6, 4, "#d23b3b"); // body
+        px(ctx, gx, gy + 2, 1, 2, "#f0a0a0");     // highlight
+        px(ctx, gx, gy + 5, 4, 1, "#e0c05a");     // bottom cap
+        px(ctx, gx + 1, gy + 6, 2, 2, "#e0c05a"); // tassel
+      }
+    } else if (key === "xmas") {
+      // A little decorated pine in the bottom-left, lights twinkling
+      const gx = 5, gy = GY;
+      px(ctx, gx, gy - 2, 2, 2, "#7a5a3a");       // trunk
+      px(ctx, gx - 3, gy - 5, 8, 3, "#3f7a3f");
+      px(ctx, gx - 2, gy - 8, 6, 3, "#3f7a3f");
+      px(ctx, gx - 1, gy - 10, 4, 2, "#3f7a3f");
+      px(ctx, gx, gy - 12, 1, 2, "#e0c05a");      // topper star
+      const lights = [["#d4537e", gx - 2, gy - 4], ["#7fb4d9", gx + 2, gy - 6], ["#e0a63b", gx - 1, gy - 7], ["#9ac47a", gx + 1, gy - 9]];
+      for (let i = 0; i < lights.length; i++) {
+        if (Math.floor(t / 15 + i) % 2 === 0) px(ctx, lights[i][1], lights[i][2], 1, 1, lights[i][0]);
+      }
+    } else if (key === "halloween") {
+      const gx = 6, gy = GY;
+      if (Math.floor(t / 20) % 2 === 0) { ctx.globalAlpha = 0.35; px(ctx, gx - 4, gy - 5, 10, 6, "#ffcf6a"); ctx.globalAlpha = 1; } // candle flicker
+      px(ctx, gx, gy - 5, 1, 1, "#3f7a3f");       // stem
+      px(ctx, gx - 3, gy - 4, 8, 4, "#e08028");   // pumpkin body
+      px(ctx, gx - 2, gy - 3, 1, 1, "#3a2a10");   // carved eye
+      px(ctx, gx + 2, gy - 3, 1, 1, "#3a2a10");   // carved eye
+      px(ctx, gx - 1, gy - 1, 3, 1, "#3a2a10");   // grin
+    } else if (key === "midautumn") {
+      const gx = 6, gy = GY;
+      px(ctx, gx - 3, gy - 3, 8, 3, "#c79a5a");   // mooncake
+      px(ctx, gx - 3, gy - 1, 8, 1, "#a87a3a");   // base
+      px(ctx, gx - 1, gy - 2, 4, 1, "#a87a3a");   // pressed imprint
+    } else if (key === "newyear") {
+      // A few fireworks blooming and fading in the sky
+      const bursts = [[10, 8], [gridW - 10, 10], [Math.round(gridW / 2), 6]];
+      for (let i = 0; i < bursts.length; i++) {
+        const ph = (t * 0.03 + i * 1.4) % 3;
+        if (ph > 1.6) continue;
+        ctx.globalAlpha = Math.max(0, 1 - ph / 1.6);
+        for (let k = 0; k < 6; k++) {
+          const a = (k / 6) * Math.PI * 2;
+          px(ctx, Math.round(bursts[i][0] + Math.cos(a) * ph * 4), Math.round(bursts[i][1] + Math.sin(a) * ph * 4), 1, 1, CONFETTI[i % CONFETTI.length]);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  // Slow deterministic pseudo-weather (changes ~every 3h, mostly clear) — no network, and stable
+  // across skins/frames because it's a pure hash of the time bucket.
+  function weather(now) {
+    const bucket = Math.floor(now.getTime() / (3 * 3600 * 1000));
+    const r = ((bucket * 2654435761) >>> 0) % 100;
+    if (r < 12) return "rain";
+    if (r < 20) return "wind";
+    return "clear";
+  }
+
+  // Weather overlay: slanted rain + ground splashes, or horizontal wind speed-lines.
+  function drawWeather(ctx, t, kind, gridW) {
+    if (kind === "rain") {
+      ctx.globalAlpha = 0.5;
+      for (let i = 0; i < 16; i++) {
+        const baseX = (i * 11 + i * i * 5) % gridW;
+        const fall = (t * 0.5 + i * 9) % (GY + 4);
+        if (fall > GY) continue;
+        px(ctx, Math.round(baseX - fall * 0.3), Math.round(fall), 1, 2, "#8fb4d9"); // slanted streak
+      }
+      for (let i = 0; i < 3; i++) { // occasional ground splash
+        if (Math.floor(t / 12 + i * 2) % 3 === 0) px(ctx, (i * 17 + 7) % gridW, GY - 1, 2, 1, "#8fb4d9");
+      }
+      ctx.globalAlpha = 1;
+    } else if (kind === "wind") {
+      ctx.globalAlpha = 0.28;
+      for (let i = 0; i < 5; i++) {
+        const y = (i * 8 + 3) % GY;
+        const sweep = ((t * 3 + i * 20) % (gridW + 12)) - 6;
+        px(ctx, Math.round(sweep), y, 4, 1, "#c9d2da"); // horizontal speed line
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // The full background ambience: dusk/night moon (real phase) + season drift + weather + festivals.
+  // `force` overrides the deterministic weather (used by the demo gallery to show rain/wind on cue).
+  function ambient(ctx, canvas, t, force) {
+    const now = new Date();
+    const gridW = Math.floor((canvas.clientWidth || canvas.width) / S);
+    const h = now.getHours();
+    if (h >= 20 || h < 7) { // evening & night: hang the moon in the upper-left, out of the badges' way
+      drawMoon(ctx, 8, 7, 3.5, moonPhase(now));
+      px(ctx, 15, 5, 1, 1, "#fff6c0"); // a few tiny stars
+      px(ctx, 4, 14, 1, 1, "#fff6c0");
+      px(ctx, 14, 12, 1, 1, "#fff6c0");
+    }
+    const w = force || weather(now);
+    if (w !== "rain") drawSeason(ctx, t, season(now), gridW, h >= 18 || h < 7, w === "wind");
+    if (w !== "clear") drawWeather(ctx, t, w, gridW);
+    const f = festival(now);
+    if (f) drawFestival(ctx, t, f, gridW);
   }
 
   // ---- idle roaming state (skin-internal) ----
@@ -351,8 +558,23 @@
     if (t < wUntil) return;
     const h = new Date().getHours();
     const night = h >= 23 || h < 7;
+    const morning = h >= 6 && h < 10;   // coffee o'clock
+    const noon = h >= 12 && h < 14;     // after-lunch drowsiness
+    const deepNight = h >= 2 && h < 5;  // the small hours — fighting sleep
     const r = Math.random();
-    if (r < (night ? 0.45 : 0.12)) {
+    // Morning: now and then it takes a coffee break
+    if (morning && r < 0.28) {
+      wMode = "coffee";
+      wUntil = t + 260 + Math.random() * 200;   // sip for ~4-8 seconds
+      return;
+    }
+    // Small hours: keeps nodding off (head droops, then jerks awake)
+    if (deepNight && r < 0.5) {
+      wMode = "nod";
+      wUntil = t + 240 + Math.random() * 200;
+      return;
+    }
+    if (r < (night ? 0.45 : noon ? 0.32 : 0.12)) {
       wMode = "doze";
       wUntil = t + 700 + Math.random() * 900;   // take a nap: 12-27 seconds
     } else if (r < (night ? 0.55 : 0.22)) {
@@ -414,8 +636,20 @@
     let cx = baseCx + dx + pace;
     if (x.oops) cx += t % 6 < 3 ? 1 : -1;
 
-    // Night ambience (crescent moon) drawn behind the pet
-    if (isNight() && !x.dragging) nightScene(ctx);
+    // Eyes-follow-cursor: nudge pupils toward the cursor when it's off to one side (not while
+    // dragging or being tickled, which have their own expressions). gazeX/Y are canvas-logical px.
+    gaze = null;
+    if (x.gazeX != null && !x.dragging && !x.tickle) {
+      const dxg = x.gazeX / S - cx, dyg = x.gazeY / S - (GY - 16);
+      gaze = {
+        x: dxg > 3 ? 1 : dxg < -3 ? -1 : 0,
+        y: dyg > 3 ? 1 : dyg < -3 ? -1 : 0,
+      };
+    }
+
+    // Calendar ambience (moon phase / season drift / weather / festival decor) drawn behind the pet
+    const wthr = x.forceWeather || weather(new Date());
+    ambient(ctx, canvas, t, wthr);
 
     // Small ground shadow (shrinks and fades when picked up)
     ctx.fillStyle = x.dragging ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.18)";
@@ -433,9 +667,21 @@
       // Picked up: suspended and kicking, wide-eyed
       y0 = bodyDangling(ctx, cx, t);
     } else if (state === "limit") {
-      // Quota exhausted: sleeping
-      y0 = body(ctx, cx, { eyes: "closed", lying: true, breath: Math.sin(t * 0.045) > 0 ? 1 : 0 });
-      zzz(ctx, cx, GY - 17, t, 3);
+      // Quota exhausted: sleeping. As the 5-hour window's reset nears, it stirs — breathing quickens
+      // and an eye cracks open now and then; it wakes fully on limit→idle (the stretch handled above).
+      const reset = x.resetSecs;
+      const waking = reset != null && reset > 0 && reset < 300;
+      if (waking) {
+        ctx.globalAlpha = 0.25 + 0.15 * (0.5 + 0.5 * Math.sin(t * 0.05)); // a faint sunrise on the horizon
+        px(ctx, 0, GY - 2, Math.ceil((canvas.clientWidth || canvas.width) / S), 2, "#e0a63b");
+        ctx.globalAlpha = 1;
+        const peek = Math.floor(t / 25) % 4 === 0;
+        y0 = body(ctx, cx, { eyes: peek ? "tired" : "closed", lying: true, breath: Math.sin(t * 0.12) > 0 ? 1 : 0 });
+        zzz(ctx, cx, GY - 17, t, 1);
+      } else {
+        y0 = body(ctx, cx, { eyes: "closed", lying: true, breath: Math.sin(t * 0.045) > 0 ? 1 : 0 });
+        zzz(ctx, cx, GY - 17, t, 3);
+      }
     } else if (state === "working") {
       const tired = (x.workSecs || 0) >= 600;
       const note = x.toolNote || "";
@@ -532,6 +778,50 @@
           if (i < done) px(ctx, cx + 2, GY - 11 + i * 3, 2, 1, "#4a9a4a"); // green check
         }
         if (!bubble) statusTag(ctx, canvas, cx, y0, "planning", t);
+      } else if (note === "git") {
+        // Reviewing a commit graph: main branch line with commit dots, a side branch, newest pulses in
+        y0 = body(ctx, cx, { eyes: "up" });
+        const gx = cx - 2;
+        px(ctx, gx, GY - 12, 1, 10, "#6b665c");                       // main branch line
+        for (const cy of [GY - 11, GY - 7, GY - 3]) px(ctx, gx - 1, cy, 3, 2, "#e0a63b"); // commits
+        px(ctx, gx + 1, GY - 7, 3, 1, "#6b665c");                     // branch off to the right
+        px(ctx, gx + 4, GY - 9, 1, 3, "#6b665c");
+        px(ctx, gx + 3, GY - 10, 3, 2, "#9b7fd4");                    // branch commit (purple)
+        if (Math.floor(t / 18) % 2 === 0) px(ctx, gx - 1, GY - 15, 3, 2, "#fbe36a"); // newest commit pulses in
+        if (!bubble) statusTag(ctx, canvas, cx, y0, "git", t);
+      } else if (note === "testing") {
+        // Running tests: a flask bubbling, pass ✓ (occasionally a fail ✗) popping out
+        y0 = body(ctx, cx, { eyes: "up" });
+        const gx = cx - 1;
+        px(ctx, gx, GY - 11, 2, 2, "#cdd6dd");                        // flask neck
+        px(ctx, gx - 2, GY - 9, 6, 6, "#cdd6dd");                     // flask body
+        px(ctx, gx - 1, GY - 6, 4, 3, "#5aa46a");                     // green reagent
+        for (let i = 0; i < 3; i++) {                                 // bubbles rising
+          const ph = (t / 10 + i * 1.3) % 4;
+          if (ph < 3) px(ctx, gx + (i % 3) - 1, GY - 6 - Math.round(ph), 1, 1, "#9fe8a0");
+        }
+        const mx = cx + 9, my = y0 + 1;
+        if (Math.floor(t / 45) % 5 === 4) {                           // an occasional fail ✗
+          px(ctx, mx, my, 1, 1, "#d05045"); px(ctx, mx + 2, my, 1, 1, "#d05045");
+          px(ctx, mx + 1, my + 1, 1, 1, "#d05045");
+          px(ctx, mx, my + 2, 1, 1, "#d05045"); px(ctx, mx + 2, my + 2, 1, 1, "#d05045");
+        } else {                                                      // green ✓
+          px(ctx, mx, my + 1, 1, 1, "#4a9a4a"); px(ctx, mx + 1, my + 2, 1, 1, "#4a9a4a");
+          px(ctx, mx + 2, my, 1, 1, "#4a9a4a"); px(ctx, mx + 3, my - 1, 1, 1, "#4a9a4a");
+        }
+        if (!bubble) statusTag(ctx, canvas, cx, y0, "testing", t);
+      } else if (note === "deps") {
+        // Installing dependencies: a download arrow dropping packages into a box
+        y0 = body(ctx, cx, { eyes: "up" });
+        const gx = cx - 3;
+        px(ctx, gx, GY - 8, 7, 6, "#8a6b4a");                         // box
+        px(ctx, gx, GY - 8, 7, 1, "#a3805a");                         // lid highlight
+        px(ctx, gx + 3, GY - 8, 1, 6, "#6b4f35");                     // tape seam
+        const ay = GY - 15 + (Math.floor(t / 6) % 5);                 // arrow dropping in
+        px(ctx, gx + 3, ay, 1, 3, "#7fb4d9");                         // shaft
+        px(ctx, gx + 2, ay + 2, 3, 1, "#7fb4d9");                     // head sides
+        px(ctx, gx + 3, ay + 3, 1, 1, "#7fb4d9");                     // head tip
+        if (!bubble) statusTag(ctx, canvas, cx, y0, "deps", t);
       } else if (note) {
         // Other tools (MCP, etc.): generic working pose + status box showing the short name
         y0 = body(ctx, cx, { eyes: tired ? "tired" : "up" });
@@ -624,8 +914,18 @@
       if (level >= 2) heart(ctx, cx + (ph ? -19 : 17), y0 - (ph ? 2 : 6), 0.7);
       if (level >= 1) confetti(ctx, canvas, cx, level, t);
     } else {
-      // idle: head-pat > napping > standing/roaming
-      if (x.pat) {
+      // idle: tickle > head-pat > napping > standing/roaming
+      if (x.tickle) {
+        // Tickled (fast cursor wiggle over the pet): squirms and giggles
+        const wob = (Math.floor(t / 3) % 2 ? 1 : -1) * 2;
+        y0 = body(ctx, cx + wob, { eyes: "happy" });
+        if (Math.floor(t / 6) % 2 === 0) {         // little laughter squiggles
+          ctx.font = "bold 10px Consolas, monospace";
+          ctx.fillStyle = "#e0a63b";
+          ctx.fillText("~", (cx + 13) * S, (y0 + 1) * S);
+        }
+        heart(ctx, cx - 17, y0 - 4, 0.7);
+      } else if (x.pat) {
         patT++;
         if (patT > 120) {
           // Nuzzled for a while: blissful, hearts circling
@@ -643,6 +943,27 @@
       } else if (wMode === "stretch") {
         y0 = body(ctx, cx, { stretch: true });
         px(ctx, cx - 1, y0 + 11, 3, 2, "#8a5a3a"); // yawning mouth
+      } else if (wMode === "coffee") {
+        // A morning coffee break: holds a steaming mug, sipping now and then
+        const sip = Math.floor(t / 45) % 3 === 0;
+        y0 = body(ctx, cx, { eyes: sip ? "closed" : "open" });
+        px(ctx, cx - 3, GY - 12, 6, 5, "#d97757");  // mug
+        px(ctx, cx - 3, GY - 12, 6, 1, "#3a2a20");  // coffee surface
+        px(ctx, cx + 3, GY - 11, 1, 3, "#d97757");  // handle
+        px(ctx, cx + 4, GY - 10, 1, 1, "#d97757");
+        for (let i = 0; i < 2; i++) {                // steam curling up
+          const ph = (t / 30 + i * 0.9) % 3;
+          ctx.globalAlpha = Math.max(0, 0.5 - ph / 4);
+          px(ctx, cx - 1 + i * 2 + Math.round(Math.sin(t * 0.06 + i)), GY - 14 - ph * 3, 1, 1, "#cfc7ba");
+        }
+        ctx.globalAlpha = 1;
+      } else if (wMode === "nod") {
+        // Small-hours micro-sleep: head droops lower and lower, then jerks back awake
+        const ph = (t % 130) / 130;
+        const jerk = ph > 0.88;
+        const droop = jerk ? 0 : Math.round(ph * 4);
+        y0 = body(ctx, cx, { eyes: jerk ? "open" : "tired", bounce: -droop });
+        if (!jerk && ph > 0.35) zzz(ctx, cx, GY - 16 - droop, t, 1);
       } else if (wMode === "doze") {
         y0 = body(ctx, cx, { eyes: "closed", lying: true, breath: Math.sin(t * 0.045) > 0 ? 1 : 0 });
         zzz(ctx, cx, GY - 17, t, 1);
@@ -666,6 +987,13 @@
         }
       }
       if (!x.pat) patT = 0;
+    }
+
+    // Umbrella when raining — only in upright, unbusy poses (skip sleeping / dozing / nodding /
+    // coffee / stretching / tool-use / dragging / patting / tickling, where it would clash)
+    const busyIdle = state === "idle" && (wMode === "doze" || wMode === "coffee" || wMode === "nod" || wMode === "stretch");
+    if (wthr === "rain" && !x.dragging && state !== "limit" && !x.toolNote && !x.pat && !x.tickle && !busyIdle) {
+      umbrella(ctx, cx, y0);
     }
 
     // Tool error: a comic-style annoyance symbol beside the head (red cross-hatch)
@@ -740,7 +1068,7 @@
       }
     }
 
-    // Multi-session badge: mark however many run in parallel
+    // Multi-session badge: mark however many run in parallel (per-session detail lives in the panel)
     if ((x.sessions || 0) > 1 && !x.dragging) {
       ctx.font = "bold 11px Consolas, monospace";
       ctx.fillStyle = AMBER;
@@ -778,6 +1106,7 @@
   }
 
   window.PetRenderer = { draw };
-  // Shared drawing toolkit: reusable by skin files (pixels, bubbles, status box, hearts, Zzz, confetti)
-  window.PetKit = { S, GY, px, heart, zzz, bubbleBox, statusTag, confetti, isNight };
+  // Shared drawing toolkit: reusable by skin files (pixels, bubbles, status box, hearts, Zzz, confetti,
+  // and the calendar ambience — call ambient(ctx, canvas, t) early in a skin's draw for moon/season/festival).
+  window.PetKit = { S, GY, px, heart, zzz, bubbleBox, statusTag, confetti, isNight, ambient, moonPhase, drawMoon, season, festival, weather, drawWeather };
 })();

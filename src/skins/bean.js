@@ -36,6 +36,7 @@
   function draw(ctx, canvas, state, warn, bubble, t, extra) {
     const x = extra || {};
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    K.ambient(ctx, canvas, t); // moon phase / season drift / festival decor behind the pet
     let cx = 25;
     if (x.oops) cx += t % 6 < 3 ? 1 : -1;
 

@@ -70,6 +70,57 @@ fn friendly_tool(t: &str) -> String {
     snippet(short, 12)
 }
 
+/// Like friendly_tool, but for shell tools it peeks at the command to pick a more specific animation
+/// (git / testing / deps) so a plain "cmd" isn't the only shell state.
+fn friendly_tool_cmd(tool: &str, input: &serde_json::Value) -> String {
+    if tool == "Bash" || tool == "PowerShell" {
+        let c = input["command"].as_str().unwrap_or("").to_lowercase();
+        if c.split_whitespace().any(|w| w == "git") {
+            return "git".to_string();
+        }
+        if is_test_cmd(&c) {
+            return "testing".to_string();
+        }
+        if is_install_cmd(&c) {
+            return "deps".to_string();
+        }
+        return "cmd".to_string();
+    }
+    friendly_tool(tool)
+}
+
+fn is_test_cmd(c: &str) -> bool {
+    c.contains("pytest")
+        || c.contains("jest")
+        || c.contains("vitest")
+        || c.contains("mocha")
+        || c.contains("cargo test")
+        || c.contains("go test")
+        || c.contains("rspec")
+        || c.contains("phpunit")
+        || (c.contains(" test")
+            && (c.contains("npm") || c.contains("yarn") || c.contains("pnpm") || c.contains("make")))
+}
+
+fn is_install_cmd(c: &str) -> bool {
+    c.contains("npm install")
+        || c.contains("npm i ")
+        || c.contains("npm ci")
+        || c.contains("yarn add")
+        || c.contains("yarn install")
+        || c.contains("pnpm add")
+        || c.contains("pnpm install")
+        || c.contains("pip install")
+        || c.contains("pip3 install")
+        || c.contains("cargo add")
+        || c.contains("go get")
+        || c.contains("bundle install")
+        || c.contains("gem install")
+        || c.contains("brew install")
+        || c.contains("apt install")
+        || c.contains("apt-get install")
+}
+
 fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -108,8 +159,15 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
             done_until: None,
             last_seen: Instant::now(),
             in_tool: false,
+            cwd: None,
         });
         sess.last_seen = now;
+        // Remember this session's project folder (basename of cwd) for the panel's session list
+        if let Some(c) = v["cwd"].as_str() {
+            if let Some(base) = c.rsplit(|ch| ch == '/' || ch == '\\').find(|s| !s.is_empty()) {
+                sess.cwd = Some(base.to_string());
+            }
+        }
 
         match name {
             "UserPromptSubmit" => {
@@ -157,7 +215,8 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                     core.agent_tasks.push(now + Duration::from_secs(30 * 60));
                 } else {
                     if !tool.is_empty() {
-                        core.tool_note = Some((friendly_tool(tool), now + Duration::from_secs(10)));
+                        core.tool_note =
+                            Some((friendly_tool_cmd(tool, &v["tool_input"]), now + Duration::from_secs(10)));
                     }
                     // Background shell launched (run_in_background): a little satellite enters orbit
                     if v["tool_input"]["run_in_background"].as_bool().unwrap_or(false) {

@@ -59,7 +59,19 @@ Every state has its own animation, so a glance tells you where Claude is:
 | ![idle](docs/gifs/idle.gif) | ![satellite](docs/gifs/satellite.gif) | |
 | Strolls / naps / stretches / chases a butterfly | A little satellite orbits its head | |
 
-There are also hidden bits — a late-night miner's lamp, hearts when you pat it, flopping down to sleep when the quota runs out. Install it and find them yourself.
+### Ambience & Easter eggs
+
+The scene lives on its own — all from your local clock, no network:
+
+- **🌙 Real moon phase** at night, computed from the date — it waxes and wanes over the month.
+- **🍂 Seasons**: drifting snow, spring blossom, summer fireflies (out at dusk), autumn leaves.
+- **🎉 Festivals**: New Year fireworks, Lunar New Year lanterns, a Christmas tree, a Halloween pumpkin, a Mid-Autumn mooncake under the full moon.
+- **🌦 Weather**: the odd spell of rain (it puts up an umbrella) or wind (things blow sideways).
+- **☕ Time of day**: a morning coffee break, and extra-drowsy head-nods in the small hours.
+- **👀 Eyes that follow your cursor**; **😆 tickle it** (wiggle over it fast) for a giggle, or pat it for hearts.
+- **🌅 Quota reset**: as the 5-hour window is about to refill, the sleeping pet stirs awake at dawn.
+
+Plus the original hidden bits — flopping down to sleep when the quota runs out, and more. Install it and find them yourself.
 
 ## Requirements
 
@@ -104,8 +116,8 @@ Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ state 
 ~/.claude/projects/*.jsonl ──incremental parse──▶ 5-hour window aggregation ──▶ usage panel + warn/limit state
 ```
 
-- **Event mapping**: `UserPromptSubmit` → working, `PreToolUse` → shows the current tool ("running a command" / "editing code" …), `Stop` → done (bubble shows duration and a summary of the last message; confetti past 1 minute, a big celebration past 10), `Notification` → waiting for you, `SessionStart/End` → session boundaries.
-- **Multi-session**: state is tracked per `session_id`; a ×N badge appears over its head when several run in parallel. Any one working counts as working; it only celebrates when all are done.
+- **Event mapping**: `UserPromptSubmit` → working, `PreToolUse` → shows the current tool ("running a command" / "editing code" …), `Stop` → done (bubble shows duration and a summary of the last message; confetti past 1 minute, a big celebration past 10), `Notification` → waiting for you, `SessionStart/End` → session boundaries. Shell commands are recognized a bit further — `git`, running tests, and installing dependencies each get their own animation.
+- **Multi-session**: state is tracked per `session_id`; a ×N badge appears over its head when several run in parallel. Any one working counts as working; it only celebrates when all are done. The usage panel lists each parallel session by its project folder, state, and elapsed time.
 - **Notification de-noising**: finishing a task shorter than 30 seconds fires no system notification (tunable via `notify_min_secs` in the config).
 - **Hooks forward via curl** rather than http-type hooks, for compatibility with more Claude Code versions; curl ships by default on Win10+/macOS/mainstream Linux.
 - **5-hour window semantics**: starts at the UTC top-of-hour of the window's first activity and lasts 5 hours (matching ccusage's block semantics).

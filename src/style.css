@@ -152,6 +152,27 @@ select {
 }
 .model-list .m-name { opacity: 0.92; }
 
+/* Per-session list: one row per parallel session (icon · what it's doing · elapsed) */
+#session-list {
+  font-family: Consolas, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  padding: 1px 0 2px 6px;
+}
+.s-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 0;
+}
+.s-row .s-ic { width: 10px; text-align: center; flex: none; }
+.s-row .s-label { flex: 1; color: #d8d2c6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-row .s-time { color: #8a8478; flex: none; }
+.s-row.s-working .s-ic { color: #f2823e; }
+.s-row.s-attention .s-ic { color: #e0a63b; }
+.s-row.s-done .s-ic { color: #9ac47a; }
+.s-row.s-idle .s-ic { color: #8a8478; }
+
 /* Pixel-block progress bar: 10 cells, echoing the pixel pet */
 #pixel-bar {
   display: grid;

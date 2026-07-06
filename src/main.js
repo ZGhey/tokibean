@@ -68,6 +68,11 @@
     update_checking: ["检查更新中…", "Checking for updates…"],
     update_error: ["检查更新失败,点重试", "Update check failed — retry"],
     settings: ["设置", "Settings"],
+    sessions_label: ["会话", "Sessions"],
+    st_working: ["工作中", "working"],
+    st_waiting: ["等你输入", "waiting"],
+    st_done: ["完工", "done"],
+    st_idle: ["空闲", "idle"],
   };
   function t(key, vars) {
     let s = (I18N[key] ? I18N[key][LANG === "zh" ? 0 : 1] : key) || key;
@@ -118,6 +123,8 @@
   let frame = 0;
   let dragging = false;
   let pat = false;
+  let gazeX = null, gazeY = null;          // cursor position over the canvas (logical px), for eyes-follow
+  let lastMX = 0, lastMY = 0, tickleUntil = 0; // fast-wiggle (tickle) detection
 
   // ---------- Animation loop ----------
   function loop() {
@@ -131,6 +138,13 @@
       oops: cur.oops,
       bgCount: cur.bg_count,
       agentCount: cur.agent_count,
+      resetSecs:
+        cur.usage && cur.usage.block_reset_ts > 0
+          ? cur.usage.block_reset_ts - Math.floor(Date.now() / 1000)
+          : null,
+      gazeX,
+      gazeY,
+      tickle: performance.now() < tickleUntil,
       dragging,
       pat,
     });
@@ -154,6 +168,15 @@
     const m = Math.floor((sec % 3600) / 60);
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
+  // Short elapsed for the session list: 45s / 3m / 1h2m
+  function fmtDur(sec) {
+    if (sec < 60) return sec + "s";
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return h > 0 ? `${h}h${m}m` : `${m}m`;
+  }
+  const SESS_ICON = { working: "▶", attention: "‖", done: "✓", idle: "·" };
+  const SESS_LABEL = { working: "st_working", attention: "st_waiting", done: "st_done", idle: "st_idle" };
 
   // ---------- Panel rendering ----------
   const el = (id) => document.getElementById(id);
@@ -166,7 +189,40 @@
   for (let i = 0; i < 7; i++) trend.appendChild(document.createElement("span"));
   trend.lastChild.className = "today";
 
+  // Per-session list: one row per parallel session — its state icon, what it's running
+  // (the tool if mid-call, else the state label), and how long it's been in that state.
+  function renderSessions() {
+    const list = cur.sessions || [];
+    const block = el("sessions-block");
+    if ((cur.session_count || 0) <= 1 || !list.length) {
+      block.classList.add("hidden");
+      return;
+    }
+    block.classList.remove("hidden");
+    el("sessions-count").textContent = "×" + list.length;
+    const box = el("session-list");
+    box.textContent = "";
+    for (const s of list) {
+      const row = document.createElement("div");
+      row.className = "s-row s-" + s.state;
+      const ic = document.createElement("span");
+      ic.className = "s-ic";
+      ic.textContent = SESS_ICON[s.state] || "·";
+      const label = document.createElement("span");
+      label.className = "s-label";
+      label.textContent = s.cwd || t(SESS_LABEL[s.state] || "st_idle");
+      const time = document.createElement("span");
+      time.className = "s-time";
+      time.textContent = fmtDur(s.secs || 0);
+      row.appendChild(ic);
+      row.appendChild(label);
+      row.appendChild(time);
+      box.appendChild(row);
+    }
+  }
+
   function renderPanel() {
+    renderSessions();
     const u = cur.usage;
     if (!u) return;
 
@@ -609,9 +665,19 @@
   canvas.addEventListener("mousemove", (e) => {
     const gx = e.offsetX / 4, gy = e.offsetY / 4; // Grid coordinates (pixel scale factor 4)
     pat = !downPos && gx > 8 && gx < 42 && gy > 12 && gy < 36;
+    // Eyes-follow: cursor position over the canvas in logical px (offsetX/Y are CSS px)
+    gazeX = e.offsetX;
+    gazeY = e.offsetY;
+    // Tickle: fast wiggling over the pet body keeps a short-lived tickle alive
+    const speed = Math.abs(e.offsetX - lastMX) + Math.abs(e.offsetY - lastMY);
+    lastMX = e.offsetX;
+    lastMY = e.offsetY;
+    if (pat && speed > 6) tickleUntil = performance.now() + 350;
   });
   canvas.addEventListener("mouseleave", () => {
     pat = false;
+    gazeX = gazeY = null;
+    tickleUntil = 0;
   });
 
   el("mode-select").addEventListener("change", (e) => {
