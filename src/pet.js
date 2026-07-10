@@ -364,22 +364,31 @@
     return (((days % SYNODIC) + SYNODIC) % SYNODIC) / SYNODIC;
   }
 
-  // A tiny pixel moon at grid (mcx, mcy), radius R (grid cells), lit for the given phase. The disc is
-  // only ~7 cells wide, so a per-pixel terminator is cheap and exact: a front-hemisphere point with
-  // normal n=(x,y,z) is lit when the sun vector s=(sinθ,0,−cosθ) faces it, i.e. x·sinθ − z·cosθ > 0,
-  // where θ = 2π·phase (θ=0 new → sun behind; θ=π full → sun toward us).
+  // A smooth crescent moon at grid (mcx, mcy), radius R (grid cells), lit for the given phase — the
+  // same clean look as the original night-scene moon (full lit disc, no dark disc, no glow), but the
+  // terminator now tracks the real phase. The lit region is a lune: the bright limb is a semicircle
+  // on the lit side; the terminator is a half-ellipse whose horizontal radius rx = R·cos(θ),
+  // θ = 2π·phase — |rx| shrinks toward the quarters (straight terminator = exact half moon) and its
+  // sign flips crescent↔gibbous.
   function drawMoon(ctx, mcx, mcy, R, phase) {
+    const cx = mcx * S, cy = mcy * S, r = R * S;
     const th = phase * Math.PI * 2;
-    const sinT = Math.sin(th), cosT = Math.cos(th);
-    for (let gx = Math.floor(mcx - R); gx <= Math.ceil(mcx + R); gx++) {
-      for (let gy = Math.floor(mcy - R); gy <= Math.ceil(mcy + R); gy++) {
-        const nx = (gx + 0.5 - mcx) / R, ny = (gy + 0.5 - mcy) / R;
-        const d2 = nx * nx + ny * ny;
-        if (d2 > 1) continue;
-        const nz = Math.sqrt(1 - d2);
-        px(ctx, gx, gy, 1, 1, nx * sinT - nz * cosT > 0 ? "#f3e7a6" : "#3a3a4a");
-      }
+    const rx = Math.abs(r * Math.cos(th));
+    const waxing = phase < 0.5;                        // waxing → lit limb on the right
+    const bulge = Math.cos(th) > 0 ? waxing : !waxing; // terminator bows toward the lit side?
+    ctx.save();
+    ctx.fillStyle = "#f3e7a6";
+    ctx.beginPath();
+    if (waxing) {
+      ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2, false);
+      ctx.ellipse(cx, cy, rx, r, 0, Math.PI / 2, -Math.PI / 2, bulge);
+    } else {
+      ctx.arc(cx, cy, r, Math.PI / 2, -Math.PI / 2, false);
+      ctx.ellipse(cx, cy, rx, r, 0, -Math.PI / 2, Math.PI / 2, !bulge);
     }
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   // Northern-hemisphere season from the month (the user base is CN-centric).
