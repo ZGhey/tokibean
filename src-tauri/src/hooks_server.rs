@@ -2,6 +2,7 @@
 // Claude Code's hooks POST event JSON to http://127.0.0.1:<port>/event
 // The event JSON carries hook_event_name and session_id; state is tracked per session
 
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -121,6 +122,43 @@ fn is_install_cmd(c: &str) -> bool {
         || c.contains("apt-get install")
 }
 
+/// A stable, human-friendly project name for a working directory: the basename of the nearest ancestor
+/// that looks like a project root (has .git / package.json / Cargo.toml / pyproject.toml / go.mod), so it
+/// stays put as a session cd's between subdirectories. Falls back to the cwd's own basename.
+fn project_name(cwd: &str) -> Option<String> {
+    let base = |d: &Path| d.file_name().and_then(|n| n.to_str()).map(str::to_string);
+    // Prefer the git repo root — the most stable, recognizable project identity across subdirs.
+    let mut dir = Path::new(cwd);
+    loop {
+        if dir.join(".git").exists() {
+            return base(dir);
+        }
+        match dir.parent() {
+            Some(p) if p != dir => dir = p,
+            _ => break,
+        }
+    }
+    // Not a git repo: fall back to the nearest package/manifest root.
+    let mut dir = Path::new(cwd);
+    loop {
+        if dir.join("package.json").exists()
+            || dir.join("Cargo.toml").exists()
+            || dir.join("pyproject.toml").exists()
+            || dir.join("go.mod").exists()
+        {
+            return base(dir);
+        }
+        match dir.parent() {
+            Some(p) if p != dir => dir = p,
+            _ => break,
+        }
+    }
+    // Last resort: the cwd's own basename.
+    cwd.rsplit(|ch| ch == '/' || ch == '\\')
+        .find(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -162,10 +200,11 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
             cwd: None,
         });
         sess.last_seen = now;
-        // Remember this session's project folder (basename of cwd) for the panel's session list
+        // Remember this session's PROJECT (nearest ancestor with a project marker), so the panel shows a
+        // stable name even as the session cd's between subdirectories (e.g. proj/cli → still "proj").
         if let Some(c) = v["cwd"].as_str() {
-            if let Some(base) = c.rsplit(|ch| ch == '/' || ch == '\\').find(|s| !s.is_empty()) {
-                sess.cwd = Some(base.to_string());
+            if let Some(name) = project_name(c) {
+                sess.cwd = Some(name);
             }
         }
 
@@ -181,14 +220,12 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                 core.tool_note = None;
             }
             "PostToolUse" => {
-                // Tool finished, exit the "in tool call" state
+                // Tool finished, exit the "in tool call" state.
+                // NOTE: do NOT drop a mini-clone here. Subagents run in the background by default
+                // (CC v2.1.198+), so the Agent tool call returns — and fires PostToolUse — immediately
+                // on launch, long before the subagent finishes. The real "subagent done" signal is the
+                // SubagentStop event (handled below); popping here would kill the clone at launch.
                 sess.in_tool = false;
-                // A subagent (Task/Agent) finished: drop one mini-clone
-                if let Some(tool) = v["tool_name"].as_str() {
-                    if tool == "Task" || tool == "Agent" {
-                        core.agent_tasks.pop();
-                    }
-                }
                 // Tool error -> a brief annoyed animation
                 let r = &v["tool_response"];
                 let is_err = r["is_error"].as_bool().unwrap_or(false)
@@ -272,14 +309,23 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                 sess.base = Base::Attention;
                 sess.done_until = None;
                 sess.in_tool = false;
+                let proj = sess.cwd.clone(); // capture before touching core (borrow checker)
                 core.tool_note = None;
-                let msg = v["message"].as_str().unwrap_or("");
-                let text = if msg.is_empty() {
-                    i18n::t("在等你输入!", "Waiting for you!").to_string()
-                } else {
-                    snippet(msg, 40)
+                // Name the project that needs you, so with several sessions you can tell which one is
+                // waiting; fall back to the raw notification message, then a generic prompt.
+                let text = match &proj {
+                    Some(p) if i18n::is_zh() => format!("「{}」在等你", p),
+                    Some(p) => format!("{} needs you", p),
+                    None => {
+                        let msg = v["message"].as_str().unwrap_or("");
+                        if msg.is_empty() {
+                            i18n::t("在等你输入!", "Waiting for you!").to_string()
+                        } else {
+                            snippet(msg, 40)
+                        }
+                    }
                 };
-                core.bubble = Some((text, now + Duration::from_secs(120)));
+                core.bubble = Some((text, now + Duration::from_secs(30)));
             }
             "SessionStart" => {
                 let anyone_busy = core
@@ -291,7 +337,12 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
                         Some((i18n::t("开工!", "Let's go!").to_string(), now + Duration::from_secs(6)));
                 }
             }
-            _ => {} // Ignore SubagentStop and others for now
+            "SubagentStop" => {
+                // A subagent finished — the reliable "subagent done" signal (see the PostToolUse note).
+                // Drop one mini-clone; the 30-min decay on push is only a fallback for a missed Stop.
+                core.agent_tasks.pop();
+            }
+            _ => {} // Ignore other events for now
         }
     }
 

@@ -1,6 +1,7 @@
 // State machine: the pet's brain
 // Multi-session: each Claude Code session (session_id) tracks its own state; aggregated for display:
-//   any attention > any working > any done (transient) > limit (quota exhausted) > idle
+//   any working > any attention > any done (transient) > limit (quota exhausted) > idle
+//   (working first so a session waiting on input can't hide others that are actively working)
 // warn (window >80%) is an overlay flag, not a state slot
 
 use serde::Serialize;
@@ -260,10 +261,13 @@ pub fn build_update(shared: &Shared) -> PetUpdate {
     // Only official data or a user-set manual limit may put the pet to sleep / raise alerts;
     // the auto estimate (vs. historical peak) is display-only — it falsely reports 100% when setting a new record
     let pct_valid = snap.basis == "official" || snap.basis == "manual";
-    let state = if attention {
-        "attention"
-    } else if working > 0 {
+    // Working outranks attention: with several sessions, one sitting in "waiting for input" must NOT
+    // hide the others that are actively working — otherwise the pet looks idle/resting while work is
+    // happening. Attention only surfaces once nothing is working anymore.
+    let state = if working > 0 {
         "working"
+    } else if attention {
+        "attention"
     } else if done {
         "done"
     } else if snap.mode == "subscription" && pct_valid && snap.block_pct >= 1.0 {

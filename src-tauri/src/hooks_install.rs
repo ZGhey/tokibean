@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
-const EVENTS: [&str; 7] = [
+const EVENTS: [&str; 8] = [
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
@@ -21,6 +21,9 @@ const EVENTS: [&str; 7] = [
     "Notification",
     "SessionStart",
     "SessionEnd",
+    // Fires when a subagent finishes — the only reliable "subagent done" signal. Background subagents
+    // (default since CC v2.1.198) return from the Agent tool immediately, so PostToolUse can't be used.
+    "SubagentStop",
 ];
 
 /// Checks whether the installed hooks are missing any event (newly added events
