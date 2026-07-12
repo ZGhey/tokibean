@@ -4,14 +4,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod fetch_policy;
 mod hooks_install;
 mod hooks_server;
 mod i18n;
 mod login;
 mod official;
+mod projection;
 mod state;
 mod updater;
 mod usage;
+mod wsl;
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tiny_http::{Method, Response, Server};
 
 use crate::i18n;
@@ -185,9 +185,11 @@ fn handle_event(app: &AppHandle, shared: &Shared, body: &str) {
 
         if name == "SessionEnd" {
             core.sessions.remove(&sid);
-            // Note: push_update locks core again, so it must be released first
+            // Project while still holding the `core` guard, then release it before emitting — no
+            // drop-then-relock, so this path can't re-enter the core lock.
+            let payload = state::build_update_from_core(shared, &core);
             drop(core);
-            state::push_update(app, shared);
+            let _ = app.emit("pet-update", payload);
             return;
         }
 

@@ -195,6 +195,9 @@ pub enum FetchOutcome {
     Fail,
 }
 
+/// Read the official 5-hour usage. Wider than its name: it first resolves a token via `get_token`,
+/// which may refresh the pet's OAuth credential, write the rotated token back to config, and raise
+/// `reconnect_needed` when the refresh token is dead. Response mapping is the pure `interpret_response`.
 pub fn fetch(shared: &Shared, cfg_token: &str) -> FetchOutcome {
     fetch_inner(shared, cfg_token).unwrap_or(FetchOutcome::Fail)
 }
@@ -236,16 +239,38 @@ fn fetch_inner(shared: &Shared, cfg_token: &str) -> Option<FetchOutcome> {
         return None;
     }
     let body = String::from_utf8_lossy(&out.stdout);
-    if let Some(u) = parse(&body) {
-        return Some(FetchOutcome::Ok(u));
+    match interpret_response(&body) {
+        FetchOutcome::Ok(u) => Some(FetchOutcome::Ok(u)),
+        FetchOutcome::RateLimited => {
+            eprintln!("[claude-pet] official mode: rate limited, backing off for 5 minutes");
+            Some(FetchOutcome::RateLimited)
+        }
+        FetchOutcome::Fail => {
+            let head: String = body.chars().take(200).collect();
+            eprintln!("[claude-pet] official mode: could not parse response: {}", head);
+            None
+        }
+    }
+}
+
+/// Pure mapping of a successful curl's response body to a FetchOutcome: a parseable usage payload,
+/// an explicit rate-limit marker, or an unrecognized body (Fail). Kept separate from the curl IO so
+/// the mapping is testable without a network.
+pub fn interpret_response(body: &str) -> FetchOutcome {
+    if let Some(u) = parse(body) {
+        return FetchOutcome::Ok(u);
     }
     if body.contains("rate_limit") {
-        eprintln!("[claude-pet] official mode: rate limited, backing off for 5 minutes");
-        return Some(FetchOutcome::RateLimited);
+        return FetchOutcome::RateLimited;
     }
-    let head: String = body.chars().take(200).collect();
-    eprintln!("[claude-pet] official mode: could not parse response: {}", head);
-    None
+    FetchOutcome::Fail
+}
+
+/// A momentary fake 100% at the window-reset boundary: a real cap climbs through 85~99% first,
+/// whereas after a reset the API's occasional one-shot 100% was 0~2% the tick before. Reject a jump
+/// to ≥100% when the previous raw reading was still low (<85%); the next tick confirms a real cap.
+pub fn is_suspect_spike(prev_raw: f64, fresh_pct: f64) -> bool {
+    fresh_pct >= 1.0 && prev_raw < 0.85
 }
 
 fn parse(body: &str) -> Option<OfficialUsage> {
@@ -272,4 +297,63 @@ fn parse(body: &str) -> Option<OfficialUsage> {
         five_reset_ts,
         week_pct,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_fractional_utilization() {
+        let out =
+            parse(r#"{"five_hour":{"utilization":0.42},"seven_day":{"utilization":0.1}}"#).unwrap();
+        assert!((out.five_pct - 0.42).abs() < 1e-9);
+        assert!((out.week_pct.unwrap() - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn normalizes_0_to_100_scale() {
+        // values over 1.5 are treated as a percentage and divided by 100
+        let out = parse(r#"{"5h":{"utilization":85}}"#).unwrap();
+        assert!((out.five_pct - 0.85).abs() < 1e-9);
+        assert_eq!(out.week_pct, None);
+    }
+
+    #[test]
+    fn reads_reset_timestamp_else_zero() {
+        let with = parse(r#"{"five_hour":{"utilization":0.5,"resets_at":"2026-07-12T10:00:00Z"}}"#)
+            .unwrap();
+        assert_eq!(with.five_reset_ts, 1_783_850_400); // 2026-07-12T10:00:00Z
+        let without = parse(r#"{"five_hour":{"utilization":0.5}}"#).unwrap();
+        assert_eq!(without.five_reset_ts, 0);
+    }
+
+    #[test]
+    fn missing_five_hour_section_is_none() {
+        assert!(parse(r#"{"foo":1}"#).is_none());
+        assert!(parse("not json").is_none());
+    }
+
+    #[test]
+    fn interpret_maps_body_to_outcome() {
+        assert!(matches!(
+            interpret_response(r#"{"five_hour":{"utilization":0.3}}"#),
+            FetchOutcome::Ok(_)
+        ));
+        assert!(matches!(
+            interpret_response(r#"{"error":{"type":"rate_limit_error"}}"#),
+            FetchOutcome::RateLimited
+        ));
+        assert!(matches!(interpret_response("<html>502</html>"), FetchOutcome::Fail));
+    }
+
+    #[test]
+    fn suspect_spike_rejects_only_a_jump_from_low() {
+        // 2% → 100% at a reset boundary: suspicious
+        assert!(is_suspect_spike(0.02, 1.0));
+        // 90% → 100%: a real cap climbing, accept
+        assert!(!is_suspect_spike(0.90, 1.0));
+        // below 100%: never suspect regardless of history
+        assert!(!is_suspect_spike(0.0, 0.99));
+    }
 }

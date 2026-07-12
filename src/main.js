@@ -232,9 +232,9 @@
     el("api-block").classList.toggle("hidden", isSub);
 
     if (isSub) {
-      // Only official data or a manually configured limit yield a real percentage; otherwise
-      // show nothing (the inaccurate local estimate was removed).
-      const known = u.basis === "official" || u.basis === "manual";
+      // Whether the percentage is trustworthy is decided by the backend (projection::usage_flags)
+      // and sent as u.pct_valid, so this rule isn't duplicated across the IPC seam.
+      const known = u.pct_valid;
       const pct = Math.min(u.block_pct, 1.5);
       el("block-pct").textContent = known ? Math.round(u.block_pct * 100) + "%" : "--%";
       const cells = bar.children;

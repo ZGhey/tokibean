@@ -35,7 +35,7 @@ pub fn incomplete(port: u16) -> bool {
         return true;
     }
     #[cfg(target_os = "windows")]
-    for dir in wsl_claude_dirs() {
+    for dir in crate::wsl::claude_dirs() {
         if file_incomplete(&dir.join("settings.json"), port) {
             return true;
         }
@@ -127,10 +127,12 @@ pub fn install(port: u16) -> Result<String, String> {
 
     // Sync WSL: only write for users that already have ~/.claude (only those
     // actually using Claude Code need it).
+    // Only mutated inside the Windows-only WSL-sync block below
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut wsl_note = String::new();
     #[cfg(target_os = "windows")]
     {
-        let targets = wsl_claude_dirs();
+        let targets = crate::wsl::claude_dirs();
         if !targets.is_empty() {
             let mirrored = wsl_mirrored();
             let cmd = if mirrored {
@@ -185,50 +187,6 @@ pub fn install(port: u16) -> Result<String, String> {
             format!("{}{}. Restart Claude Code or run /hooks inside it to take effect.", head, wsl_note)
         })
     }
-}
-
-/// Enumerates existing .claude directories inside WSL distros (accessed via
-/// \\wsl$, same discovery logic as usage.rs).
-#[cfg(target_os = "windows")]
-pub fn wsl_claude_dirs() -> Vec<std::path::PathBuf> {
-    use std::path::PathBuf;
-    let mut out = Vec::new();
-    let mut cmd = std::process::Command::new("wsl.exe");
-    crate::official::no_window(&mut cmd);
-    let Ok(o) = cmd.args(["-l", "-q"]).output() else { return out };
-    if !o.status.success() {
-        return out;
-    }
-    // wsl.exe outputs UTF-16LE.
-    let text = if o.stdout.iter().take(8).any(|&b| b == 0) {
-        let units: Vec<u16> = o
-            .stdout
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        String::from_utf16_lossy(&units)
-    } else {
-        String::from_utf8_lossy(&o.stdout).to_string()
-    };
-    for distro in text.lines().map(|l| l.trim().trim_start_matches('\u{feff}')) {
-        if distro.is_empty() {
-            continue;
-        }
-        let base = PathBuf::from(format!(r"\\wsl$\{}", distro));
-        if let Ok(entries) = fs::read_dir(base.join("home")) {
-            for e in entries.flatten() {
-                let p = e.path().join(".claude");
-                if p.is_dir() {
-                    out.push(p);
-                }
-            }
-        }
-        let rootp = base.join("root").join(".claude");
-        if rootp.is_dir() {
-            out.push(rootp);
-        }
-    }
-    out
 }
 
 /// Whether .wslconfig has mirrored networking enabled (networkingMode=mirrored).

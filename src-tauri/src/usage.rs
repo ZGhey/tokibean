@@ -35,7 +35,9 @@ pub struct Scanner {
     seen: HashMap<String, i64>,
     pub events: Vec<UsageEvent>,
     /// projects directories inside WSL distros (accessed from Windows via \\wsl$), refreshed periodically
+    #[cfg(target_os = "windows")]
     wsl_roots: Vec<PathBuf>,
+    #[cfg(target_os = "windows")]
     wsl_checked: Option<std::time::Instant>,
 }
 
@@ -45,12 +47,16 @@ impl Scanner {
             offsets: HashMap::new(),
             seen: HashMap::new(),
             events: Vec::new(),
+            #[cfg(target_os = "windows")]
             wsl_roots: Vec::new(),
+            #[cfg(target_os = "windows")]
             wsl_checked: None,
         }
     }
 
-    /// Enumerate ~/.claude/projects for all users across WSL distros, refreshed every 10 minutes
+    /// Enumerate ~/.claude/projects for all users across WSL distros, refreshed every 10 minutes.
+    /// The distro discovery itself lives in crate::wsl; this only maps each .claude to its projects
+    /// dir and caches the result so the scan (every 30s) doesn't spawn wsl.exe each time.
     #[cfg(target_os = "windows")]
     fn wsl_projects_dirs(&mut self) -> Vec<PathBuf> {
         let now = std::time::Instant::now();
@@ -60,44 +66,13 @@ impl Scanner {
             .unwrap_or(true);
         if stale {
             self.wsl_checked = Some(now);
-            self.wsl_roots.clear();
-            let mut cmd = std::process::Command::new("wsl.exe");
-            crate::official::no_window(&mut cmd);
-            if let Ok(out) = cmd.args(["-l", "-q"]).output() {
-                if out.status.success() {
-                    // wsl.exe output is UTF-16LE
-                    let text = if out.stdout.iter().take(8).any(|&b| b == 0) {
-                        let units: Vec<u16> = out
-                            .stdout
-                            .chunks_exact(2)
-                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                            .collect();
-                        String::from_utf16_lossy(&units)
-                    } else {
-                        String::from_utf8_lossy(&out.stdout).to_string()
-                    };
-                    for distro in text.lines().map(|l| l.trim().trim_start_matches('\u{feff}')) {
-                        if distro.is_empty() {
-                            continue;
-                        }
-                        let base = PathBuf::from(format!(r"\\wsl$\{}", distro));
-                        if let Ok(entries) = fs::read_dir(base.join("home")) {
-                            for e in entries.flatten() {
-                                let p = e.path().join(".claude").join("projects");
-                                if p.is_dir() {
-                                    self.wsl_roots.push(p);
-                                }
-                            }
-                        }
-                        let rootp = base.join("root").join(".claude").join("projects");
-                        if rootp.is_dir() {
-                            self.wsl_roots.push(rootp);
-                        }
-                    }
-                    if !self.wsl_roots.is_empty() {
-                        println!("[claude-pet] WSL usage directories: {}", self.wsl_roots.len());
-                    }
-                }
+            self.wsl_roots = crate::wsl::claude_dirs()
+                .into_iter()
+                .map(|d| d.join("projects"))
+                .filter(|p| p.is_dir())
+                .collect();
+            if !self.wsl_roots.is_empty() {
+                println!("[claude-pet] WSL usage directories: {}", self.wsl_roots.len());
             }
         }
         self.wsl_roots.clone()
@@ -105,7 +80,11 @@ impl Scanner {
 
     #[cfg(not(target_os = "windows"))]
     fn wsl_projects_dirs(&mut self) -> Vec<PathBuf> {
-        Vec::new()
+        // No WSL off Windows; crate::wsl::claude_dirs() is empty here, keeping the seam uniform.
+        crate::wsl::claude_dirs()
+            .into_iter()
+            .map(|d| d.join("projects"))
+            .collect()
     }
 
     fn projects_dir() -> Option<PathBuf> {
@@ -235,6 +214,9 @@ pub struct UsageSnapshot {
     pub block_pct: f64,
     /// Percentage basis: manual = tokens/manual limit; auto = weighted cost/historical peak-window weighted cost
     pub basis: String,
+    /// Whether block_pct is trustworthy enough to display / drive sleep (basis official || manual).
+    /// Stamped by the projection (projection::usage_flags) so the frontend never re-derives the rule.
+    pub pct_valid: bool,
     pub block_reset_ts: i64, // epoch seconds when the window ends, 0 = no active window currently
     pub max_block_tokens: u64,
     /// Today (local timezone)
@@ -274,11 +256,11 @@ fn floor_to_hour(ts: i64) -> i64 {
 
 /// Split events into 5-hour window blocks: a window starts at the UTC hour of first activity and lasts 5 hours;
 /// the next event past the window's end starts a new window. Matches ccusage's blocks semantics.
-pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
+/// `now_ts` (epoch seconds, UTC) is injected so the block/today/week math is deterministic and testable.
+pub fn build_snapshot(events: &[UsageEvent], cfg: &Config, now_ts: i64) -> UsageSnapshot {
     let mut evs: Vec<&UsageEvent> = events.iter().collect();
     evs.sort_by_key(|e| e.ts);
 
-    let now = Utc::now().timestamp();
     let mut blocks: Vec<(i64, i64, u64, f64)> = Vec::new(); // (start, end, tokens, weighted cost)
     for e in &evs {
         let fits = blocks.last().map(|b| e.ts < b.1).unwrap_or(false);
@@ -294,7 +276,7 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
 
     let max_block = blocks.iter().map(|b| b.2).max().unwrap_or(0);
     let (block_tokens, block_reset) = match blocks.last() {
-        Some(b) if now < b.1 => (b.2, b.1),
+        Some(b) if now_ts < b.1 => (b.2, b.1),
         _ => (0, 0),
     };
 
@@ -312,15 +294,18 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
         (0.0, 0u64, "none")
     };
 
-    // Today: from local-timezone midnight
-    let local_midnight = Local::now()
+    // Today: from local-timezone midnight of now_ts's local calendar day
+    let local_now = Local
+        .timestamp_opt(now_ts, 0)
+        .single()
+        .unwrap_or_else(Local::now);
+    let local_midnight = local_now
         .date_naive()
         .and_hms_opt(0, 0, 0)
-        .map(|nd| Local.from_local_datetime(&nd).earliest())
-        .flatten()
+        .and_then(|nd| Local.from_local_datetime(&nd).earliest())
         .map(|dt| dt.timestamp())
-        .unwrap_or(now - 24 * 3600);
-    let week_cutoff = now - 7 * 24 * 3600;
+        .unwrap_or(now_ts - 24 * 3600);
+    let week_cutoff = now_ts - 7 * 24 * 3600;
 
     let mut today_tokens = 0u64;
     let mut today_cost = 0.0f64;
@@ -362,6 +347,8 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config) -> UsageSnapshot {
         block_limit: limit,
         block_pct: pct,
         basis: basis.to_string(),
+        // Final value is stamped by the projection; build_snapshot sets the local-data baseline
+        pct_valid: basis == "manual",
         block_reset_ts: block_reset,
         max_block_tokens: max_block,
         today_tokens,
@@ -383,4 +370,85 @@ fn short_model(m: &str) -> String {
         }
     }
     "other".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(ts: i64, tokens: u64) -> UsageEvent {
+        UsageEvent {
+            ts,
+            input: tokens,
+            output: 0,
+            cache_w: 0,
+            cache_r: 0,
+            model: "sonnet".into(),
+        }
+    }
+
+    // An hour-aligned epoch so floor_to_hour is a no-op on the block start
+    const H: i64 = 1_699_999_200; // 1_699_999_200 % 3600 == 0
+
+    #[test]
+    fn events_within_5h_share_one_block() {
+        let evs = vec![ev(H + 60, 100), ev(H + 3600, 50)];
+        let snap = build_snapshot(&evs, &Config::default(), H + 7200);
+        assert_eq!(snap.block_tokens, 150);
+        // window starts at the floored hour of first activity and lasts 5 hours
+        assert_eq!(snap.block_reset_ts, H + 5 * 3600);
+    }
+
+    #[test]
+    fn event_past_window_opens_a_new_block() {
+        // second event is 6h after the first → past the 5h window → new block
+        let evs = vec![ev(H + 60, 100), ev(H + 6 * 3600, 40)];
+        let now = H + 6 * 3600 + 60;
+        let snap = build_snapshot(&evs, &Config::default(), now);
+        // only the latest (still-open) block counts toward block_tokens
+        assert_eq!(snap.block_tokens, 40);
+        assert_eq!(snap.max_block_tokens, 100); // the earlier, larger block
+    }
+
+    #[test]
+    fn expired_window_reports_no_active_block() {
+        let evs = vec![ev(H + 60, 100)];
+        // now is well past the window end (H + 5h)
+        let snap = build_snapshot(&evs, &Config::default(), H + 10 * 3600);
+        assert_eq!(snap.block_tokens, 0);
+        assert_eq!(snap.block_reset_ts, 0);
+    }
+
+    #[test]
+    fn manual_limit_gives_manual_basis() {
+        let mut cfg = Config::default();
+        cfg.block_limit = 1000;
+        let snap = build_snapshot(&[ev(H + 60, 250)], &cfg, H + 3600);
+        assert_eq!(snap.basis, "manual");
+        assert!((snap.block_pct - 0.25).abs() < 1e-9);
+        assert_eq!(snap.block_limit, 1000);
+    }
+
+    #[test]
+    fn no_limit_gives_none_basis_and_no_pct() {
+        let snap = build_snapshot(&[ev(H + 60, 250)], &Config::default(), H + 3600);
+        assert_eq!(snap.basis, "none");
+        assert_eq!(snap.block_pct, 0.0);
+    }
+
+    #[test]
+    fn todays_event_lands_in_today_and_last_daily_bucket() {
+        let now = H + 7200;
+        let snap = build_snapshot(&[ev(now, 500)], &Config::default(), now);
+        assert_eq!(snap.today_tokens, 500);
+        assert_eq!(snap.daily_tokens.len(), 7);
+        assert_eq!(snap.daily_tokens[6], 500); // today is the last bucket
+    }
+
+    #[test]
+    fn empty_events_has_no_data() {
+        let snap = build_snapshot(&[], &Config::default(), H);
+        assert!(!snap.has_data);
+        assert_eq!(snap.block_tokens, 0);
+    }
 }

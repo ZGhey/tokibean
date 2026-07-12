@@ -167,140 +167,30 @@ impl Shared {
     }
 }
 
-/// One session's glanceable status, for the tally chip + panel list.
-#[derive(Serialize, Clone)]
-pub struct SessionBrief {
-    /// "working" | "attention" | "done" | "idle"
-    pub state: String,
-    /// Seconds spent in the current base state
-    pub secs: u64,
-    /// Working-directory basename (project folder), for labeling the session
-    pub cwd: Option<String>,
-}
+// PetUpdate / SessionBrief and the pure aggregation live in the projection module (the display seam).
+pub use crate::projection::PetUpdate;
 
-#[derive(Serialize, Clone)]
-pub struct PetUpdate {
-    pub state: String, // idle | working | attention | done | limit
-    pub warn: bool,
-    pub bubble: Option<String>,
-    pub last_event: Option<String>,
-    pub hooks_seen: bool,
-    pub usage: UsageSnapshot,
-    /// Number of sessions currently working (frontend draws a ×N badge when >1)
-    pub working_count: usize,
-    pub session_count: usize,
-    /// Per-session brief, sorted by session id so the order is stable across snapshots. Drives the
-    /// multi-session status-tally chip on the pet and the per-session list in the usage panel.
-    pub sessions: Vec<SessionBrief>,
-    /// Seconds the longest current work run has lasted
-    pub work_secs: u64,
-    /// Seconds spent waiting for your input (the longest run); frontend escalates the "anxious" look
-    pub attention_secs: u64,
-    pub tool_note: Option<String>,
-    pub celebrate: u8,
-    /// A tool just errored (currently annoyed)
-    pub oops: bool,
-    /// Number of in-flight background tasks
-    pub bg_count: usize,
-    /// Number of in-flight subagents (Task/Agent), for the mini-clone overlay
-    pub agent_count: usize,
-    /// The stored credential's refresh token died — the panel should prompt the user to reconnect
-    pub reconnect: bool,
-    /// In-app updater state (availability + download progress)
-    pub update: UpdateState,
-}
-
+/// Snapshot the shared state and project it into a PetUpdate. Locks core → snapshot → update, in
+/// that order; the pure projection runs off the collected data.
 pub fn build_update(shared: &Shared) -> PetUpdate {
     let core = shared.core.lock().unwrap();
+    build_update_from_core(shared, &core)
+}
+
+/// Project from a `core` guard the caller already holds. Lets a caller that mutated `core` emit a
+/// fresh snapshot without dropping-then-relocking it (the old deadlock trap): it locks snapshot +
+/// update in the same core → snapshot → update order as `build_update`, then runs the pure projection.
+pub fn build_update_from_core(shared: &Shared, core: &Core) -> PetUpdate {
     let snap = shared.snapshot.lock().unwrap().clone();
     let update = shared.update.lock().unwrap().clone();
-    let now = Instant::now();
-
-    let mut working = 0usize;
-    let mut attention = false;
-    let mut done = false;
-    let mut work_secs = 0u64;
-    let mut attention_secs = 0u64;
-    for s in core.sessions.values() {
-        match s.base {
-            Base::Working => {
-                working += 1;
-                work_secs = work_secs.max(now.duration_since(s.since).as_secs());
-            }
-            Base::Attention => {
-                attention = true;
-                attention_secs = attention_secs.max(now.duration_since(s.since).as_secs());
-            }
-            Base::Done => done = true,
-            Base::Idle => {}
-        }
-    }
-
-    // Per-session brief for the tally chip + panel list, sorted by session id for a stable order
-    let mut sessions: Vec<(&String, SessionBrief)> = core
-        .sessions
-        .iter()
-        .map(|(id, s)| {
-            let state = match s.base {
-                Base::Attention => "attention",
-                Base::Working => "working",
-                Base::Done => "done",
-                Base::Idle => "idle",
-            };
-            let brief = SessionBrief {
-                state: state.to_string(),
-                secs: now.duration_since(s.since).as_secs(),
-                cwd: s.cwd.clone(),
-            };
-            (id, brief)
-        })
-        .collect();
-    sessions.sort_by(|a, b| a.0.cmp(b.0));
-    let sessions: Vec<SessionBrief> = sessions.into_iter().map(|(_, b)| b).collect();
-
-    // Only official data or a user-set manual limit may put the pet to sleep / raise alerts;
-    // the auto estimate (vs. historical peak) is display-only — it falsely reports 100% when setting a new record
-    let pct_valid = snap.basis == "official" || snap.basis == "manual";
-    // Working outranks attention: with several sessions, one sitting in "waiting for input" must NOT
-    // hide the others that are actively working — otherwise the pet looks idle/resting while work is
-    // happening. Attention only surfaces once nothing is working anymore.
-    let state = if working > 0 {
-        "working"
-    } else if attention {
-        "attention"
-    } else if done {
-        "done"
-    } else if snap.mode == "subscription" && pct_valid && snap.block_pct >= 1.0 {
-        "limit" // Quota maxed out, go to sleep — can't do any work anyway
-    } else {
-        "idle"
-    };
-
-    let warn = snap.mode == "subscription"
-        && pct_valid
-        && snap.block_pct >= 0.8
-        && snap.block_pct < 1.0;
-
-    PetUpdate {
-        state: state.to_string(),
-        warn,
-        bubble: core.bubble.as_ref().map(|(t, _)| t.clone()),
-        last_event: core.last_event.clone(),
-        hooks_seen: shared.hooks_seen.load(Ordering::Relaxed),
-        usage: snap,
-        working_count: working,
-        session_count: core.sessions.len(),
-        sessions,
-        work_secs,
-        attention_secs,
-        tool_note: core.tool_note.as_ref().map(|(t, _)| t.clone()),
-        celebrate: core.celebrate,
-        oops: core.oops_until.map(|u| now < u).unwrap_or(false),
-        bg_count: core.bg_tasks.iter().filter(|&&u| now < u).count(),
-        agent_count: core.agent_tasks.iter().filter(|&&u| now < u).count(),
-        reconnect: shared.reconnect_needed.load(Ordering::Relaxed),
+    crate::projection::project(
+        core,
+        snap,
         update,
-    }
+        Instant::now(),
+        shared.hooks_seen.load(Ordering::Relaxed),
+        shared.reconnect_needed.load(Ordering::Relaxed),
+    )
 }
 
 pub fn push_update(app: &AppHandle, shared: &Shared) {
@@ -417,7 +307,7 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
     let mut snap = {
         let mut scanner = shared.scanner.lock().unwrap();
         scanner.scan();
-        build_snapshot(&scanner.events, &cfg)
+        build_snapshot(&scanner.events, &cfg, chrono::Utc::now().timestamp())
     };
 
     // Subscription mode: prefer the API's real percentage, but fetching follows Claude's actions,
@@ -430,31 +320,26 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
     // On failure (rate limit / network), keep the old value up to 6 hours; only then fall back to local estimation
     if snap.mode == "subscription" {
         let now = Instant::now();
-        let backoff = shared
-            .official_backoff
-            .lock()
-            .unwrap()
-            .map(|t| now < t)
-            .unwrap_or(false);
-        let asap = shared.official_want.swap(false, Ordering::Relaxed);
+        let now_utc = chrono::Utc::now().timestamp();
+        // Consume the event-driven fetch request (raised by a hook / panel open) on every pass
+        let want = shared.official_want.swap(false, Ordering::Relaxed);
         let mut cache = shared.official.lock().unwrap();
         // The reset instant recorded in the cache has passed = the window has actually rolled over
-        let window_over = |o: &OfficialUsage| {
-            o.five_reset_ts != 0 && chrono::Utc::now().timestamp() >= o.five_reset_ts
-        };
-        let reset_stale = cache
-            .as_ref()
-            .map(|(o, at)| window_over(o) && now.duration_since(*at) > Duration::from_secs(60))
-            .unwrap_or(false);
-        let tried_recently = shared
-            .official_last_try
-            .lock()
-            .unwrap()
-            .map(|t| now.duration_since(t) < Duration::from_secs(60))
-            .unwrap_or(false);
-        let should = !backoff
-            && (with_official || ((asap || reset_stale) && !tried_recently));
-        if should {
+        let window_over = |o: &OfficialUsage| o.five_reset_ts != 0 && now_utc >= o.five_reset_ts;
+        // Whether to fetch now is a pure decision (debounce / backoff / reset correction)
+        let decision = crate::fetch_policy::decide(&crate::fetch_policy::FetchInputs {
+            with_official,
+            want,
+            now,
+            now_utc,
+            backoff_deadline: *shared.official_backoff.lock().unwrap(),
+            last_try: *shared.official_last_try.lock().unwrap(),
+            cache: cache.as_ref().map(|(o, at)| crate::fetch_policy::CacheMeta {
+                reset_ts: o.five_reset_ts,
+                fetched_at: *at,
+            }),
+        });
+        if decision == crate::fetch_policy::Decision::Fetch {
             *shared.official_last_try.lock().unwrap() = Some(now);
             use crate::official::FetchOutcome;
             match crate::official::fetch(shared, &cfg.oauth_token) {
@@ -466,7 +351,7 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
                     // consecutive high values get accepted, so a real limit is never held out at the door forever
                     let prev_raw = shared.official_last_raw.lock().unwrap().unwrap_or(0.0);
                     *shared.official_last_raw.lock().unwrap() = Some(fresh.five_pct);
-                    let suspect = fresh.five_pct >= 1.0 && prev_raw < 0.85;
+                    let suspect = crate::official::is_suspect_spike(prev_raw, fresh.five_pct);
                     if suspect {
                         eprintln!(
                             "[claude-pet] Official usage: ignoring a suspected 100% spike (previous tick {:.0}%), waiting for next tick to confirm",
@@ -538,22 +423,19 @@ pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
             );
         }
     }
-    let (notify_on, mode, pct, limit, basis) = {
-        let cfg = shared.cfg.lock().unwrap();
+    let notify_on = shared.cfg.lock().unwrap().notify;
+    // Same "which basis counts" rule as the display projection, via the shared helper
+    let (mode_sub, flags) = {
         let snap = shared.snapshot.lock().unwrap();
         (
-            cfg.notify,
-            snap.mode.clone(),
-            snap.block_pct,
-            snap.block_limit,
-            snap.basis.clone(),
+            snap.mode == "subscription",
+            crate::projection::usage_flags(&snap),
         )
     };
-    let _ = limit;
-    if mode != "subscription" || (basis != "official" && basis != "manual") {
+    if !mode_sub || !flags.pct_valid {
         return;
     }
-    if pct >= 1.0 {
+    if flags.at_limit {
         // Quota exhausted: the API is already rejecting requests, so any session still marked
         // "working / waiting for input" was actually interrupted (no Stop event arrives at limit).
         // Don't let the pet pretend to think forever — move all to idle, let the sleep state take over, and add an explanatory bubble
@@ -594,7 +476,7 @@ pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
             };
             notify(app, i18n::t("额度到顶了", "Quota reached"), body);
         }
-    } else if pct >= 0.8 {
+    } else if flags.warn {
         shared.warned_limit.store(false, Ordering::Relaxed);
         if !shared.warned_80.swap(true, Ordering::Relaxed) && notify_on {
             notify(
