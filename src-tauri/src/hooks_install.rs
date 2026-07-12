@@ -119,8 +119,11 @@ pub fn install(port: u16) -> Result<String, String> {
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
+    // `|| exit 0`: the POST is fire-and-forget, so when the pet isn't running curl exits non-zero
+    // (connection refused / timeout) and Claude Code prints a "hook error" on every event. Swallow
+    // the failure so a closed pet is silent; a successful POST (pet up) still exits 0 unchanged.
     let local_cmd = format!(
-        "curl -s -m 3 -X POST http://127.0.0.1:{}/event -H \"Content-Type: application/json\" --data-binary @-",
+        "curl -s -m 3 -X POST http://127.0.0.1:{}/event -H \"Content-Type: application/json\" --data-binary @- || exit 0",
         port
     );
     let added = merge_into(&dir.join("settings.json"), &local_cmd, port)?;
@@ -143,7 +146,7 @@ pub fn install(port: u16) -> Result<String, String> {
                 // NAT mode: 127.0.0.1 points at WSL itself, so at runtime we
                 // substitute the default gateway (the Windows host).
                 format!(
-                    "curl -s -m 3 -X POST http://$(ip route show default | awk '{{print $3}}'):{}/event -H \"Content-Type: application/json\" --data-binary @-",
+                    "curl -s -m 3 -X POST http://$(ip route show default | awk '{{print $3}}'):{}/event -H \"Content-Type: application/json\" --data-binary @- || exit 0",
                     port
                 )
             };
