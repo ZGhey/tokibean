@@ -53,3 +53,17 @@ Both threads (plus command handlers) mutate `state::Shared` (Mutexes + atomics, 
 - Changing the port requires reinstalling hooks (the port is baked into the curl commands in settings.json).
 - Rust holds locks briefly and clones snapshots out; keep that pattern — the hook server, heartbeat, and click-through threads share every Mutex in `Shared`.
 - OAuth/credential handling: tokens must never appear in a process's command-line args (always pipe via curl stdin) and never get logged. The pet uses only its own connected credential (`login.rs` → config) and refreshes it independently with backoff; it does **not** read or refresh other clients' credential stores (`.credentials.json`, WSL, Keychain, Credential Manager) — a standalone app shouldn't hang its reliability on another client's rotating token, and refreshing someone else's credential rate-limits the shared token endpoint / kicks that client offline.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as markdown under `.scratch/<feature>/` (this repo has no separate tracker). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five canonical roles (label string = role name): `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (created lazily by `/domain-modeling`). See `docs/agents/domain.md`.
