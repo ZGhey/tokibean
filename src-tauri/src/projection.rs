@@ -59,22 +59,36 @@ pub struct PetUpdate {
 /// rule lives in exactly one place. Only official data or a user-set manual limit may put the pet to
 /// sleep / raise alerts; the removed auto estimate (vs. historical peak) was display-only and would
 /// falsely report 100% when setting a new record.
+///
+/// Across agents (ADR-0005):
+///   · warn  = ANY agent is nearly out — it's an overlay warning about the agent that's running dry.
+///   · limit = EVERY agent with a real percentage is out. `limit` means "there is no work I could do
+///             anywhere"; napping on the desk while Codex is free would be a lie.
 pub struct UsageFlags {
-    /// The block percentage is trustworthy enough to drive sleep / alerts
+    /// At least one agent has a trustworthy percentage
     pub pct_valid: bool,
-    /// Window over 80% but under 100% — an overlay, not a state slot
+    /// Some agent is over 80% but under 100% — an overlay, not a state slot
     pub warn: bool,
-    /// Subscription window maxed out — the pet may sleep
+    /// Every agent with a trustworthy percentage is maxed out — the pet may sleep
     pub at_limit: bool,
 }
 
+/// Whether an agent's quota may drive warn/sleep at all: only official data or a user-set manual
+/// limit. A basis of "none" has no percentage to speak of.
+pub fn quota_counts(q: &crate::usage::AgentQuota) -> bool {
+    q.basis == "official" || q.basis == "manual"
+}
+
 pub fn usage_flags(snap: &UsageSnapshot) -> UsageFlags {
-    let pct_valid = snap.basis == "official" || snap.basis == "manual";
     let sub = snap.mode == "subscription";
+    let counted: Vec<&crate::usage::AgentQuota> =
+        snap.quotas.iter().filter(|q| quota_counts(q)).collect();
+    let pct_valid = !counted.is_empty();
     UsageFlags {
         pct_valid,
-        warn: sub && pct_valid && snap.block_pct >= 0.8 && snap.block_pct < 1.0,
-        at_limit: sub && pct_valid && snap.block_pct >= 1.0,
+        warn: sub && counted.iter().any(|q| q.pct >= 0.8 && q.pct < 1.0),
+        // "all of them" — and vacuously-true doesn't count, so require at least one
+        at_limit: sub && pct_valid && counted.iter().all(|q| q.pct >= 1.0),
     }
 }
 
@@ -131,9 +145,11 @@ pub fn project(
     let sessions: Vec<SessionBrief> = sessions.into_iter().map(|(_, b)| b).collect();
 
     let flags = usage_flags(&snap);
-    // Stamp the derived "is the percentage trustworthy" fact so the frontend renders it instead of
-    // re-deriving the basis rule on its side of the IPC seam.
-    snap.pct_valid = flags.pct_valid;
+    // Stamp each quota's derived "is this percentage trustworthy" fact so the frontend renders it
+    // instead of re-deriving the basis rule on its side of the IPC seam.
+    for q in snap.quotas.iter_mut() {
+        q.pct_valid = quota_counts(q);
+    }
     // Working outranks attention: with several sessions, one sitting in "waiting for input" must NOT
     // hide the others that are actively working — otherwise the pet looks idle/resting while work is
     // happening. Attention only surfaces once nothing is working anymore.
@@ -206,11 +222,29 @@ mod tests {
         }
     }
 
+    fn quota(agent: &str, basis: &str, pct: f64) -> crate::usage::AgentQuota {
+        crate::usage::AgentQuota {
+            agent: agent.into(),
+            basis: basis.into(),
+            pct,
+            ..Default::default()
+        }
+    }
+
+    /// A subscription snapshot with a single Claude quota entry.
     fn sub_snap(basis: &str, pct: f64) -> UsageSnapshot {
         UsageSnapshot {
             mode: "subscription".into(),
-            basis: basis.into(),
-            block_pct: pct,
+            quotas: vec![quota("claude", basis, pct)],
+            ..Default::default()
+        }
+    }
+
+    /// A subscription snapshot with several agents' quotas.
+    fn multi_snap(qs: Vec<crate::usage::AgentQuota>) -> UsageSnapshot {
+        UsageSnapshot {
+            mode: "subscription".into(),
+            quotas: qs,
             ..Default::default()
         }
     }
@@ -297,5 +331,64 @@ mod tests {
         let out = project_now(&core, api);
         assert_eq!(out.state, "idle");
         assert!(!out.warn);
+    }
+
+    // --- Cross-agent quota rules (ADR-0005) ---
+
+    #[test]
+    fn the_pet_stays_awake_while_any_agent_still_has_quota() {
+        // THE core assertion of multi-agent support. Claude is exhausted, Codex is free.
+        // "limit" means "there is no work I could do anywhere" — napping here would be a lie.
+        let core = empty_core();
+        let snap = multi_snap(vec![
+            quota("claude", "official", 1.0),
+            quota("codex", "official", 0.05),
+        ]);
+        assert_eq!(project_now(&core, snap).state, "idle");
+    }
+
+    #[test]
+    fn the_pet_sleeps_only_when_every_agent_is_exhausted() {
+        let core = empty_core();
+        let snap = multi_snap(vec![
+            quota("claude", "official", 1.0),
+            quota("codex", "official", 1.0),
+        ]);
+        assert_eq!(project_now(&core, snap).state, "limit");
+    }
+
+    #[test]
+    fn warn_fires_for_any_agent_running_dry() {
+        // The warning is about the agent that's nearly out — it doesn't wait for the others
+        let core = empty_core();
+        let snap = multi_snap(vec![
+            quota("claude", "official", 0.9),
+            quota("codex", "official", 0.05),
+        ]);
+        assert!(project_now(&core, snap).warn);
+    }
+
+    #[test]
+    fn an_agent_without_a_real_basis_neither_warns_nor_sleeps() {
+        // A "none" basis has no percentage at all — it must not count in either direction.
+        // Claude is genuinely out; Codex has no quota data. The pet sleeps on Claude's word alone.
+        let core = empty_core();
+        let snap = multi_snap(vec![
+            quota("claude", "official", 1.0),
+            quota("codex", "none", 0.0),
+        ]);
+        assert_eq!(project_now(&core, snap).state, "limit");
+    }
+
+    #[test]
+    fn quotas_are_stamped_with_their_own_validity() {
+        let core = empty_core();
+        let snap = multi_snap(vec![
+            quota("claude", "official", 0.5),
+            quota("codex", "none", 0.0),
+        ]);
+        let out = project_now(&core, snap);
+        assert!(out.usage.quota("claude").unwrap().pct_valid);
+        assert!(!out.usage.quota("codex").unwrap().pct_valid);
     }
 }

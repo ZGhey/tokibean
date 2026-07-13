@@ -205,32 +205,79 @@ pub struct ModelUsage {
     pub tokens: u64,
 }
 
+/// One agent's quota window, self-describing.
+///
+/// Deliberately NOT normalized against any other agent's: Claude's 5-hour billing block and Codex's
+/// window (43200 minutes — thirty days — on the free plan) are different quantities. They are shown
+/// side by side, one card each, and are never averaged, summed, or compared. An agent with no quota
+/// data has no entry here at all — never an entry reading 0% or "unknown".
+#[derive(Serialize, Clone, Default, PartialEq, Debug)]
+pub struct AgentQuota {
+    /// Stable agent slug: "claude" | "codex"
+    pub agent: String,
+    /// Window utilization, 0.0-1.0
+    pub pct: f64,
+    /// Percentage basis: official (from the agent itself) | manual (tokens vs. a configured limit) | none
+    pub basis: String,
+    /// Whether `pct` is trustworthy enough to display / drive warn + sleep (basis official || manual)
+    pub pct_valid: bool,
+    /// The window's own length in minutes. Claude's block is 300; Codex reports its own. The label is
+    /// rendered FROM this — hard-coding "5h" is wrong for any agent but Claude.
+    pub window_minutes: u64,
+    /// Epoch seconds when the window resets, 0 = no active window
+    pub reset_ts: i64,
+    /// Tokens counted in the current window (Claude's manual basis shows this against `limit_tokens`)
+    pub tokens: u64,
+    /// The configured manual token limit, 0 = not applicable
+    pub limit_tokens: u64,
+    /// Official weekly-limit utilization, 0.0-1.0. Claude only (Codex's second window, when its plan
+    /// has one, is its own entry in `secondary_pct`-free terms — see codex.rs).
+    pub week_pct: Option<f64>,
+}
+
+/// Claude's billing block is five hours.
+pub const CLAUDE_WINDOW_MINUTES: u64 = 300;
+
 #[derive(Serialize, Clone, Default)]
 pub struct UsageSnapshot {
     pub mode: String, // subscription | api
-    /// Current 5-hour window
+    /// One entry per agent that has quota data. Empty = no percentage anywhere (show no card).
+    pub quotas: Vec<AgentQuota>,
+    /// Tokens in Claude's current 5-hour window (kept for the manual-limit readout)
     pub block_tokens: u64,
-    pub block_limit: u64, // 0 = unknown
-    pub block_pct: f64,
-    /// Percentage basis: manual = tokens/manual limit; auto = weighted cost/historical peak-window weighted cost
-    pub basis: String,
-    /// Whether block_pct is trustworthy enough to display / drive sleep (basis official || manual).
-    /// Stamped by the projection (projection::usage_flags) so the frontend never re-derives the rule.
-    pub pct_valid: bool,
-    pub block_reset_ts: i64, // epoch seconds when the window ends, 0 = no active window currently
     pub max_block_tokens: u64,
-    /// Today (local timezone)
+    /// Today (local timezone), across ALL agents
     pub today_tokens: u64,
+    /// Claude-only. The panel labels it as such — we don't model other agents' prices, so this must
+    /// never pretend to be a total (see ADR-0009).
     pub today_cost: f64,
-    /// Last 7 days (rolling, approximates the weekly-limit basis; the official basis is undisclosed)
+    /// Last 7 days (rolling), across ALL agents
     pub week_tokens: u64,
+    /// Claude-only, same caveat as today_cost
     pub week_cost: f64,
-    /// Official weekly-limit utilization (present only when basis=official), 0.0-1.0
-    pub week_pct: Option<f64>,
     pub models: Vec<ModelUsage>,
     pub has_data: bool,
     /// Per-day tokens over the last 7 days (oldest → today), for the trend chart
     pub daily_tokens: Vec<u64>,
+}
+
+impl UsageSnapshot {
+    /// The quota entry for one agent, if it has one.
+    pub fn quota(&self, agent: &str) -> Option<&AgentQuota> {
+        self.quotas.iter().find(|q| q.agent == agent)
+    }
+
+    /// Insert or replace an agent's quota entry, keeping the list stable-ordered by agent slug so
+    /// the panel's cards don't reshuffle between snapshots.
+    pub fn set_quota(&mut self, q: AgentQuota) {
+        match self.quotas.iter_mut().find(|e| e.agent == q.agent) {
+            Some(slot) => *slot = q,
+            None => {
+                self.quotas.push(q);
+                self.quotas.sort_by(|a, b| a.agent.cmp(&b.agent));
+            }
+        }
+    }
 }
 
 fn cost_of(e: &UsageEvent, cfg: &Config) -> f64 {
@@ -341,21 +388,31 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config, now_ts: i64) -> Usage
     models.sort_by(|a, b| b.tokens.cmp(&a.tokens));
     models.truncate(3);
 
-    UsageSnapshot {
-        mode: cfg.resolved_mode().to_string(),
-        block_tokens,
-        block_limit: limit,
-        block_pct: pct,
+    // Claude's quota entry. `official` data (from the usage API) overwrites this in
+    // state::refresh_usage when it's available; a basis of "none" means we have no percentage at all
+    // and the panel shows no bar — never a guess.
+    let claude = AgentQuota {
+        agent: "claude".into(),
+        pct,
         basis: basis.to_string(),
         // Final value is stamped by the projection; build_snapshot sets the local-data baseline
         pct_valid: basis == "manual",
-        block_reset_ts: block_reset,
+        window_minutes: CLAUDE_WINDOW_MINUTES,
+        reset_ts: block_reset,
+        tokens: block_tokens,
+        limit_tokens: limit,
+        week_pct: None, // filled by state::refresh_usage in official mode
+    };
+
+    UsageSnapshot {
+        mode: cfg.resolved_mode().to_string(),
+        quotas: vec![claude],
+        block_tokens,
         max_block_tokens: max_block,
         today_tokens,
         today_cost,
         week_tokens,
         week_cost,
-        week_pct: None, // filled by state::refresh_usage in official mode
         models,
         has_data: !evs.is_empty(),
         daily_tokens,
@@ -396,7 +453,7 @@ mod tests {
         let snap = build_snapshot(&evs, &Config::default(), H + 7200);
         assert_eq!(snap.block_tokens, 150);
         // window starts at the floored hour of first activity and lasts 5 hours
-        assert_eq!(snap.block_reset_ts, H + 5 * 3600);
+        assert_eq!(snap.quota("claude").unwrap().reset_ts, H + 5 * 3600);
     }
 
     #[test]
@@ -416,7 +473,7 @@ mod tests {
         // now is well past the window end (H + 5h)
         let snap = build_snapshot(&evs, &Config::default(), H + 10 * 3600);
         assert_eq!(snap.block_tokens, 0);
-        assert_eq!(snap.block_reset_ts, 0);
+        assert_eq!(snap.quota("claude").unwrap().reset_ts, 0);
     }
 
     #[test]
@@ -424,16 +481,20 @@ mod tests {
         let mut cfg = Config::default();
         cfg.block_limit = 1000;
         let snap = build_snapshot(&[ev(H + 60, 250)], &cfg, H + 3600);
-        assert_eq!(snap.basis, "manual");
-        assert!((snap.block_pct - 0.25).abs() < 1e-9);
-        assert_eq!(snap.block_limit, 1000);
+        let q = snap.quota("claude").unwrap();
+        assert_eq!(q.basis, "manual");
+        assert!((q.pct - 0.25).abs() < 1e-9);
+        assert_eq!(q.limit_tokens, 1000);
+        assert_eq!(q.window_minutes, CLAUDE_WINDOW_MINUTES);
     }
 
     #[test]
     fn no_limit_gives_none_basis_and_no_pct() {
         let snap = build_snapshot(&[ev(H + 60, 250)], &Config::default(), H + 3600);
-        assert_eq!(snap.basis, "none");
-        assert_eq!(snap.block_pct, 0.0);
+        let q = snap.quota("claude").unwrap();
+        assert_eq!(q.basis, "none");
+        assert_eq!(q.pct, 0.0);
+        assert!(!q.pct_valid, "no basis → no percentage may drive anything");
     }
 
     #[test]

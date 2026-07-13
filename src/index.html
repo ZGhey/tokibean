@@ -19,18 +19,9 @@
 
     <button id="update-row" class="hidden update-row"></button>
 
-    <div id="sub-block">
-      <div class="label-row">
-        <span data-i18n="win5h">5 小时窗口</span>
-        <span id="block-pct" class="num">--%</span>
-      </div>
-      <div id="pixel-bar" data-i18n-aria="usage_aria"></div>
-      <div class="hint" id="block-reset" data-i18n="no_window">暂无活动窗口</div>
-      <div class="label-row hidden" id="week-row">
-        <span data-i18n="week_quota">周额度</span>
-        <span id="week-pct" class="num">--%</span>
-      </div>
-    </div>
+    <!-- One quota card per agent, built by renderQuotas(). A Claude 5-hour block and a Codex
+         30-day window are different quantities: they sit side by side and are never compared. -->
+    <div id="sub-block"></div>
 
     <div id="api-block" class="hidden">
       <div class="label-row"><span data-i18n="cost_today">今日成本</span><span id="cost-today" class="num big">$0.00</span></div>

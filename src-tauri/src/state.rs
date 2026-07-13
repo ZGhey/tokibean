@@ -388,17 +388,21 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
             }
         }
         if let Some((off, _)) = cache.as_ref() {
+            let mut q = snap.quota("claude").cloned().unwrap_or_default();
+            q.agent = "claude".into();
+            q.window_minutes = crate::usage::CLAUDE_WINDOW_MINUTES;
             if window_over(off) {
                 // Reset instant has passed but no new-window data yet: zero it out as reset,
                 // never hold the previous window's stale 100% and let the pet fake-sleep
-                snap.block_pct = 0.0;
-                snap.block_reset_ts = 0;
+                q.pct = 0.0;
+                q.reset_ts = 0;
             } else {
-                snap.block_pct = off.five_pct;
-                snap.block_reset_ts = off.five_reset_ts;
+                q.pct = off.five_pct;
+                q.reset_ts = off.five_reset_ts;
             }
-            snap.week_pct = off.week_pct;
-            snap.basis = "official".into();
+            q.week_pct = off.week_pct;
+            q.basis = "official".into();
+            snap.set_quota(q);
         }
     }
 

@@ -13,7 +13,12 @@
     mode_api: ["API 计费", "API billing"],
     billing_mode: ["计费模式", "Billing mode"],
     badge_sub: ["订阅", "Sub"],
-    win5h: ["5 小时窗口", "5-hour window"],
+    // A quota window's length is rendered FROM the agent's own data — Claude's block is 5 hours,
+    // but Codex's free plan reports a 30-day window. Never hard-code "5h".
+    win_hours: ["{n} 小时窗口", "{n}-hour window"],
+    win_days: ["{n} 天窗口", "{n}-day window"],
+    win_week: ["周窗口", "Weekly window"],
+    win_mins: ["{n} 分钟窗口", "{n}-minute window"],
     usage_aria: ["窗口用量", "Window usage"],
     no_window: ["暂无活动窗口", "No active window"],
     week_quota: ["周额度", "Weekly quota"],
@@ -156,10 +161,7 @@
       oops: cur.oops,
       bgCount: cur.bg_count,
       agentCount: cur.agent_count,
-      resetSecs:
-        cur.usage && cur.usage.block_reset_ts > 0
-          ? cur.usage.block_reset_ts - Math.floor(Date.now() / 1000)
-          : null,
+      resetSecs: soonestReset(),
       gazeX,
       gazeY,
       tickle: performance.now() < tickleUntil,
@@ -196,16 +198,114 @@
   const SESS_ICON = { working: "▶", attention: "‖", done: "✓", idle: "·" };
   const SESS_LABEL = { working: "st_working", attention: "st_waiting", done: "st_done", idle: "st_idle" };
 
+  // Seconds until the pet could work again: the EARLIEST reset among the agents that have a live
+  // window. The pet only sleeps once every agent is exhausted (ADR-0005), so the first window to
+  // roll over is the one that wakes it.
+  function soonestReset() {
+    const now = Math.floor(Date.now() / 1000);
+    const resets = ((cur.usage && cur.usage.quotas) || [])
+      .filter((q) => q.reset_ts > now)
+      .map((q) => q.reset_ts - now);
+    return resets.length ? Math.min(...resets) : null;
+  }
+
   // ---------- Panel rendering ----------
   const el = (id) => document.getElementById(id);
 
-  // Pixel progress bar: 10 cells
-  const bar = el("pixel-bar");
-  for (let i = 0; i < 10; i++) bar.appendChild(document.createElement("span"));
   // 7-day trend bars
   const trend = el("trend");
   for (let i = 0; i < 7; i++) trend.appendChild(document.createElement("span"));
   trend.lastChild.className = "today";
+
+  const AGENT_NAME = { claude: "Claude", codex: "Codex" };
+
+  // A quota window's own length, spelled out. Read FROM the data — Claude's block is 5h, but Codex's
+  // free plan reports 43200 minutes (thirty days). Hard-coding "5h" is wrong for anyone but Claude.
+  function windowLabel(mins) {
+    if (!mins) return "";
+    if (mins % (24 * 60) === 0) {
+      const d = mins / (24 * 60);
+      return d === 7 ? t("win_week") : t("win_days", { n: d });
+    }
+    if (mins % 60 === 0) return t("win_hours", { n: mins / 60 });
+    return t("win_mins", { n: mins });
+  }
+
+  /// One quota card: title, percentage, 10-cell pixel bar, reset line.
+  function buildQuotaCard(q) {
+    const card = document.createElement("div");
+    card.className = "quota-card";
+
+    const head = document.createElement("div");
+    head.className = "label-row";
+    const title = document.createElement("span");
+    const win = windowLabel(q.window_minutes);
+    title.textContent = (AGENT_NAME[q.agent] || q.agent) + (win ? " · " + win : "");
+    const pct = document.createElement("span");
+    pct.className = "num";
+    pct.textContent = q.pct_valid ? Math.round(q.pct * 100) + "%" : "--%";
+    head.appendChild(title);
+    head.appendChild(pct);
+
+    const bar = document.createElement("div");
+    bar.className = "pixel-bar";
+    bar.setAttribute("aria-label", t("usage_aria"));
+    const lit = q.pct_valid ? Math.round(Math.min(q.pct, 1) * 10) : 0;
+    for (let i = 0; i < 10; i++) {
+      const c = document.createElement("span");
+      if (i < lit) {
+        c.className = "on";
+        if (q.pct >= 1.0) c.classList.add("full");
+        else if (q.pct >= 0.8) c.classList.add("warn");
+      }
+      bar.appendChild(c);
+    }
+
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = resetLine(q);
+
+    card.appendChild(head);
+    card.appendChild(bar);
+    card.appendChild(hint);
+
+    // Claude's official mode also exposes a weekly quota
+    if (q.week_pct !== null && q.week_pct !== undefined) {
+      const week = document.createElement("div");
+      week.className = "label-row";
+      const wl = document.createElement("span");
+      wl.textContent = t("week_quota");
+      const wv = document.createElement("span");
+      wv.className = "num";
+      wv.textContent = Math.round(q.week_pct * 100) + "%";
+      week.appendChild(wl);
+      week.appendChild(wv);
+      card.appendChild(week);
+    }
+    return card;
+  }
+
+  function resetLine(q) {
+    if (q.reset_ts > 0) {
+      const left = q.reset_ts - Math.floor(Date.now() / 1000);
+      const at = new Date(q.reset_ts * 1000);
+      const hh = String(at.getHours()).padStart(2, "0");
+      const mm = String(at.getMinutes()).padStart(2, "0");
+      const note =
+        q.basis === "official"
+          ? t("official_data")
+          : t("limit_manual", { v: fmtTokens(q.limit_tokens) });
+      return t("reset_line", { hh, mm, left: fmtCountdown(left), note });
+    }
+    if (q.basis === "official") return t("no_window_official");
+    return q.pct_valid ? t("no_window2") : t("usage_need_connect");
+  }
+
+  function renderQuotas(quotas) {
+    const box = el("sub-block");
+    box.textContent = "";
+    for (const q of quotas || []) box.appendChild(buildQuotaCard(q));
+  }
 
   // Per-session list: one row per parallel session — its state icon, what it's running
   // (the tool if mid-call, else the state label), and how long it's been in that state.
@@ -249,52 +349,14 @@
     el("sub-block").classList.toggle("hidden", !isSub);
     el("api-block").classList.toggle("hidden", isSub);
 
+    // Whether a percentage is trustworthy is decided by the backend (projection::usage_flags) and
+    // stamped onto each quota as pct_valid, so that rule isn't duplicated across the IPC seam.
+    const claude = (u.quotas || []).find((q) => q.agent === "claude");
     if (isSub) {
-      // Whether the percentage is trustworthy is decided by the backend (projection::usage_flags)
-      // and sent as u.pct_valid, so this rule isn't duplicated across the IPC seam.
-      const known = u.pct_valid;
-      const pct = Math.min(u.block_pct, 1.5);
-      el("block-pct").textContent = known ? Math.round(u.block_pct * 100) + "%" : "--%";
-      const cells = bar.children;
-      const lit = known ? Math.round(Math.min(pct, 1) * 10) : 0;
-      for (let i = 0; i < 10; i++) {
-        const c = cells[i];
-        c.className = "";
-        if (i < lit) {
-          c.classList.add("on");
-          if (u.block_pct >= 1.0) c.classList.add("full");
-          else if (u.block_pct >= 0.8) c.classList.add("warn");
-        }
+      renderQuotas(u.quotas);
+      if (claude && claude.basis === "official") {
+        el("acct-status").textContent = t("connected_official");
       }
-      if (u.block_reset_ts > 0) {
-        const left = u.block_reset_ts - Math.floor(Date.now() / 1000);
-        const resetAt = new Date(u.block_reset_ts * 1000);
-        const hh = String(resetAt.getHours()).padStart(2, "0");
-        const mm = String(resetAt.getMinutes()).padStart(2, "0");
-        const limitNote =
-          u.basis === "official"
-            ? t("official_data")
-            : t("limit_manual", { v: fmtTokens(u.block_limit) });
-        el("block-reset").textContent = t("reset_line", {
-          hh,
-          mm,
-          left: fmtCountdown(left),
-          note: limitNote,
-        });
-      } else {
-        // No active window (official/manual) or not connected at all
-        el("block-reset").textContent = u.basis === "official"
-          ? t("no_window_official")
-          : known
-          ? t("no_window2")
-          : t("usage_need_connect");
-      }
-      if (u.basis === "official") el("acct-status").textContent = t("connected_official");
-      // Weekly quota (only available in official mode)
-      const hasWeek =
-        u.basis === "official" && u.week_pct !== null && u.week_pct !== undefined;
-      el("week-row").classList.toggle("hidden", !hasWeek);
-      if (hasWeek) el("week-pct").textContent = Math.round(u.week_pct * 100) + "%";
     } else {
       el("cost-today").textContent = fmtCost(u.today_cost);
       el("cost-week").textContent = fmtCost(u.week_cost);
@@ -339,7 +401,8 @@
       ? t("hook_installed") // installed but no event yet — likely needs a Claude Code restart
       : t("go_install");
     // A dead refresh token (reconnect) counts as NOT connected — re-surface the connect button/row.
-    const acctDone = (u.basis === "official" || cfgConnected) && !u.reconnect;
+    const official = claude && claude.basis === "official";
+    const acctDone = (official || cfgConnected) && !u.reconnect;
     if (u.reconnect) el("acct-status").textContent = t("reconnect_needed");
     // Install button only when something is genuinely missing — not merely because no event
     // has arrived yet (installed + waiting for a restart shouldn't nag to reinstall)

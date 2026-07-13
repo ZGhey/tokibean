@@ -177,20 +177,24 @@ select {
 .s-row.s-idle .s-ic { color: #8a8478; }
 
 /* Pixel-block progress bar: 10 cells, echoing the pixel pet */
-#pixel-bar {
+/* One quota card per agent. Their windows are different quantities (Claude: a 5-hour block;
+   Codex: 30 days on the free plan), so they stack rather than share a bar. */
+.quota-card + .quota-card { margin-top: 10px; }
+
+.pixel-bar {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
   gap: 3px;
   margin: 6px 0 4px;
 }
-#pixel-bar span {
+.pixel-bar span {
   height: 10px;
   border-radius: 2px;
   background: #3a3630;
 }
-#pixel-bar span.on { background: #d97757; }
-#pixel-bar span.on.warn { background: #e0a63b; }
-#pixel-bar span.on.full { background: #d05045; }
+.pixel-bar span.on { background: #d97757; }
+.pixel-bar span.on.warn { background: #e0a63b; }
+.pixel-bar span.on.full { background: #d05045; }
 
 /* Last 7 days pixel trend bars */
 #trend {
