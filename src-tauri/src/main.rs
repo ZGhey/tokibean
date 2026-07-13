@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod codex;
 mod config;
 mod fetch_policy;
 mod hooks_install;
