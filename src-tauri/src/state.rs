@@ -119,8 +119,11 @@ pub struct Shared {
     /// config is not enough — Codex refuses to run a hook until the user approves it in `/hooks`, so
     /// "written" and "live" are different states and only an arriving event can tell them apart.
     pub hooks_seen: Mutex<HashSet<String>>,
-    pub warned_80: AtomicBool,
-    pub warned_limit: AtomicBool,
+    /// Alert latches, one pair PER AGENT: one agent hitting its cap must not suppress the other's
+    /// warning. Keyed by agent slug; every agent in AGENTS has an entry.
+    pub warned: HashMap<String, (AtomicBool, AtomicBool)>, // (80%, limit)
+    /// Codex's rollout-log scanner. Its quota is free on disk — no OAuth, no API call.
+    pub codex_scanner: Mutex<crate::codex::CodexScanner>,
     /// Whether the usage panel is currently expanded (set by the frontend). While open, the
     /// whole window is made interactive so panel hover works regardless of its pixel height.
     pub panel_open: AtomicBool,
@@ -158,6 +161,17 @@ pub struct Shared {
 }
 
 impl Shared {
+    /// The 80%-warning latch for one agent. Unknown agents get claude's, which can't happen — every
+    /// agent in AGENTS has an entry — but degrading beats panicking in a background thread.
+    pub fn warned_80(&self, agent: &str) -> &AtomicBool {
+        &self.warned.get(agent).unwrap_or_else(|| &self.warned[AGENT_CLAUDE]).0
+    }
+
+    /// The limit-reached latch for one agent.
+    pub fn warned_limit(&self, agent: &str) -> &AtomicBool {
+        &self.warned.get(agent).unwrap_or_else(|| &self.warned[AGENT_CLAUDE]).1
+    }
+
     pub fn new() -> Self {
         Shared {
             core: Mutex::new(Core {
@@ -178,8 +192,11 @@ impl Shared {
             snapshot: Mutex::new(UsageSnapshot::default()),
             cfg: Mutex::new(Config::load()),
             hooks_seen: Mutex::new(HashSet::new()),
-            warned_80: AtomicBool::new(false),
-            warned_limit: AtomicBool::new(false),
+            warned: AGENTS
+                .iter()
+                .map(|a| (a.to_string(), (AtomicBool::new(false), AtomicBool::new(false))))
+                .collect(),
+            codex_scanner: Mutex::new(crate::codex::CodexScanner::new()),
             panel_open: AtomicBool::new(false),
             pet_at_top: AtomicBool::new(false),
             last_pos_save: Mutex::new(Instant::now()),
@@ -335,11 +352,44 @@ pub fn expire_transients(shared: &Shared) -> bool {
 
 pub fn refresh_usage(shared: &Shared, with_official: bool) {
     let cfg = shared.cfg.lock().unwrap().clone();
+    // Codex's quota is free on disk — no OAuth, no API call, no token refresh. Scan it first so its
+    // tokens join Claude's in the same snapshot (today/week totals span every agent; cost does not,
+    // because we don't model other agents' prices — see ADR-0009).
+    let codex_usage = if crate::codex::CodexScanner::installed() && cfg.agent_enabled(AGENT_CODEX) {
+        let mut cx = shared.codex_scanner.lock().unwrap();
+        Some(cx.scan())
+    } else {
+        None
+    };
     let mut snap = {
         let mut scanner = shared.scanner.lock().unwrap();
         scanner.scan();
-        build_snapshot(&scanner.events, &cfg, chrono::Utc::now().timestamp())
+        let mut events = scanner.events.clone();
+        if codex_usage.is_some() {
+            events.extend(shared.codex_scanner.lock().unwrap().events.iter().cloned());
+        }
+        build_snapshot(&events, &cfg, chrono::Utc::now().timestamp())
     };
+
+    // Codex's window describes ITSELF — its own length (43200 minutes on the free plan, i.e. thirty
+    // days) and its own reset. It is never reconciled against Claude's 5-hour block; they simply sit
+    // side by side as separate cards. No usable window (e.g. Codex installed but never run) means no
+    // card at all, rather than a card reading 0%.
+    if let Some(cx) = &codex_usage {
+        if let Some(w) = &cx.primary {
+            snap.set_quota(crate::usage::AgentQuota {
+                agent: AGENT_CODEX.into(),
+                pct: w.pct,
+                basis: "official".into(), // it comes from Codex itself
+                pct_valid: true,
+                window_minutes: w.window_minutes,
+                reset_ts: w.reset_ts,
+                tokens: 0,       // Codex reports a percentage, not a token budget
+                limit_tokens: 0, // …so there's no manual limit to show it against
+                week_pct: cx.secondary.as_ref().map(|s| s.pct),
+            });
+        }
+    }
 
     // Subscription mode: prefer the API's real percentage, but fetching follows Claude's actions,
     // not a wall clock — the percentage only moves when Claude burns tokens, so we ask on hook
@@ -440,6 +490,40 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
     *shared.snapshot.lock().unwrap() = snap;
 }
 
+/// Force ONE exhausted agent's live sessions to idle, and post a bubble naming it. Returns whether
+/// anything was actually interrupted.
+///
+/// Why only one agent's: at its limit an agent's API is already rejecting requests, so a session
+/// still marked working/waiting was in fact interrupted — no Stop event will ever arrive to end it,
+/// and the pet would pretend to think forever. That reasoning is about the agent that ran out. A
+/// Codex session will get its Stop perfectly well, and ending it because CLAUDE ran out would be
+/// inventing an interruption that never happened (ADR-0005).
+///
+/// Pure apart from the injected `now`, so the rule is testable without an AppHandle.
+pub fn force_idle_agent(core: &mut Core, agent: &str, now: Instant) -> bool {
+    let mut hit = false;
+    for (key, s) in core.sessions.iter_mut() {
+        if key.agent == agent && (s.base == Base::Working || s.base == Base::Attention) {
+            s.base = Base::Idle;
+            s.done_until = None;
+            hit = true;
+        }
+    }
+    if hit {
+        core.tool_note = None;
+        let who = crate::reducer::agent_display(agent);
+        core.bubble = Some((
+            if i18n::is_zh() {
+                format!("{} 额度用完了,任务被打断,先睡会儿…", who)
+            } else {
+                format!("{}'s quota is used up — tasks interrupted, taking a nap…", who)
+            },
+            now + Duration::from_secs(120),
+        ));
+    }
+    hit
+}
+
 /// Usage threshold notifications (80% / 100%): notify only once, reset after it drops back
 pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
     // Refresh token died → fire a one-time "please reconnect" notification
@@ -459,70 +543,99 @@ pub fn check_usage_alerts(app: &AppHandle, shared: &Shared) {
         }
     }
     let notify_on = shared.cfg.lock().unwrap().notify;
-    // Same "which basis counts" rule as the display projection, via the shared helper
-    let (mode_sub, flags) = {
+    // Same "which basis counts" rule as the display projection, via the shared helper. Both lists
+    // are per-agent: an alert is about the agent it happened to, and the force-idle below must only
+    // touch that agent's sessions.
+    let (mode_sub, flags, exhausted, nearly_out) = {
         let snap = shared.snapshot.lock().unwrap();
+        let counted = || {
+            snap.quotas
+                .iter()
+                .filter(|q| crate::projection::quota_counts(q))
+        };
         (
             snap.mode == "subscription",
             crate::projection::usage_flags(&snap),
+            counted()
+                .filter(|q| q.pct >= 1.0)
+                .map(|q| q.agent.clone())
+                .collect::<Vec<_>>(),
+            counted()
+                .filter(|q| q.pct >= 0.8 && q.pct < 1.0)
+                .map(|q| (q.agent.clone(),))
+                .collect::<Vec<_>>(),
         )
     };
     if !mode_sub || !flags.pct_valid {
         return;
     }
-    if flags.at_limit {
-        // Quota exhausted: the API is already rejecting requests, so any session still marked
-        // "working / waiting for input" was actually interrupted (no Stop event arrives at limit).
-        // Don't let the pet pretend to think forever — move all to idle, let the sleep state take over, and add an explanatory bubble
+    // Force-idle the sessions of EXHAUSTED agents only. At its limit an agent's API is already
+    // rejecting requests, so a session still marked working/waiting was actually interrupted — no
+    // Stop event will ever arrive to end it, and the pet would pretend to think forever. But that
+    // reasoning applies ONLY to the agent that ran out: a Codex session will get its Stop perfectly
+    // well, and killing it because Claude ran out would be wrong (ADR-0005).
+    for agent in &exhausted {
         let interrupted = {
             let mut core = shared.core.lock().unwrap();
-            let mut hit = false;
-            for s in core.sessions.values_mut() {
-                if s.base == Base::Working || s.base == Base::Attention {
-                    s.base = Base::Idle;
-                    s.done_until = None;
-                    hit = true;
-                }
-            }
-            if hit {
-                core.tool_note = None;
-                core.bubble = Some((
-                    i18n::t(
-                        "额度用完了,任务被打断,先睡会儿…",
-                        "Quota's used up — tasks interrupted, taking a nap…",
-                    )
-                    .to_string(),
-                    Instant::now() + Duration::from_secs(120),
-                ));
-            }
-            hit
+            force_idle_agent(&mut core, agent, Instant::now())
         };
-        if !shared.warned_limit.swap(true, Ordering::Relaxed) && notify_on {
-            let body = if interrupted {
-                i18n::t(
-                    "5 小时窗口额度已用完,运行中的任务被打断,宠物先睡了",
-                    "5-hour window quota is used up — running tasks were interrupted, the pet is napping",
-                )
+        // One alert latch per agent: one agent running out must not suppress the other's warning
+        if !shared.warned_limit(agent).swap(true, Ordering::Relaxed) && notify_on {
+            let who = crate::reducer::agent_display(agent);
+            let body = if i18n::is_zh() {
+                if interrupted {
+                    format!("{} 的额度窗口已用完,运行中的任务被打断", who)
+                } else {
+                    format!("{} 的额度窗口已用完", who)
+                }
+            } else if interrupted {
+                format!("{}'s quota window is used up — running tasks were interrupted", who)
             } else {
-                i18n::t(
-                    "5 小时窗口额度已用完,宠物先睡了",
-                    "5-hour window quota is used up — the pet is napping",
-                )
+                format!("{}'s quota window is used up", who)
             };
-            notify(app, i18n::t("额度到顶了", "Quota reached"), body);
+            let title = if i18n::is_zh() {
+                format!("{} 额度到顶了", who)
+            } else {
+                format!("{} has hit its quota", who)
+            };
+            notify(app, &title, &body);
         }
-    } else if flags.warn {
-        shared.warned_limit.store(false, Ordering::Relaxed);
-        if !shared.warned_80.swap(true, Ordering::Relaxed) && notify_on {
-            notify(
-                app,
-                i18n::t("额度快到了", "Quota almost reached"),
-                i18n::t("当前 5 小时窗口用量已超过 80%", "Current 5-hour window usage is over 80%"),
-            );
+    }
+
+    // Reset the limit latch for agents that recovered
+    for agent in crate::state::AGENTS {
+        if !exhausted.iter().any(|a| a == agent) {
+            shared.warned_limit(agent).store(false, Ordering::Relaxed);
         }
-    } else {
-        shared.warned_80.store(false, Ordering::Relaxed);
-        shared.warned_limit.store(false, Ordering::Relaxed);
+    }
+
+    // The 80% warning is about whichever agent is running dry — it doesn't wait for the others.
+    for q in nearly_out {
+        if !shared.warned_80(&q.0).swap(true, Ordering::Relaxed) && notify_on {
+            let who = crate::reducer::agent_display(&q.0);
+            let title = if i18n::is_zh() {
+                format!("{} 额度快到了", who)
+            } else {
+                format!("{} is running low", who)
+            };
+            let body = if i18n::is_zh() {
+                format!("{} 的当前额度窗口已用过 80%", who)
+            } else {
+                format!("{}'s current quota window is over 80% used", who)
+            };
+            notify(app, &title, &body);
+        }
+    }
+    for agent in crate::state::AGENTS {
+        let dry = {
+            let snap = shared.snapshot.lock().unwrap();
+            snap.quota(agent)
+                .map(|q| crate::projection::quota_counts(q) && q.pct >= 0.8)
+                .unwrap_or(false)
+        };
+        if !dry {
+            shared.warned_80(agent).store(false, Ordering::Relaxed);
+        }
     }
 }
 
@@ -533,4 +646,102 @@ pub fn notify(app: &AppHandle, title: &str, body: &str) {
         .title(title)
         .body(body)
         .show();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn core_with(sessions: &[(&str, &str, Base)]) -> Core {
+        let mut c = Core {
+            sessions: HashMap::new(),
+            bubble: None,
+            tool_note: Some(("cmd".into(), Instant::now() + Duration::from_secs(9))),
+            celebrate: 0,
+            last_event: None,
+            stops_today: 0,
+            stops_day: String::new(),
+            report_day: String::new(),
+            idle_since: None,
+            oops_until: None,
+            bg_tasks: Vec::new(),
+            agent_tasks: Vec::new(),
+        };
+        for (agent, id, base) in sessions {
+            c.sessions.insert(
+                SessionKey::new(agent, id),
+                Session {
+                    base: *base,
+                    since: Instant::now(),
+                    done_until: None,
+                    last_seen: Instant::now(),
+                    in_tool: false,
+                    cwd: None,
+                },
+            );
+        }
+        c
+    }
+
+    fn base_of(core: &Core, agent: &str, id: &str) -> Base {
+        core.sessions[&SessionKey::new(agent, id)].base
+    }
+
+    #[test]
+    fn an_exhausted_agents_sessions_are_force_idled() {
+        // At the limit, no Stop event will ever arrive — the session was interrupted, and without
+        // this the pet pretends to think forever.
+        let mut core = core_with(&[("claude", "a", Base::Working), ("claude", "b", Base::Attention)]);
+        let hit = force_idle_agent(&mut core, "claude", Instant::now());
+        assert!(hit);
+        assert_eq!(base_of(&core, "claude", "a"), Base::Idle);
+        assert_eq!(base_of(&core, "claude", "b"), Base::Idle);
+        assert!(core.bubble.as_ref().unwrap().0.contains("Claude"));
+        assert!(core.tool_note.is_none());
+    }
+
+    #[test]
+    fn another_agents_sessions_are_left_running() {
+        // THE point of ADR-0005's narrowing. Claude ran out; Codex did not. A Codex session will get
+        // its Stop perfectly well, so ending it here would invent an interruption that never
+        // happened — and the pet would look asleep while Codex is visibly editing files.
+        let mut core = core_with(&[("claude", "a", Base::Working), ("codex", "x", Base::Working)]);
+        force_idle_agent(&mut core, "claude", Instant::now());
+        assert_eq!(base_of(&core, "claude", "a"), Base::Idle);
+        assert_eq!(
+            base_of(&core, "codex", "x"),
+            Base::Working,
+            "Codex still has quota — its session must keep running"
+        );
+    }
+
+    #[test]
+    fn nothing_to_interrupt_is_not_an_interruption() {
+        let mut core = core_with(&[("claude", "a", Base::Idle), ("claude", "b", Base::Done)]);
+        assert!(!force_idle_agent(&mut core, "claude", Instant::now()));
+        assert!(core.bubble.is_none(), "no bubble when nothing was interrupted");
+        assert_eq!(base_of(&core, "claude", "b"), Base::Done, "Done is not interrupted");
+    }
+
+    #[test]
+    fn the_bubble_names_the_agent_that_ran_out() {
+        let mut core = core_with(&[("codex", "x", Base::Working)]);
+        force_idle_agent(&mut core, "codex", Instant::now());
+        let (text, _) = core.bubble.as_ref().unwrap();
+        assert!(text.contains("Codex"), "bubble said: {text}");
+        assert!(!text.contains("Claude"));
+    }
+
+    #[test]
+    fn each_agent_has_its_own_alert_latches() {
+        // One agent hitting its cap must not suppress the other's warning
+        let shared = Shared::new();
+        assert!(!shared.warned_limit("claude").swap(true, Ordering::Relaxed));
+        assert!(
+            !shared.warned_limit("codex").load(Ordering::Relaxed),
+            "Claude's latch must not have armed Codex's"
+        );
+        assert!(!shared.warned_80("codex").swap(true, Ordering::Relaxed));
+        assert!(!shared.warned_80("claude").load(Ordering::Relaxed));
+    }
 }
