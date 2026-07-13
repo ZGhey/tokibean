@@ -248,9 +248,28 @@
     const W = canvas.clientWidth || canvas.width;
     ctx.font = fs(12) + "px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
     // Word-aware wrap: keep Latin words whole (never split mid-word), break CJK per character
-    // (no spaces to break on) and at spaces; max 3 lines, ellipsize any overflow. Can't use
-    // fillText's maxWidth to squeeze — Chinese would get crushed together.
+    // (no spaces to break on) and at spaces; ellipsize any overflow. Can't use fillText's maxWidth
+    // to squeeze — Chinese would get crushed together.
     const maxW = W - 8 - sz(20); // the box is text + sz(20) padding, and fit() caps it at W - 8
+
+    // How many lines actually FIT above the pet's head — never a fixed 3.
+    //
+    // The bubble sits GAP px above `topPx` and grows upward, so its height is bounded by the strip
+    // between the canvas top and the pet. Bigger type makes each line taller while that strip stays
+    // exactly as tall as it was, and a count that ignores this doesn't overflow the canvas (the y
+    // clamp catches that) — it grows DOWNWARD out of the clamp and sits on the pet's face.
+    // So the type decides the line height and the space decides the line count.
+    const lineH = sz(16);
+    const budget = (gap) => Math.floor((topPx - gap - 2 - sz(8)) / lineH); // 2 = canvas-top margin
+    // Prefer a roomy gap over the dome — but the gap is decoration and the words are the message, so
+    // when large type would cost a whole line, the gap gives way first (down to a still-clear 8px).
+    let GAP = 24;
+    let maxLines = budget(GAP);
+    if (maxLines < 3) {
+      const tighter = budget(8);
+      if (tighter > maxLines) { GAP = 8; maxLines = tighter; }
+    }
+    maxLines = Math.max(1, Math.min(maxLines, 3)); // 3 lines is plenty; 1 line always fits
     const isCJK = (ch) => {
       const c = ch.codePointAt(0);
       return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) ||
@@ -283,7 +302,7 @@
       const units = ctx.measureText(tok).width > maxW ? Array.from(tok) : [tok];
       for (const unit of units) {
         if (line && ctx.measureText(line + unit).width > maxW) {
-          if (lines.length === 2) { truncated = true; break outer; }
+          if (lines.length === maxLines - 1) { truncated = true; break outer; }
           lines.push(line);
           line = "";
         }
@@ -296,11 +315,12 @@
       while (last && ctx.measureText(last + "…").width > maxW) last = last.slice(0, -1);
       lines[lines.length - 1] = last + "…";
     }
-    const lineH = sz(16);
     const w = fit(Math.max(...lines.map((l) => ctx.measureText(l).width)) + sz(20), W);
     const h = lines.length * lineH + sz(8);
     const x = clampX(cx * S - w / 2, w, W);
-    const y = Math.max(topPx - h - 24, 2); // clear the dome (~16px above the body top) with a small gap
+    // Sit GAP above the pet. The floor is the canvas top — and because maxLines was derived from
+    // this very strip, h fits inside it, so the clamp can no longer push the box down onto the pet.
+    const y = Math.max(topPx - h - GAP, 2);
     ctx.fillStyle = "rgba(24,22,20,0.92)";
     ctx.strokeStyle = "rgba(217,119,87,0.6)";
     ctx.lineWidth = 1;
@@ -322,8 +342,16 @@
     // Reserve the widest ellipsis state so the box doesn't twitch wider as the dots animate
     const w = fit(ctx.measureText(text + "...").width + sz(12), W);
     const h = sz(20);
-    const bx = clampX((cx + 13) * S, w, W);
-    const by = Math.max((y0 - 13) * S, 2);
+    // Anchor the box's TOP-RIGHT corner to the canvas, not its left edge to the pet's shoulder.
+    //
+    // The old anchor started the box beside the pet and let it run right — fine at 12px, where it
+    // fits in the gap. Scale the type up and the box outgrows that gap, gets clamped back inside the
+    // canvas, and slides left across the pet's head: the label appears to wander into the middle as
+    // you enlarge it. Pinning the right edge instead keeps it in the same corner at every size; it
+    // grows leftward, which is the one direction with room. The bottom edge clears the pet's head by
+    // a fixed gap, so it never lands on the dome either.
+    const bx = Math.max(W - w - 4, 4);
+    const by = Math.max(y0 * S - sz(8) - h, 2);
     ctx.fillStyle = "rgba(18,16,14,0.95)";
     ctx.strokeStyle = "rgba(122,222,122,0.45)";
     ctx.lineWidth = 1;
@@ -346,7 +374,9 @@
     const w = fit(tw + sz(12), W);
     const h = sz(17);
     const x = clampX(cx * S - w / 2, w, W);
-    const y = Math.max(topPx - 24, 2);
+    // Anchor the BOTTOM edge a fixed gap above the pet, not the top edge: a top-anchored box grows
+    // downward as the type grows, and lands on the pet's head. Same trap as the bubble.
+    const y = Math.max(topPx - 8 - h, 2);
     ctx.fillStyle = "rgba(24,22,20,0.82)";
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, 6);
