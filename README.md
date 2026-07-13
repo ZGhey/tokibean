@@ -126,6 +126,7 @@ Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ state 
 - **Subscription vs API detection**: in auto mode, `ANTHROPIC_API_KEY` in the environment means API billing, otherwise subscription. Switch manually in the panel if it guesses wrong.
 - **Auto-update** (from 0.2.0): checks for new releases on launch and every 24h; when one is found the panel shows a one-click "Update" banner (or use the tray's *Check for Updates…*), which downloads, installs, and relaunches. A manual *Check for Updates…* also confirms with a dialog when you're already on the latest version. Update packages are signed and served from GitHub Releases. Existing 0.1.x users download 0.2.0 manually once — updates are in-app from there on.
 - **Launch at login** (from 0.3.3): toggle it in the Settings window — Tokibean registers itself with the OS (Windows `Run` registry key / macOS LaunchAgent / Linux `.desktop`) so it starts quietly with your session. The switch reflects the real system state, so it stays in sync even if you change it elsewhere.
+- **Pet size** (from 0.4.4): pick Small / Normal / Large / Extra large in the Settings window. Only the pet scales (the usage panel stays the same size); it grows in place from its feet and applies instantly. Rendered crisp at any size — the pixel art stays sharp.
 
 ## Configuration
 

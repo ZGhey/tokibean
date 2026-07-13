@@ -71,6 +71,15 @@
       <option value="tabby">橘猫·摸鱼</option>
     </select>
   </div>
+  <div class="row">
+    <label id="l-size">大小</label>
+    <select id="cfg-size">
+      <option value="0.5">小</option>
+      <option value="0.75">中(默认)</option>
+      <option value="1">大</option>
+      <option value="1.25">特大</option>
+    </select>
+  </div>
   <div class="result" id="result"></div>
 
   <script>
@@ -95,6 +104,11 @@
         s_classic: ["墩墩(默认)", "Dundun (default)"],
         s_bean: ["豆豆", "Bean"],
         s_tabby: ["橘猫·摸鱼", "Tabby"],
+        size: ["大小", "Size"],
+        z_small: ["小", "Small"],
+        z_normal: ["中(默认)", "Normal (default)"],
+        z_large: ["大", "Large"],
+        z_xlarge: ["特大", "Extra large"],
         press: ["按下快捷键…", "Press a shortcut…"],
         hk_ok: ["快捷键已更新:{k}", "Hotkey updated: {k}"],
         hk_fail: ["快捷键设置失败:{e}", "Failed to set hotkey: {e}"],
@@ -110,6 +124,9 @@
       el("l-skin").textContent = t("skin");
       const opts = { classic: "s_classic", bean: "s_bean", tabby: "s_tabby" };
       for (const o of el("cfg-skin").options) o.textContent = t(opts[o.value] || o.value);
+      el("l-size").textContent = t("size");
+      const zopts = { "0.5": "z_small", "0.75": "z_normal", "1": "z_large", "1.25": "z_xlarge" };
+      for (const o of el("cfg-size").options) o.textContent = t(zopts[o.value] || o.value);
 
       let bossKeyAccel = "CommandOrControl+Shift+B";
       function prettyAccel(a) {
@@ -139,13 +156,15 @@
         return mods.concat(key).join("+");
       }
 
-      // Persist notify/minsecs/sound/skin; tell the pet window so it can re-sync (sound) / reload (skin)
-      function saveCfg(skinChanged) {
+      // Persist notify/minsecs/sound/skin/size; tell the pet window so it can re-sync (sound / size) /
+      // reload (skin). Pet size (pet_scale) applies live in the pet window via config-changed.
+      function saveCfg() {
         return invoke("set_config", {
           notify: el("cfg-notify").checked,
           notifyMinSecs: Math.max(0, parseInt(el("cfg-minsecs").value, 10) || 0),
           sound: el("cfg-sound").checked,
           skin: el("cfg-skin").value,
+          petScale: parseFloat(el("cfg-size").value) || 0.75,
         })
           .then(() => emit("config-changed", { skin: el("cfg-skin").value }))
           .catch((err) => (el("result").textContent = String(err)));
@@ -153,7 +172,8 @@
       el("cfg-notify").addEventListener("change", () => saveCfg());
       el("cfg-minsecs").addEventListener("change", () => saveCfg());
       el("cfg-sound").addEventListener("change", () => saveCfg());
-      el("cfg-skin").addEventListener("change", () => saveCfg(true));
+      el("cfg-skin").addEventListener("change", () => saveCfg());
+      el("cfg-size").addEventListener("change", () => saveCfg());
 
       // Launch-at-login is OS-level (registry / LaunchAgent / .desktop), owned by the autostart
       // plugin — kept out of saveCfg/config.json so the two can't drift.
@@ -185,6 +205,7 @@
         el("cfg-minsecs").value = c.notify_min_secs;
         el("cfg-sound").checked = c.sound;
         el("cfg-skin").value = c.skin || "classic";
+        el("cfg-size").value = String(c.pet_scale || 0.75);
         if (c.boss_key) { bossKeyAccel = c.boss_key; bossInput.value = prettyAccel(c.boss_key); }
       });
       // Reflect the real OS-level autostart state, not a stored copy

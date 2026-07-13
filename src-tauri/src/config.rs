@@ -55,6 +55,10 @@ pub struct Config {
     pub sound: bool,
     /// Skin: classic (default) / a filename under the skins/ directory
     pub skin: String,
+    /// Pet display scale multiplier. Only the pet canvas scales (not the panel); the window
+    /// grows around a fixed bottom-center anchor. Valid steps: 0.5 / 0.75 / 1.0 / 1.25.
+    /// Every step keeps the art-pixel size (4·scale·dpr) an integer, so pixel edges stay crisp.
+    pub pet_scale: f64,
     /// Boss key (global shortcut) accelerator string, e.g. "CommandOrControl+Shift+B".
     /// Summons/hides the pet in one press; same format as a Tauri accelerator (Cmd/Ctrl/Alt/Shift + key)
     pub boss_key: String,
@@ -90,6 +94,7 @@ impl Default for Config {
             notify_min_secs: 30,
             sound: false,
             skin: "classic".into(),
+            pet_scale: 0.75,
             boss_key: "CommandOrControl+Shift+B".into(),
             skip_version: String::new(),
             pos_x: None,
@@ -130,6 +135,18 @@ impl Config {
             fs::create_dir_all(dir)?;
         }
         fs::write(&p, serde_json::to_string_pretty(self).unwrap())
+    }
+
+    /// Pet display scale, snapped to a valid step. Config is hand-editable, so an out-of-range or
+    /// garbage value falls back to the 0.75 default. Shared by the frontend geometry and the
+    /// click-through thread. Keep the steps in sync with DEFAULT_SCALE/SCALES in src/main.js.
+    pub fn scale(&self) -> f64 {
+        match self.pet_scale {
+            s if (s - 0.5).abs() < 0.01 => 0.5,
+            s if (s - 1.0).abs() < 0.01 => 1.0,
+            s if (s - 1.25).abs() < 0.01 => 1.25,
+            _ => 0.75,
+        }
     }
 
     /// Resolve the actual billing mode: subscription or API.

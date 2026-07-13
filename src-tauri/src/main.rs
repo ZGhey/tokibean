@@ -63,6 +63,7 @@ fn get_config(app: AppHandle) -> serde_json::Value {
         "notify_min_secs": cfg.notify_min_secs,
         "sound": cfg.sound,
         "skin": cfg.skin,
+        "pet_scale": cfg.pet_scale,
         "boss_key": cfg.boss_key,
         "block_limit": cfg.block_limit,
         "connected": !cfg.oauth_access.is_empty(),
@@ -89,6 +90,7 @@ fn set_config(
     notify_min_secs: u64,
     sound: bool,
     skin: String,
+    pet_scale: f64,
 ) -> Result<(), String> {
     let shared = app.state::<Arc<Shared>>();
     {
@@ -97,6 +99,8 @@ fn set_config(
         cfg.notify_min_secs = notify_min_secs;
         cfg.sound = sound;
         cfg.skin = if skin.is_empty() { "classic".into() } else { skin };
+        cfg.pet_scale = pet_scale;
+        cfg.pet_scale = cfg.scale(); // snap to a valid step (0.75/1/1.5/2), else 1.0
         cfg.save().map_err(|e| e.to_string())?;
     }
     state::push_update(&app, &shared);
@@ -548,6 +552,17 @@ fn main() {
                         let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
                     }
                 }
+                // Pre-size the collapsed window for the configured pet scale, so it doesn't launch at one
+                // size and then pop to another. The saved pos was written at this same scale, so keeping
+                // the top-left and using the scaled collapsed height lands the pet exactly where it was.
+                // A no-op at the default scale (tauri.conf.json already carries that geometry).
+                // (Mirrors recomputeGeom() in src/main.js: BASE_H = 340·scale, WIN_W = max(240, 200·scale+40).)
+                let scale = cfg.scale();
+                if let Some(w) = app.get_webview_window("main") {
+                    let win_w = 240.0_f64.max((200.0 * scale + 40.0).round());
+                    let base_h = (340.0 * scale).round();
+                    let _ = w.set_size(tauri::LogicalSize::new(win_w, base_h));
+                }
             }
 
             // Windows: pre-allocate the FULL panel height when collapsed so opening the panel never
@@ -559,12 +574,16 @@ fn main() {
             // (tauri.conf.json's 340 is the macOS collapsed height, left untouched.)
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
-                const FULL_H: f64 = 600.0; // keep in sync with FULL_H in src/main.js
-                const CANVAS_H: f64 = 184.0;
-                const PAD_B: f64 = 4.0;
-                let f = w.scale_factor().unwrap_or(1.0);
-                let _ = w.set_size(tauri::LogicalSize::new(240.0, FULL_H));
                 let mut cfg = shared.cfg.lock().unwrap();
+                // Geometry mirrors recomputeGeom() in src/main.js — keep both in sync. Only the pet
+                // canvas scales; the panel allowance (412) is fixed, so FULL_H grows by the canvas delta.
+                let scale = cfg.scale();
+                let canvas_h = 184.0 * scale;
+                let pad_b = 4.0; // body padding-bottom is a fixed 4px CSS gap, not scaled
+                let full_h_l = (canvas_h + pad_b + 412.0).round();
+                let win_w_l = 240.0_f64.max((200.0 * scale + 40.0).round());
+                let f = w.scale_factor().unwrap_or(1.0);
+                let _ = w.set_size(tauri::LogicalSize::new(win_w_l, full_h_l));
                 // Migrate once: the old collapsed window was canvas-height with the pet at offset 0,
                 // so the old saved pos_y equalled the pet's canvas-top — adopt it as the new anchor.
                 if cfg.pet_anchor_y.is_none() && cfg.pos_y.is_some() {
@@ -572,8 +591,8 @@ fn main() {
                     let _ = cfg.save();
                 }
                 if let (Some(x), Some(anchor)) = (cfg.pos_x, cfg.pet_anchor_y) {
-                    // Up-layout: pet canvas top sits at (window top + FULL_H - CANVAS_H - PAD_B).
-                    let off_up = ((FULL_H - CANVAS_H - PAD_B) * f).round() as i32;
+                    // Up-layout: pet canvas top sits at (window top + full_h - canvas_h - pad_b).
+                    let off_up = ((full_h_l - canvas_h - pad_b) * f).round() as i32;
                     let (mut wx, mut wy) = (x, anchor - off_up);
                     // Recover an off-screen saved position (e.g. a config left at Windows' hidden-window
                     // park of -32000, or a monitor that has since been unplugged): clamp so the pet's
@@ -593,9 +612,9 @@ fn main() {
                         .or_else(|| w.primary_monitor().ok().flatten());
                     if let Some(mon) = mon {
                         let (mp, ms) = (mon.position(), mon.size());
-                        let win_w = (240.0 * f).round() as i32;
-                        let full_h = (FULL_H * f).round() as i32;
-                        let pet_h = ((CANVAS_H + PAD_B) * f).round() as i32; // solid pet strip
+                        let win_w = (win_w_l * f).round() as i32;
+                        let full_h = (full_h_l * f).round() as i32;
+                        let pet_h = ((canvas_h + pad_b) * f).round() as i32; // solid pet strip
                         wx = wx.clamp(mp.x, (mp.x + ms.width as i32 - win_w).max(mp.x));
                         // pet flush to monitor top ≤ window top ≤ pet strip flush to monitor bottom
                         let y_min = mp.y - (full_h - pet_h);
@@ -700,23 +719,35 @@ fn main() {
                             && cur.y >= wpos.y as f64
                             && cur.y < (wpos.y + wsize.height as i32) as f64;
                         let h_logical = wsize.height as f64 / factor;
+                        let w_logical = wsize.width as f64 / factor;
                         let rel_y = (cur.y - wpos.y as f64) / factor;
+                        let rel_x = (cur.x - wpos.x as f64) / factor;
                         // Solid (mouse captured) only where the pet/panel actually is; the rest of the
                         // transparent window passes clicks through. When the panel is open the whole window
                         // is solid. When collapsed, only the ~192px canvas strip holding the pet is solid —
                         // its position depends on the layout: on Windows the collapsed window is pre-allocated
                         // to the full panel height, so the pet sits at the TOP (below-panel layout, pet_at_top)
                         // or the BOTTOM (up-panel layout). macOS keeps its height-based rule (unchanged).
+                        // The solid pet strip and the mac "panel is open" height threshold both scale
+                        // with the pet (mirrors recomputeGeom() in src/main.js: strip 192·scale,
+                        // collapsed height 340·scale +5 slack). The strip is also bounded to the pet's
+                        // actual width (the canvas is 200·scale wide, centred in a ≥240 window), so at
+                        // the smaller sizes the empty margins beside the pet still pass clicks through.
+                        let scale = s.cfg.lock().unwrap().scale();
+                        let strip = 192.0 * scale;
+                        let half_pet_w = 200.0 * scale / 2.0 + 4.0; // +4: a hair of slack around the art
+                        let in_pet_x = (rel_x - w_logical / 2.0).abs() <= half_pet_w;
                         let solid = if s.panel_open.load(Ordering::Relaxed) {
                             true
                         } else if cfg!(target_os = "windows") {
-                            if s.pet_at_top.load(Ordering::Relaxed) {
-                                rel_y < 192.0
-                            } else {
-                                rel_y >= h_logical - 192.0
-                            }
+                            in_pet_x
+                                && if s.pet_at_top.load(Ordering::Relaxed) {
+                                    rel_y < strip
+                                } else {
+                                    rel_y >= h_logical - strip
+                                }
                         } else {
-                            h_logical > 345.0 || rel_y >= h_logical - 192.0
+                            h_logical > 340.0 * scale + 5.0 || (in_pet_x && rel_y >= h_logical - strip)
                         };
                         let want = inside && !solid;
                         if want != ignoring {

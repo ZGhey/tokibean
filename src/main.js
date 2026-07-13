@@ -92,16 +92,34 @@
 
   const canvas = document.getElementById("pet");
   const ctx = canvas.getContext("2d");
-  // High DPI: render the backing buffer at physical pixel resolution so text and pixel edges stay sharp
-  {
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.width, h = canvas.height;
-    canvas.style.width = w + "px";
-    canvas.style.height = h + "px";
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    ctx.scale(dpr, dpr);
+  // Design (unscaled) canvas size — the renderer draws in this fixed 200×184 logical space.
+  const CANVAS_W0 = canvas.width, CANVAS_H0 = canvas.height; // 200 × 184 (HTML attrs)
+  const dpr = window.devicePixelRatio || 1;
+  // Pet size steps (small / normal / large / extra large). Every step keeps the art-pixel size
+  // (S=4 × scale × dpr) an integer, so the pixel art stays crisp at any of them.
+  // Keep in sync with Config::scale() in src-tauri/src/config.rs.
+  const SCALES = [0.5, 0.75, 1, 1.25];
+  const DEFAULT_SCALE = 0.75;
+  // Pet scale multiplier (from config; user-adjustable). Only the pet canvas scales, not the panel.
+  let petScale = DEFAULT_SCALE;
+  // Size the canvas for the given pet scale. The CSS box and the renderer's logical space stay at the
+  // DESIGN size (200×184), so pet.js and every skin are untouched — they always draw into 200×184 and
+  // read canvas.clientWidth === 200. Enlargement is purely visual, via a CSS transform. Sharpness: the
+  // backing buffer is rendered at dpr×scale resolution, so its pixel density matches the transformed
+  // on-screen size 1:1 (no resampling) — crisp pixel art at any scale, integer or not.
+  function applyCanvasScale(scale) {
+    petScale = scale;
+    canvas.style.width = CANVAS_W0 + "px";
+    canvas.style.height = CANVAS_H0 + "px";
+    canvas.width = Math.round(CANVAS_W0 * dpr * scale);
+    canvas.height = Math.round(CANVAS_H0 * dpr * scale);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr * scale, dpr * scale);
+    // Grow upward from the feet so the pet stays planted on the ground as it scales.
+    canvas.style.transformOrigin = "bottom center";
+    canvas.style.transform = scale === 1 ? "" : "scale(" + scale + ")";
   }
+  applyCanvasScale(DEFAULT_SCALE);
   const panel = document.getElementById("panel");
 
   let cur = {
@@ -373,24 +391,33 @@
   // SetWindowPos grows the window upward, DWM re-composites the OLD webview frame into the new geometry
   // before it repaints (the jump); hiding the pet across that resize killed the jump but the hidden
   // frames were the flicker. No resize ⇒ neither can happen.
-  const BASE_H = 340;
-  const WIN_W = 240;
-  let resizing = false;
-
-  // Where the pet's canvas sits inside a window of height H, per layout:
-  //   up → pet anchored to the bottom;  below → pet anchored to the top
-  const CANVAS_H = 184, PAD_B = 4;
-  // Bubble/empty space inside the canvas ABOVE the pet drawing (dome top ≈ 64px down): the
-  // after-drag clamp needs to allow for it so the pet can be dragged all the way to the screen top.
-  const PET_CANVAS_TOP = 64;
   // Windows needs the manual-drag path AND the pre-allocated-layout path (defined once, used below).
   const IS_WIN_DRAG = navigator.userAgent.includes("Windows");
-  // Windows: fixed pre-allocated collapsed height — big enough for the tallest panel. The window is
-  // NEVER resized after startup, so there is no SetWindowPos → no DWM re-composite → no jump AND no
-  // flicker on open/close. Height beyond the current panel is transparent (click-through). Keep in
-  // sync with FULL_H in src-tauri/src/main.rs. macOS keeps the original 340 + resize path.
-  const FULL_H = 600;
-  const COLLAPSED_H = IS_WIN_DRAG ? FULL_H : BASE_H;
+  let resizing = false;
+
+  // All window geometry scales with the pet (`petScale`). Only the pet canvas grows — the panel is a
+  // fixed-size DOM, so FULL_H adds a fixed panel allowance (412) on top of the scaled canvas rather
+  // than scaling wholesale. These are `let` and rebuilt by recomputeGeom() whenever the scale changes.
+  // MUST mirror the Rust geometry in src-tauri/src/main.rs (startup sizing + click-through strip).
+  //   BASE_H     macOS collapsed window height (bubble headroom scales too)
+  //   WIN_W      window width (≥240; a scaled pet wider than 200 widens the window)
+  //   CANVAS_H   pet canvas height inside the window;  PAD_B  bottom padding
+  //   PET_CANVAS_TOP  empty space above the pet drawing inside the canvas (dome top ≈ 64px down)
+  //   FULL_H     Windows pre-allocated collapsed height (never resized after startup on Windows —
+  //              avoids the DWM re-composite jump/flicker on open); = scaled canvas + fixed panel room
+  let BASE_H, WIN_W, CANVAS_H, PAD_B, PET_CANVAS_TOP, FULL_H, COLLAPSED_H;
+  function recomputeGeom(scale) {
+    BASE_H = Math.round(340 * scale);
+    WIN_W = Math.max(240, Math.round(200 * scale + 40));
+    CANVAS_H = Math.round(184 * scale); // visual pet height (canvas is CSS 184, transform-scaled)
+    PAD_B = 4;                          // body padding-bottom is a fixed 4px CSS gap, not scaled
+    PET_CANVAS_TOP = Math.round(64 * scale);
+    FULL_H = Math.round(CANVAS_H + PAD_B + 412);
+    COLLAPSED_H = IS_WIN_DRAG ? FULL_H : BASE_H;
+  }
+  recomputeGeom(DEFAULT_SCALE);
+  // Where the pet's canvas sits inside a window of height H, per layout:
+  //   up → pet anchored to the bottom;  below → pet anchored to the top
   const canvasTopIn = (H, below) => (below ? 0 : H - CANVAS_H - PAD_B);
   // Windows: which layout the pre-allocated full-height window is currently in (false = up-panel, pet
   // at the window bottom; true = below-panel, pet at the window top). Startup is up-layout (main.rs).
@@ -663,6 +690,8 @@
 
   // Head pat: mouse hovering over the pet (when not held down)
   canvas.addEventListener("mousemove", (e) => {
+    // offsetX/Y stay in the canvas's own 200×184 space (the visual size comes from a CSS transform,
+    // which doesn't affect offset coords), so no scale conversion is needed.
     const gx = e.offsetX / 4, gy = e.offsetY / 4; // Grid coordinates (pixel scale factor 4)
     pat = !downPos && gx > 8 && gx < 42 && gy > 12 && gy < 36;
     // Eyes-follow: cursor position over the canvas in logical px (offsetX/Y are CSS px)
@@ -691,6 +720,56 @@
   let soundOn = false;
   let hooksIncomplete = false;
   let currentSkin = "classic";
+
+  // Apply a pet size change: rescale the canvas + all window geometry, keeping the pet's feet (the
+  // canvas bottom) pinned so it grows/shrinks in place. Called on first config load and whenever the
+  // Settings window changes the size (config-changed). A no-op if already at that scale — so the
+  // default (1.0) never touches the window. Rust pre-sizes the window at startup too, so the initial
+  // call just re-anchors at the same geometry.
+  async function applyScale(scale) {
+    scale = SCALES.includes(scale) ? scale : DEFAULT_SCALE;
+    if (scale === petScale || resizing) return;
+    resizing = true;
+    try {
+      const win = window.__TAURI__.window.getCurrentWindow();
+      const { LogicalSize, LogicalPosition } = window.__TAURI__.dpi;
+      const factor = await win.scaleFactor();
+      const winPos = (await win.outerPosition()).toLogical(factor);
+      // Pin the pet's feet: remember the canvas bottom's screen Y, restore it after resizing.
+      const bottomY = winPos.y + canvas.getBoundingClientRect().bottom;
+      // Resize the COLLAPSED window; if the panel is open, collapse it first (it re-fits on next open).
+      if (!panel.classList.contains("hidden")) {
+        panel.classList.add("hidden");
+        document.body.classList.remove("below");
+        if (IS_WIN_DRAG) curBelow = false;
+      }
+      canvas.style.visibility = "hidden";
+      applyCanvasScale(scale);
+      recomputeGeom(scale);
+      const below = IS_WIN_DRAG ? curBelow : false;
+      const targetH = COLLAPSED_H;
+      const newTop = Math.round(bottomY - canvasTopIn(targetH, below) - CANVAS_H);
+      if (IS_WIN_DRAG) {
+        // Atomic move+size (one SetWindowPos) to avoid a DWM flash on Windows.
+        await invoke("set_window_rect", { x: Math.round(winPos.x), y: newTop, w: WIN_W, h: targetH }).catch(() => {});
+      } else {
+        await win.setPosition(new LogicalPosition(Math.round(winPos.x), newTop));
+        await win.setSize(new LogicalSize(WIN_W, targetH));
+      }
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      canvas.style.visibility = "";
+      invoke("set_panel_open", { open: false }).catch(() => {});
+      if (IS_WIN_DRAG) {
+        invoke("set_pet_at_top", { v: curBelow }).catch(() => {});
+        savePetAnchor();
+      } else {
+        clampToScreen();
+      }
+    } finally {
+      resizing = false;
+    }
+  }
+
   function applyConfig(c) {
     soundOn = c.sound;
     cfgConnected = c.connected;
@@ -698,6 +777,7 @@
     currentSkin = c.skin || "classic";
     if (hooksIncomplete) el("install-hooks").textContent = t("update_hooks");
     if (c.connected) el("acct-status").textContent = t("connected");
+    applyScale(typeof c.pet_scale === "number" ? c.pet_scale : DEFAULT_SCALE).catch(() => {});
   }
   invoke("get_config").then((c) => {
     applyConfig(c);
