@@ -63,7 +63,7 @@ fn get_config(app: AppHandle) -> serde_json::Value {
         "notify_min_secs": cfg.notify_min_secs,
         "sound": cfg.sound,
         "skin": cfg.skin,
-        "pet_scale": cfg.pet_scale,
+        "pet_scale": cfg.scale(), // resolved (never null) — the frontend always gets a valid step
         "boss_key": cfg.boss_key,
         "block_limit": cfg.block_limit,
         "connected": !cfg.oauth_access.is_empty(),
@@ -99,8 +99,8 @@ fn set_config(
         cfg.notify_min_secs = notify_min_secs;
         cfg.sound = sound;
         cfg.skin = if skin.is_empty() { "classic".into() } else { skin };
-        cfg.pet_scale = pet_scale;
-        cfg.pet_scale = cfg.scale(); // snap to a valid step (0.75/1/1.5/2), else 1.0
+        cfg.pet_scale = Some(pet_scale);
+        cfg.pet_scale = Some(cfg.scale()); // snap to a valid step, else the default
         cfg.save().map_err(|e| e.to_string())?;
     }
     state::push_update(&app, &shared);
@@ -545,23 +545,70 @@ fn main() {
             // Restore the last remembered window position (macOS: pos_x/pos_y ARE the window top-left).
             // Windows restores from the pet anchor instead (below), so skip this there.
             #[cfg(not(target_os = "windows"))]
-            {
-                let cfg = shared.cfg.lock().unwrap();
-                if let (Some(x), Some(y)) = (cfg.pos_x, cfg.pos_y) {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
-                    }
-                }
-                // Pre-size the collapsed window for the configured pet scale, so it doesn't launch at one
-                // size and then pop to another. The saved pos was written at this same scale, so keeping
-                // the top-left and using the scaled collapsed height lands the pet exactly where it was.
-                // A no-op at the default scale (tauri.conf.json already carries that geometry).
-                // (Mirrors recomputeGeom() in src/main.js: BASE_H = 340·scale, WIN_W = max(240, 200·scale+40).)
+            if let Some(w) = app.get_webview_window("main") {
+                let mut cfg = shared.cfg.lock().unwrap();
                 let scale = cfg.scale();
-                if let Some(w) = app.get_webview_window("main") {
-                    let win_w = 240.0_f64.max((200.0 * scale + 40.0).round());
-                    let base_h = (340.0 * scale).round();
-                    let _ = w.set_size(tauri::LogicalSize::new(win_w, base_h));
+                let win_w = config::win_w(scale);
+                let base_h = cfg.base_h();
+                let f = w.scale_factor().unwrap_or(1.0);
+
+                // Size the collapsed window for the configured pet scale before showing it, so it can't
+                // launch at one size and pop to another.
+                let _ = w.set_size(tauri::LogicalSize::new(win_w, base_h));
+
+                // One-time migration for a config written before the pet-size setting existed: pos_y is
+                // the window TOP-LEFT, but the pet is drawn at the window BOTTOM, so shrinking the
+                // collapsed window (LEGACY_BASE_H -> base_h) would lift the pet off its saved spot.
+                // Push the top edge down by the height delta to keep the pet's feet where the user left them.
+                if cfg.pet_scale.is_none() {
+                    if let Some(y) = cfg.pos_y {
+                        let delta = ((config::LEGACY_BASE_H - base_h) * f).round() as i32;
+                        cfg.pos_y = Some(y + delta);
+                    }
+                    cfg.pet_scale = Some(scale);
+                    let _ = cfg.save();
+                }
+
+                // Restore the position, clamped so the pet actually lands on a real monitor. Without this
+                // a stale/edge position (or a monitor that has since been unplugged) leaves the pet drawn
+                // off-screen — an invisible pet, with no way to get it back but the tray. Windows has had
+                // this clamp; macOS was missing it.
+                if let (Some(x), Some(y)) = (cfg.pos_x, cfg.pos_y) {
+                    let (mut wx, mut wy) = (x, y);
+                    let win_w_px = (win_w * f).round() as i32;
+                    let full_h_px = (base_h * f).round() as i32;
+                    let pet_h_px = ((config::CANVAS_H_AT_1X * scale + config::PAD_B) * f).round() as i32;
+                    // Pick the monitor the PET sits on (its centre), not the window's top-left — the
+                    // window has transparent headroom above the pet. Fall back to the primary monitor.
+                    let (pet_cx, pet_cy) = (wx + win_w_px / 2, wy + full_h_px - pet_h_px / 2);
+                    let mon = w
+                        .available_monitors()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|m| {
+                            let (p, s) = (m.position(), m.size());
+                            pet_cx >= p.x
+                                && pet_cx < p.x + s.width as i32
+                                && pet_cy >= p.y
+                                && pet_cy < p.y + s.height as i32
+                        })
+                        .or_else(|| w.primary_monitor().ok().flatten());
+                    if let Some(mon) = mon {
+                        let (mp, ms) = (mon.position(), mon.size());
+                        wx = wx.clamp(mp.x, (mp.x + ms.width as i32 - win_w_px).max(mp.x));
+                        // pet flush to the monitor top ≤ window top ≤ pet flush to the monitor bottom
+                        let y_min = mp.y - (full_h_px - pet_h_px);
+                        let y_max = mp.y + ms.height as i32 - full_h_px;
+                        wy = wy.clamp(y_min, y_max.max(y_min));
+                    }
+                    let _ = w.set_position(tauri::PhysicalPosition::new(wx, wy));
+                    // Persist the clamped spot, so the config reflects where the pet actually is
+                    // instead of an unreachable position we'd have to re-clamp on every launch.
+                    if (wx, wy) != (x, y) {
+                        cfg.pos_x = Some(wx);
+                        cfg.pos_y = Some(wy);
+                        let _ = cfg.save();
+                    }
                 }
             }
 
@@ -578,10 +625,10 @@ fn main() {
                 // Geometry mirrors recomputeGeom() in src/main.js — keep both in sync. Only the pet
                 // canvas scales; the panel allowance (412) is fixed, so FULL_H grows by the canvas delta.
                 let scale = cfg.scale();
-                let canvas_h = 184.0 * scale;
-                let pad_b = 4.0; // body padding-bottom is a fixed 4px CSS gap, not scaled
+                let canvas_h = config::CANVAS_H_AT_1X * scale;
+                let pad_b = config::PAD_B; // body padding-bottom is a fixed 4px CSS gap, not scaled
                 let full_h_l = (canvas_h + pad_b + 412.0).round();
-                let win_w_l = 240.0_f64.max((200.0 * scale + 40.0).round());
+                let win_w_l = config::win_w(scale);
                 let f = w.scale_factor().unwrap_or(1.0);
                 let _ = w.set_size(tauri::LogicalSize::new(win_w_l, full_h_l));
                 // Migrate once: the old collapsed window was canvas-height with the pet at offset 0,

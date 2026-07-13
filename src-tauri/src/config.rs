@@ -4,6 +4,24 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// Pet geometry. Mirrors recomputeGeom()/DEFAULT_SCALE in src/main.js — keep both in sync.
+/// The collapsed window is BASE_H_AT_1X · scale tall, with the pet canvas (184 · scale, plus a
+/// fixed 4px body padding) sitting at its bottom edge.
+pub const DEFAULT_SCALE: f64 = 0.75;
+pub const BASE_H_AT_1X: f64 = 340.0;
+pub const CANVAS_H_AT_1X: f64 = 184.0;
+pub const CANVAS_W_AT_1X: f64 = 200.0;
+pub const PAD_B: f64 = 4.0;
+pub const MIN_WIN_W: f64 = 240.0;
+/// Collapsed window height used by every build before the pet-size setting existed (0.4.4).
+/// A config with `pet_scale: None` had its position saved against a window this tall.
+pub const LEGACY_BASE_H: f64 = 340.0;
+
+/// Window width in logical px for a given pet scale (never narrower than the usage panel).
+pub fn win_w(scale: f64) -> f64 {
+    MIN_WIN_W.max((CANVAS_W_AT_1X * scale + 40.0).round())
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Prices {
@@ -58,7 +76,10 @@ pub struct Config {
     /// Pet display scale multiplier. Only the pet canvas scales (not the panel); the window
     /// grows around a fixed bottom-center anchor. Valid steps: 0.5 / 0.75 / 1.0 / 1.25.
     /// Every step keeps the art-pixel size (4·scale·dpr) an integer, so pixel edges stay crisp.
-    pub pet_scale: f64,
+    /// `None` means the setting predates this feature (a pre-0.4.4 config, whose collapsed window
+    /// was always LEGACY_BASE_H tall) — that's the signal for the one-time position migration in
+    /// main.rs, so keep it an Option rather than defaulting it away.
+    pub pet_scale: Option<f64>,
     /// Boss key (global shortcut) accelerator string, e.g. "CommandOrControl+Shift+B".
     /// Summons/hides the pet in one press; same format as a Tauri accelerator (Cmd/Ctrl/Alt/Shift + key)
     pub boss_key: String,
@@ -94,7 +115,7 @@ impl Default for Config {
             notify_min_secs: 30,
             sound: false,
             skin: "classic".into(),
-            pet_scale: 0.75,
+            pet_scale: None,
             boss_key: "CommandOrControl+Shift+B".into(),
             skip_version: String::new(),
             pos_x: None,
@@ -138,15 +159,20 @@ impl Config {
     }
 
     /// Pet display scale, snapped to a valid step. Config is hand-editable, so an out-of-range or
-    /// garbage value falls back to the 0.75 default. Shared by the frontend geometry and the
+    /// garbage value falls back to DEFAULT_SCALE. Shared by the frontend geometry and the
     /// click-through thread. Keep the steps in sync with DEFAULT_SCALE/SCALES in src/main.js.
     pub fn scale(&self) -> f64 {
-        match self.pet_scale {
+        match self.pet_scale.unwrap_or(DEFAULT_SCALE) {
             s if (s - 0.5).abs() < 0.01 => 0.5,
             s if (s - 1.0).abs() < 0.01 => 1.0,
             s if (s - 1.25).abs() < 0.01 => 1.25,
-            _ => 0.75,
+            _ => DEFAULT_SCALE,
         }
+    }
+
+    /// Collapsed (pet-only) window height in logical px, for the current scale.
+    pub fn base_h(&self) -> f64 {
+        (BASE_H_AT_1X * self.scale()).round()
     }
 
     /// Resolve the actual billing mode: subscription or API.

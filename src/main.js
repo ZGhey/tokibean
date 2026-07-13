@@ -757,7 +757,6 @@
         await win.setSize(new LogicalSize(WIN_W, targetH));
       }
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      canvas.style.visibility = "";
       invoke("set_panel_open", { open: false }).catch(() => {});
       if (IS_WIN_DRAG) {
         invoke("set_pet_at_top", { v: curBelow }).catch(() => {});
@@ -766,6 +765,8 @@
         clampToScreen();
       }
     } finally {
+      // Always un-hide, even if a resize/reposition call threw — otherwise the pet stays invisible.
+      canvas.style.visibility = "";
       resizing = false;
     }
   }
