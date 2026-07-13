@@ -320,6 +320,7 @@
     el("sessions-count").textContent = "×" + list.length;
     const box = el("session-list");
     box.textContent = "";
+    const multiAgent = new Set(list.map((s) => s.agent)).size > 1;
     for (const s of list) {
       const row = document.createElement("div");
       row.className = "s-row s-" + s.state;
@@ -328,7 +329,10 @@
       ic.textContent = SESS_ICON[s.state] || "·";
       const label = document.createElement("span");
       label.className = "s-label";
-      label.textContent = s.cwd || t(SESS_LABEL[s.state] || "st_idle");
+      const what = s.cwd || t(SESS_LABEL[s.state] || "st_idle");
+      // Name the agent too — with several agents running, "which one needs me?" must be answerable
+      // in one glance. Only worth the space once more than one agent is actually in the list.
+      label.textContent = multiAgent ? (AGENT_NAME[s.agent] || s.agent) + " · " + what : what;
       const time = document.createElement("span");
       time.className = "s-time";
       time.textContent = fmtDur(s.secs || 0);

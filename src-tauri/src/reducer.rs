@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::i18n;
-use crate::state::{Base, Core, Session};
+use crate::state::{Base, Core, Session, SessionKey};
 
 /// What the IO shell must do after a reduction. The reducer itself performs no IO.
 #[derive(Default, PartialEq, Debug)]
@@ -34,11 +34,11 @@ pub struct NotifyCfg {
 
 /// Apply one hook event to the state. Pure: no locks, no IO, no clock reads beyond the injected `now`.
 ///
-/// `session_key` is how the session is identified in `Core::sessions`. Today that is the raw
-/// `session_id`; it is passed in rather than derived so the caller owns the keying policy.
+/// `session_key` is (agent, session_id) — the caller owns the keying policy, so the reducer never
+/// has to know how an agent was identified.
 pub fn apply_event(
     core: &mut Core,
-    session_key: String,
+    session_key: SessionKey,
     v: &Value,
     now: Instant,
     ncfg: NotifyCfg,
@@ -404,13 +404,17 @@ mod tests {
         min_secs: 30,
     };
 
-    /// Apply an event at `now` and return the effects.
-    fn ev(core: &mut Core, v: Value, now: Instant) -> Effects {
-        apply_event(core, "s1".into(), &v, now, QUIET)
+    fn key(id: &str) -> SessionKey {
+        SessionKey::new("claude", id)
     }
 
-    fn base_of(core: &Core, key: &str) -> Base {
-        core.sessions.get(key).unwrap().base
+    /// Apply an event at `now` and return the effects.
+    fn ev(core: &mut Core, v: Value, now: Instant) -> Effects {
+        apply_event(core, key("s1"), &v, now, QUIET)
+    }
+
+    fn base_of(core: &Core, id: &str) -> Base {
+        core.sessions.get(&key(id)).unwrap().base
     }
 
     #[test]
@@ -447,7 +451,7 @@ mod tests {
             now,
         );
         assert_eq!(base_of(&core, "s1"), Base::Working);
-        assert!(core.sessions["s1"].in_tool);
+        assert!(core.sessions[&key("s1")].in_tool);
         assert_eq!(core.tool_note.as_ref().unwrap().0, "reading");
     }
 
@@ -555,9 +559,9 @@ mod tests {
             json!({"hook_event_name": "PreToolUse", "tool_name": "Bash"}),
             now,
         );
-        assert!(core.sessions["s1"].in_tool);
+        assert!(core.sessions[&key("s1")].in_tool);
         ev(&mut core, json!({"hook_event_name": "PostToolUse"}), now);
-        assert!(!core.sessions["s1"].in_tool);
+        assert!(!core.sessions[&key("s1")].in_tool);
     }
 
     #[test]
@@ -573,7 +577,7 @@ mod tests {
         );
 
         assert_eq!(base_of(&core, "s1"), Base::Done);
-        assert!(core.sessions["s1"].done_until.is_some());
+        assert!(core.sessions[&key("s1")].done_until.is_some());
         assert!(core.tool_note.is_none());
         assert!(fx.want_official, "Stop just burned tokens — refresh usage");
         assert_eq!(core.stops_today, 1);
@@ -603,14 +607,14 @@ mod tests {
         let mut core = empty_core();
         apply_event(
             &mut core,
-            "s1".into(),
+            key("s1"),
             &json!({"hook_event_name": "UserPromptSubmit"}),
             now,
             LOUD,
         );
         let fx = apply_event(
             &mut core,
-            "s1".into(),
+            key("s1"),
             &json!({"hook_event_name": "Stop"}),
             now + Duration::from_secs(5),
             LOUD,
@@ -621,14 +625,14 @@ mod tests {
         let mut core = empty_core();
         apply_event(
             &mut core,
-            "s1".into(),
+            key("s1"),
             &json!({"hook_event_name": "UserPromptSubmit"}),
             now,
             LOUD,
         );
         let fx = apply_event(
             &mut core,
-            "s1".into(),
+            key("s1"),
             &json!({"hook_event_name": "Stop", "last_assistant_message": "shipped"}),
             now + Duration::from_secs(60),
             LOUD,
@@ -651,7 +655,7 @@ mod tests {
         let mut core = empty_core();
         let fx = apply_event(
             &mut core,
-            "s1".into(),
+            key("s1"),
             &json!({"hook_event_name": "Notification", "message": "needs approval"}),
             now,
             LOUD,
@@ -674,7 +678,7 @@ mod tests {
         let mut core = empty_core();
         apply_event(
             &mut core,
-            "busy".into(),
+            key("busy"),
             &json!({"hook_event_name": "UserPromptSubmit"}),
             now,
             QUIET,
@@ -682,7 +686,7 @@ mod tests {
         core.bubble = None;
         apply_event(
             &mut core,
-            "s2".into(),
+            key("s2"),
             &json!({"hook_event_name": "SessionStart"}),
             now,
             QUIET,
@@ -706,20 +710,76 @@ mod tests {
         let mut core = empty_core();
         apply_event(
             &mut core,
-            "a".into(),
+            key("a"),
             &json!({"hook_event_name": "UserPromptSubmit"}),
             now,
             QUIET,
         );
         apply_event(
             &mut core,
-            "b".into(),
+            key("b"),
             &json!({"hook_event_name": "Notification"}),
             now,
             QUIET,
         );
         assert_eq!(base_of(&core, "a"), Base::Working);
         assert_eq!(base_of(&core, "b"), Base::Attention);
+    }
+
+    #[test]
+    fn the_same_session_id_under_two_agents_is_two_sessions() {
+        // Agents mint their own session ids and know nothing of each other. Keying by id alone would
+        // let a Codex session silently overwrite a Claude one — the key is (agent, id) precisely so
+        // that collision is impossible by construction rather than by luck.
+        let now = Instant::now();
+        let mut core = empty_core();
+        apply_event(
+            &mut core,
+            SessionKey::new("claude", "same-id"),
+            &json!({"hook_event_name": "UserPromptSubmit"}),
+            now,
+            QUIET,
+        );
+        apply_event(
+            &mut core,
+            SessionKey::new("codex", "same-id"),
+            &json!({"hook_event_name": "Notification"}),
+            now,
+            QUIET,
+        );
+        assert_eq!(core.sessions.len(), 2, "one session per agent");
+        assert_eq!(
+            core.sessions[&SessionKey::new("claude", "same-id")].base,
+            Base::Working
+        );
+        assert_eq!(
+            core.sessions[&SessionKey::new("codex", "same-id")].base,
+            Base::Attention
+        );
+    }
+
+    #[test]
+    fn ending_one_agents_session_leaves_the_others_alone() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        for agent in ["claude", "codex"] {
+            apply_event(
+                &mut core,
+                SessionKey::new(agent, "same-id"),
+                &json!({"hook_event_name": "UserPromptSubmit"}),
+                now,
+                QUIET,
+            );
+        }
+        apply_event(
+            &mut core,
+            SessionKey::new("claude", "same-id"),
+            &json!({"hook_event_name": "SessionEnd"}),
+            now,
+            QUIET,
+        );
+        assert_eq!(core.sessions.len(), 1);
+        assert!(core.sessions.contains_key(&SessionKey::new("codex", "same-id")));
     }
 
     #[test]

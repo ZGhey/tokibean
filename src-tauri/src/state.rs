@@ -5,7 +5,7 @@
 // warn (window >80%) is an overlay flag, not a state slot
 
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -44,6 +44,33 @@ pub struct UpdateState {
     pub progress: u8,
 }
 
+/// Which agent a session belongs to. The slug is decided at INSTALL time and carried in the hook's
+/// URL path (/event/codex), never guessed from the payload — Codex's payload is nearly identical to
+/// Claude's, so there is nothing to sniff. Bare /event still means claude, so hooks installed by
+/// earlier versions keep working untouched.
+pub const AGENT_CLAUDE: &str = "claude";
+pub const AGENT_CODEX: &str = "codex";
+
+/// Every agent the pet knows how to watch.
+pub const AGENTS: [&str; 2] = [AGENT_CLAUDE, AGENT_CODEX];
+
+/// A session is identified by (agent, session_id) — ids cannot collide across agents by
+/// construction, rather than by luck.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub struct SessionKey {
+    pub agent: String,
+    pub id: String,
+}
+
+impl SessionKey {
+    pub fn new(agent: &str, id: &str) -> Self {
+        SessionKey {
+            agent: agent.to_string(),
+            id: id.to_string(),
+        }
+    }
+}
+
 pub struct Session {
     pub base: Base,
     /// When the current base was entered (used to compute work time while Working)
@@ -59,7 +86,7 @@ pub struct Session {
 }
 
 pub struct Core {
-    pub sessions: HashMap<String, Session>,
+    pub sessions: HashMap<SessionKey, Session>,
     pub bubble: Option<(String, Instant)>,
     /// Tool currently in use (PreToolUse), shown briefly
     pub tool_note: Option<(String, Instant)>,
@@ -87,7 +114,11 @@ pub struct Shared {
     pub scanner: Mutex<Scanner>,
     pub snapshot: Mutex<UsageSnapshot>,
     pub cfg: Mutex<Config>,
-    pub hooks_seen: AtomicBool,
+    /// Which agents we have ACTUALLY received an event from. This is what makes an agent's install
+    /// status "active" an observed fact rather than a claim (ADR-0006): for Codex, writing the hook
+    /// config is not enough — Codex refuses to run a hook until the user approves it in `/hooks`, so
+    /// "written" and "live" are different states and only an arriving event can tell them apart.
+    pub hooks_seen: Mutex<HashSet<String>>,
     pub warned_80: AtomicBool,
     pub warned_limit: AtomicBool,
     /// Whether the usage panel is currently expanded (set by the frontend). While open, the
@@ -146,7 +177,7 @@ impl Shared {
             scanner: Mutex::new(Scanner::new()),
             snapshot: Mutex::new(UsageSnapshot::default()),
             cfg: Mutex::new(Config::load()),
-            hooks_seen: AtomicBool::new(false),
+            hooks_seen: Mutex::new(HashSet::new()),
             warned_80: AtomicBool::new(false),
             warned_limit: AtomicBool::new(false),
             panel_open: AtomicBool::new(false),
@@ -188,7 +219,7 @@ pub fn build_update_from_core(shared: &Shared, core: &Core) -> PetUpdate {
         snap,
         update,
         Instant::now(),
-        shared.hooks_seen.load(Ordering::Relaxed),
+        shared.hooks_seen.lock().unwrap().clone(),
         shared.reconnect_needed.load(Ordering::Relaxed),
     )
 }

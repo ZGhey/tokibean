@@ -15,6 +15,8 @@ use crate::usage::UsageSnapshot;
 /// One session's glanceable status, for the tally chip + panel list.
 #[derive(Serialize, Clone)]
 pub struct SessionBrief {
+    /// Which agent this session belongs to ("claude" | "codex")
+    pub agent: String,
     /// "working" | "attention" | "done" | "idle"
     pub state: String,
     /// Seconds spent in the current base state
@@ -29,7 +31,11 @@ pub struct PetUpdate {
     pub warn: bool,
     pub bubble: Option<String>,
     pub last_event: Option<String>,
+    /// Whether ANY agent has ever sent us an event (the pet is wired up to something)
     pub hooks_seen: bool,
+    /// The agents we have actually received an event from. An agent's install status is only
+    /// "active" if it appears here — a fact we observed, not one we claimed (ADR-0006).
+    pub agents_seen: Vec<String>,
     pub usage: UsageSnapshot,
     /// Number of sessions currently working (frontend draws a ×N badge when >1)
     pub working_count: usize,
@@ -99,7 +105,7 @@ pub fn project(
     mut snap: UsageSnapshot,
     update: UpdateState,
     now: Instant,
-    hooks_seen: bool,
+    hooks_seen: std::collections::HashSet<String>,
     reconnect: bool,
 ) -> PetUpdate {
     let mut working = 0usize;
@@ -122,11 +128,11 @@ pub fn project(
         }
     }
 
-    // Per-session brief for the tally chip + panel list, sorted by session id for a stable order
-    let mut sessions: Vec<(&String, SessionBrief)> = core
+    // Per-session brief for the tally chip + panel list, sorted by (agent, id) for a stable order
+    let mut sessions: Vec<(&crate::state::SessionKey, SessionBrief)> = core
         .sessions
         .iter()
-        .map(|(id, s)| {
+        .map(|(key, s)| {
             let state = match s.base {
                 Base::Attention => "attention",
                 Base::Working => "working",
@@ -134,11 +140,12 @@ pub fn project(
                 Base::Idle => "idle",
             };
             let brief = SessionBrief {
+                agent: key.agent.clone(),
                 state: state.to_string(),
                 secs: now.duration_since(s.since).as_secs(),
                 cwd: s.cwd.clone(),
             };
-            (id, brief)
+            (key, brief)
         })
         .collect();
     sessions.sort_by(|a, b| a.0.cmp(b.0));
@@ -170,7 +177,12 @@ pub fn project(
         warn: flags.warn,
         bubble: core.bubble.as_ref().map(|(t, _)| t.clone()),
         last_event: core.last_event.clone(),
-        hooks_seen,
+        hooks_seen: !hooks_seen.is_empty(),
+        agents_seen: {
+            let mut v: Vec<String> = hooks_seen.into_iter().collect();
+            v.sort(); // stable order across snapshots
+            v
+        },
         usage: snap,
         working_count: working,
         session_count: core.sessions.len(),
@@ -191,7 +203,7 @@ pub fn project(
 mod tests {
     use super::*;
     use crate::state::Session;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::time::Duration;
 
     fn empty_core() -> Core {
@@ -209,6 +221,15 @@ mod tests {
             bg_tasks: Vec::new(),
             agent_tasks: Vec::new(),
         }
+    }
+
+    fn key(id: &str) -> crate::state::SessionKey {
+        crate::state::SessionKey::new("claude", id)
+    }
+
+    /// hooks_seen as the projection now takes it: the set of agents we've heard from.
+    fn seen(agents: &[&str]) -> HashSet<String> {
+        agents.iter().map(|a| a.to_string()).collect()
     }
 
     fn sess(base: Base, since: Instant) -> Session {
@@ -250,7 +271,7 @@ mod tests {
     }
 
     fn project_now(core: &Core, snap: UsageSnapshot) -> PetUpdate {
-        project(core, snap, UpdateState::default(), Instant::now(), true, false)
+        project(core, snap, UpdateState::default(), Instant::now(), seen(&["claude"]), false)
     }
 
     #[test]
@@ -264,9 +285,9 @@ mod tests {
     fn working_outranks_attention() {
         let now = Instant::now();
         let mut core = empty_core();
-        core.sessions.insert("a".into(), sess(Base::Attention, now));
-        core.sessions.insert("b".into(), sess(Base::Working, now));
-        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, true, false);
+        core.sessions.insert(key("a"), sess(Base::Attention, now));
+        core.sessions.insert(key("b"), sess(Base::Working, now));
+        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), false);
         assert_eq!(out.state, "working");
         assert_eq!(out.working_count, 1);
     }
@@ -275,9 +296,9 @@ mod tests {
     fn attention_when_nothing_working() {
         let now = Instant::now();
         let mut core = empty_core();
-        core.sessions.insert("a".into(), sess(Base::Attention, now));
-        core.sessions.insert("b".into(), sess(Base::Done, now));
-        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, true, false);
+        core.sessions.insert(key("a"), sess(Base::Attention, now));
+        core.sessions.insert(key("b"), sess(Base::Done, now));
+        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), false);
         assert_eq!(out.state, "attention");
     }
 
@@ -285,9 +306,9 @@ mod tests {
     fn done_outranks_idle_and_limit() {
         let now = Instant::now();
         let mut core = empty_core();
-        core.sessions.insert("a".into(), sess(Base::Done, now));
+        core.sessions.insert(key("a"), sess(Base::Done, now));
         // Even at 100% usage, a fresh completion still shows "done", not "limit"
-        let out = project(&core, sub_snap("official", 1.0), UpdateState::default(), now, true, false);
+        let out = project(&core, sub_snap("official", 1.0), UpdateState::default(), now, seen(&["claude"]), false);
         assert_eq!(out.state, "done");
     }
 
@@ -296,10 +317,10 @@ mod tests {
         let now = Instant::now();
         let mut core = empty_core();
         core.sessions
-            .insert("a".into(), sess(Base::Working, now - Duration::from_secs(30)));
+            .insert(key("a"), sess(Base::Working, now - Duration::from_secs(30)));
         core.sessions
-            .insert("b".into(), sess(Base::Working, now - Duration::from_secs(90)));
-        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, true, false);
+            .insert(key("b"), sess(Base::Working, now - Duration::from_secs(90)));
+        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), false);
         assert_eq!(out.working_count, 2);
         assert!(out.work_secs >= 90 && out.work_secs < 92);
     }
