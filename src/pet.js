@@ -375,7 +375,7 @@
     // its default size, so the right-clamp always fired and dragged the box back across the pet's
     // head — the bigger the text, the more obviously). With ~140px a side, the clamp is now the rare
     // case rather than the every case, and the tag stays where it belongs: up and to the right.
-    const bx = Math.min((cx + 10) * S, Math.max(W - w - 4, 4));
+    const bx = Math.min((cx + 7) * S, Math.max(W - w - 4, 4));
     // Sit ABOVE the ×N badge, which lives on the same shoulder at (cx+15, y0-3). While the canvas was
     // narrow the tag got clamped away to the left and the two never met; now that it sits where it
     // belongs, they would print on top of each other.
