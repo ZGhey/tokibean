@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:1200px;height:630px;overflow:hidden}
+  body{
+    background:#fdf7f2;
+    font:16px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif;
+    color:#2c231d;
+    display:flex; align-items:center; gap:56px;
+    padding:0 68px;
+    position:relative;
+  }
+  body::after{
+    content:""; position:absolute; right:-180px; bottom:-220px;
+    width:680px; height:680px; border-radius:50%;
+    background:radial-gradient(circle,#e8916c30 0%,#e8916c00 68%);
+  }
+  .left{flex:1; z-index:1}
+  h1{font-size:76px; letter-spacing:-.03em; line-height:1; margin-bottom:22px; font-weight:800}
+  .bean{font-size:58px}
+  p{font-size:29px; line-height:1.45; color:#5c4c41; font-weight:500}
+  p b{color:#2c231d; font-weight:750}
+  .meta{margin-top:34px; display:flex; gap:10px; flex-wrap:wrap}
+  .chip{
+    font-size:19px; font-weight:600; padding:8px 16px; border-radius:999px;
+    background:#fff; border:1px solid #e8dbcf; color:#7a6a5e;
+  }
+  .chip.hot{background:#e8916c; border-color:#e8916c; color:#fff}
+
+  .right{z-index:1; display:flex; gap:14px; align-items:flex-end}
+  .card{
+    border-radius:18px; overflow:hidden;
+    border:1px solid #e8dbcf;
+    box-shadow:0 18px 44px -14px #2c231d38;
+    line-height:0;
+  }
+  .card img{image-rendering:pixelated; display:block}
+  .card.a{width:222px}
+  .card.a img{width:250px; margin-left:-28px}
+  .card.b img{width:152px}
+</style>
+</head>
+<body>
+  <div class="left">
+    <h1>Tokibean <span class="bean">🫘</span></h1>
+    <p>A desktop pet that shows what <b>Claude Code</b> is doing — and how much of your <b>token budget</b> is left.</p>
+    <div class="meta">
+      <span class="chip hot">Free &amp; open source</span>
+      <span class="chip">macOS</span>
+      <span class="chip">Windows</span>
+      <span class="chip">Linux</span>
+    </div>
+  </div>
+  <div class="right">
+    <div class="card b"><img src="gifs/thinking.gif"></div>
+    <div class="card a"><img src="gifs/coding.gif"></div>
+  </div>
+</body>
+</html>
