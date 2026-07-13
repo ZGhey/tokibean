@@ -246,3 +246,11 @@ button:active { transform: scale(0.98); }
 }
 #update-row.update-row:hover { background: #357a42; }
 #update-row.update-row:disabled { opacity: 0.75; cursor: default; }
+
+/* Codex install status. `pending` is the EXPECTED state right after installing — Codex won't run a
+   hook until you approve it in its own /hooks — so it is styled as neutral information, never as an
+   error. Only a genuinely missing install is styled as "go do something". */
+#codex-block { margin-top: 10px; }
+.codex-active { color: #7fb069; }
+.codex-pending { color: #e0a63b; }
+.codex-absent { color: #8a8178; }

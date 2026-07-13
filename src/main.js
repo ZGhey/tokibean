@@ -20,6 +20,16 @@
     win_week: ["周窗口", "Weekly window"],
     win_mins: ["{n} 分钟窗口", "{n}-minute window"],
     usage_aria: ["窗口用量", "Window usage"],
+    install_codex: ["安装 Codex hooks", "Install Codex hooks"],
+    codex_absent: ["未安装", "Not installed"],
+    // Written, but Codex won't run a hook until you approve it in its own `/hooks` — so this is the
+    // EXPECTED state right after installing, not an error.
+    codex_pending: ["待批准", "Awaiting approval"],
+    codex_active: ["已生效", "Active"],
+    codex_approve_hint: [
+      "hooks 已写入，但还没生效：在 Codex 里执行 /hooks 批准它们",
+      "Hooks are written but not live yet: run /hooks inside Codex and approve them.",
+    ],
     no_window: ["暂无活动窗口", "No active window"],
     week_quota: ["周额度", "Weekly quota"],
     cost_today: ["今日成本", "Today's cost"],
@@ -345,6 +355,7 @@
 
   function renderPanel() {
     renderSessions();
+    renderCodex();
     const u = cur.usage;
     if (!u) return;
 
@@ -798,6 +809,8 @@
   let cfgConnected = false;
   let soundOn = false;
   let hooksIncomplete = false;
+  // Codex's presence + whether its hooks are written. null = we haven't asked yet.
+  let codexCfg = null;
   let currentSkin = "classic";
 
   // Apply a pet size change: rescale the canvas + all window geometry, keeping the pet's feet (the
@@ -853,9 +866,41 @@
     cfgConnected = c.connected;
     hooksIncomplete = !!c.hooks_incomplete;
     currentSkin = c.skin || "classic";
+    codexCfg = (c.agents && c.agents.codex) || null;
     if (hooksIncomplete) el("install-hooks").textContent = t("update_hooks");
     if (c.connected) el("acct-status").textContent = t("connected");
+    renderCodex();
     applyScale(typeof c.pet_scale === "number" ? c.pet_scale : DEFAULT_SCALE).catch(() => {});
+  }
+
+  // Codex's three-state install status (ADR-0006). "active" is a fact we OBSERVED — an event
+  // actually arrived — not a claim we made when we wrote the file. That distinction matters here
+  // and nowhere else: Codex hashes each hook definition and refuses to run it until the user
+  // approves it in `/hooks`, so "written" and "live" are genuinely different states. A user who
+  // saw "installed" and then saw nothing happen would conclude the pet is broken.
+  function renderCodex() {
+    const block = el("codex-block");
+    // Not installed on this machine → no Codex UI at all
+    if (!codexCfg || !codexCfg.installed || !codexCfg.enabled) {
+      block.classList.add("hidden");
+      return;
+    }
+    block.classList.remove("hidden");
+
+    const live = (cur.agents_seen || []).includes("codex");
+    const written = !codexCfg.hooks_incomplete;
+    const state = live ? "active" : written ? "pending" : "absent";
+
+    el("codex-status").textContent = t("codex_" + state);
+    // `pending` is the EXPECTED state right after installing — it is not an error, and must not be
+    // styled as one. It just means: your turn, go approve them.
+    el("codex-status").className = "num small codex-" + state;
+    el("install-codex").classList.toggle("hidden", state !== "absent");
+    // While pending, keep the instruction on screen — it's the only way the user learns what to do
+    if (state === "pending" && !el("codex-result").textContent) {
+      el("codex-result").textContent = t("codex_approve_hint");
+    }
+    if (state === "active") el("codex-result").textContent = "";
   }
   invoke("get_config").then((c) => {
     applyConfig(c);
@@ -928,6 +973,19 @@
         hooksIncomplete = false;
       })
       .catch((err) => (el("install-result").textContent = t("fail", { e: err })));
+  });
+
+  el("install-codex").addEventListener("click", () => {
+    el("codex-result").textContent = t("installing");
+    invoke("install_codex_hooks")
+      .then((msg) => {
+        // The message says what was written AND — if Codex's importer had copied our Claude hooks
+        // in — what pollution was cleaned up. Then it says the hooks aren't live until approved.
+        el("codex-result").textContent = msg;
+        if (codexCfg) codexCfg.hooks_incomplete = false;
+        renderCodex();
+      })
+      .catch((err) => (el("codex-result").textContent = t("fail", { e: err })));
   });
 
   el("update-row").addEventListener("click", () => {

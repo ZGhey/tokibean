@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod codex;
+mod codex_install;
 mod config;
 mod fetch_policy;
 mod hooks_install;
@@ -41,6 +42,13 @@ fn install_hooks(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn install_codex_hooks(app: AppHandle) -> Result<String, String> {
+    let shared = app.state::<Arc<Shared>>();
+    let port = shared.cfg.lock().unwrap().port;
+    codex_install::install(port)
+}
+
+#[tauri::command]
 fn set_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let shared = app.state::<Arc<Shared>>();
     {
@@ -70,6 +78,17 @@ fn get_config(app: AppHandle) -> serde_json::Value {
         "block_limit": cfg.block_limit,
         "connected": !cfg.oauth_access.is_empty(),
         "hooks_incomplete": hooks_install::incomplete(cfg.port),
+        // Which agents exist on this machine, and whether their hooks are written. An agent that
+        // isn't installed appears nowhere in the UI (ADR-0007), so a Claude-only user's panel is
+        // exactly today's. "written" is NOT "live" — only an arriving event proves that, which is
+        // why the third state comes from PetUpdate.agents_seen rather than from here (ADR-0006).
+        "agents": {
+            "codex": {
+                "installed": codex_install::installed(),
+                "hooks_incomplete": codex_install::incomplete(cfg.port),
+                "enabled": cfg.agent_enabled("codex"),
+            }
+        },
         "lang": i18n::tag(),
     })
 }
@@ -482,6 +501,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_update,
             install_hooks,
+            install_codex_hooks,
             set_mode,
             get_config,
             set_config,

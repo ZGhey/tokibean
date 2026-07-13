@@ -50,6 +50,17 @@
     <button id="install-hooks" data-i18n="install_hooks">安装 Claude Code hooks</button>
     <div class="hint" id="install-result"></div>
 
+    <!-- Codex. Hidden unless ~/.codex actually exists — an agent you don't have never shows up
+         (ADR-0007), so a Claude-only user's panel is exactly what it was. -->
+    <div id="codex-block" class="hidden">
+      <div class="label-row">
+        <span>Codex</span>
+        <span id="codex-status" class="num small"></span>
+      </div>
+      <button id="install-codex" data-i18n="install_codex">安装 Codex hooks</button>
+      <div class="hint" id="codex-result"></div>
+    </div>
+
     <!-- Per-session breakdown, pinned to the very bottom so it never pushes the usage numbers around.
          The divider is inside the block, so both appear/disappear together (only when >1 session). -->
     <div id="sessions-block" class="hidden">
