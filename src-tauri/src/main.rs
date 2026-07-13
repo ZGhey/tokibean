@@ -819,6 +819,18 @@ fn main() {
                         let _ = cfg.save();
                     }
                 }
+                // The canvas widened (200 -> 344) so the labels have room beside the pet. The pet is
+                // centred in it, so a wider window puts the pet half the difference further right on
+                // screen — every existing pet would jump right on upgrade. Shift the saved x back by
+                // exactly that, once.
+                if cfg.layout_v < 1 {
+                    if let Some(x) = cfg.pos_x {
+                        let grew = (config::CANVAS_W_AT_1X - config::LEGACY_CANVAS_W) * scale;
+                        cfg.pos_x = Some(x - ((grew / 2.0) * f).round() as i32);
+                    }
+                    cfg.layout_v = 1;
+                    let _ = cfg.save();
+                }
                 if let (Some(x), Some(anchor)) = (cfg.pos_x, cfg.pet_anchor_y) {
                     // Up-layout: pet canvas top sits at (window top + full_h - canvas_h - pad_b).
                     let off_up = ((full_h_l - canvas_h - pad_b) * f).round() as i32;

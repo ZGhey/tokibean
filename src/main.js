@@ -128,7 +128,7 @@
   const canvas = document.getElementById("pet");
   const ctx = canvas.getContext("2d");
   // Design (unscaled) canvas size — the renderer draws in this fixed 200×184 logical space.
-  const CANVAS_W0 = canvas.width, CANVAS_H0 = canvas.height; // 200 × 184 (HTML attrs)
+  const CANVAS_W0 = canvas.width, CANVAS_H0 = canvas.height; // 288 × 184 (HTML attrs)
   const dpr = window.devicePixelRatio || 1;
   // Pet size steps (small / normal / large / extra large). Every step keeps the art-pixel size
   // (S=4 × scale × dpr) an integer, so the pixel art stays crisp at any of them.
@@ -609,7 +609,7 @@
   let BASE_H, WIN_W, CANVAS_H, PAD_B, PET_CANVAS_TOP, FULL_H, COLLAPSED_H;
   function recomputeGeom(scale) {
     BASE_H = Math.round(340 * scale);
-    WIN_W = Math.max(240, Math.round(200 * scale + 40));
+    WIN_W = Math.max(240, Math.round(CANVAS_W0 * scale + 40)); // CANVAS_W0 = the canvas's own width
     CANVAS_H = Math.round(184 * scale); // visual pet height (canvas is CSS 184, transform-scaled)
     PAD_B = 4;                          // body padding-bottom is a fixed 4px CSS gap, not scaled
     PET_CANVAS_TOP = Math.round(64 * scale);

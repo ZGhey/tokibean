@@ -114,7 +114,7 @@
     const x = extra || {};
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     K.ambient(ctx, canvas, t); // moon phase / season drift / festival decor behind the pet
-    let cx = 25;
+    let cx = (window.PetKit && PetKit.centreCx) ? PetKit.centreCx(canvas) : 25; // centre of the canvas, whatever its width
     if (state === "idle" && !x.dragging) {
       if (t >= wUntil) {
         const r = Math.random();

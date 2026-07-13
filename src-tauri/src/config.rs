@@ -35,7 +35,17 @@ enum Choice {
 pub const DEFAULT_SCALE: f64 = 0.75;
 pub const BASE_H_AT_1X: f64 = 340.0;
 pub const CANVAS_H_AT_1X: f64 = 184.0;
-pub const CANVAS_W_AT_1X: f64 = 200.0;
+/// Canvas width. The pet is centred in it, and the slack on either side is what the floating labels
+/// ("❯ reading…", the bubble) live in. It was 200, which left only 68px beside the pet — narrower
+/// than the tag itself at its DEFAULT size, so the tag never really sat beside the pet: it was
+/// right-aligned and lay across the pet's head, and enlarging the text only made that obvious.
+/// 288 gives ~112px a side (and a whole-grid centre, since 288/4 = 72 rows) — enough for the tag
+/// to sit beside the pet, without the pet marooned in the middle of a wide empty field.
+/// The window is transparent, so the extra width costs nothing visible.
+pub const CANVAS_W_AT_1X: f64 = 288.0;
+/// The width before that. Kept for the one-time position fix: a centred pet in a wider window would
+/// otherwise shift right on screen by half the difference, and every existing pet would jump.
+pub const LEGACY_CANVAS_W: f64 = 200.0;
 pub const PAD_B: f64 = 4.0;
 pub const MIN_WIN_W: f64 = 240.0;
 /// Window height reserved for the usage panel, above the pet canvas.
@@ -146,6 +156,9 @@ pub struct Config {
     /// Steps: 1.0 / 1.2 / 1.4. Clamped by `text_scale()`, since config.json is hand-editable and an
     /// absurd value would push the labels clean off a canvas that never gets any wider.
     pub text_scale: Option<f64>,
+    /// Layout generation. Bumped when a geometry change would move an existing pet on screen, so the
+    /// one-time fix in main.rs runs exactly once. 0 = a config written before the canvas widened.
+    pub layout_v: u32,
     /// Boss key (global shortcut) accelerator string, e.g. "CommandOrControl+Shift+B".
     /// Summons/hides the pet in one press; same format as a Tauri accelerator (Cmd/Ctrl/Alt/Shift + key)
     pub boss_key: String,
@@ -195,6 +208,7 @@ impl Default for Config {
             skin: "classic".into(),
             pet_scale: None,
             text_scale: None,
+            layout_v: 0,
             boss_key: "CommandOrControl+Shift+B".into(),
             skip_version: String::new(),
             pos_x: None,

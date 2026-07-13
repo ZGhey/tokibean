@@ -33,16 +33,27 @@
   // that promises a box cannot grow out of frame, whatever the user picks.
   let TS = 1;
 
-  // Grid rows of clear air to leave above the pet's BODY for whatever it's wearing. The body top
-  // (`y0`) is not the top of the pet: reading puts on a mortarboard and coding a hard hat, both of
-  // which rise 7 rows above it, and thinking grows Einstein hair. Floating boxes anchored to y0
-  // therefore sat squarely on the pet's hat. One number, honoured by every box, beats a per-state
-  // patch (`y0 - 6` in the thinking branch was exactly that patch, and only that branch had it).
-  const HEAD = 8;
+  // The body top (`y0`) is not the top of the pet — it wears things. Reading puts on a mortarboard and
+  // coding a hard hat (both rise 7 rows above the body), and thinking grows Einstein hair. A bubble
+  // anchored to y0 sits squarely on the hat.
+  //
+  // But the headgear is per-state, and charging every state for the tallest hat costs the bubble a
+  // whole line of text in the states that wear nothing at all. So the clearance is a fact ABOUT THE
+  // CURRENT FRAME: `headRoom`, set in draw() from what the pet is actually wearing.
+  //
+  // The "❯ cmd…" tag doesn't pay it either — since the canvas widened, the tag sits off to the pet's
+  // side, horizontally clear of anything on its head.
+  const HEADGEAR = { reading: 7, coding: 7 };   // grid rows above the body top
+  const HAIR = 6;                               // thinking's Einstein hair
+  let headRoom = 0;                             // this frame's clearance, in grid rows
 
   const fs = (base) => Math.round(base * TS);            // font size at the current text scale
   const sz = (base) => Math.round(base * TS);            // paddings / line heights, likewise
   const fit = (w, W) => Math.min(w, W - 8);              // never wider than the canvas
+
+  // The pet's home column, in grid units: the middle of the canvas, whatever width that is. Hard-coding
+  // 25 (the middle of the old 200px canvas) is what pinned the pet to the left when the canvas widened.
+  const centreCx = (canvas) => Math.round((canvas.clientWidth || canvas.width) / S / 2);
   const clampX = (x, w, W) => Math.min(Math.max(x, 4), Math.max(4, W - w - 4));
 
   const C = "#f2823e";    // persimmon orange (拱门·墩墩)
@@ -258,7 +269,10 @@
     // Word-aware wrap: keep Latin words whole (never split mid-word), break CJK per character
     // (no spaces to break on) and at spaces; ellipsize any overflow. Can't use fillText's maxWidth
     // to squeeze — Chinese would get crushed together.
-    const maxW = W - 8 - sz(20); // the box is text + sz(20) padding, and fit() caps it at W - 8
+    // The canvas is wide so the LABELS have somewhere to live, not so the bubble can run the full
+    // width of it — a 320px-wide speech bubble over a 64px pet looks like a billboard. Cap the text
+    // column; the extra canvas width still buys more characters per line than the old 200px did.
+    const maxW = Math.min(W - 8 - sz(20), sz(230));
 
     // How many lines actually FIT above the pet's head — never a fixed 3.
     //
@@ -268,16 +282,20 @@
     // clamp catches that) — it grows DOWNWARD out of the clamp and sits on the pet's face.
     // So the type decides the line height and the space decides the line count.
     const lineH = sz(16);
-    const budget = (gap) => Math.floor((topPx - gap - 2 - sz(8)) / lineH); // 2 = canvas-top margin
-    // Prefer a roomy gap over the dome — but the gap is decoration and the words are the message, so
-    // when large type would cost a whole line, the gap gives way first (down to a still-clear 8px).
-    let GAP = 24;
+    const PAD = 8;                                                   // vertical padding: decoration,
+    const budget = (gap) => Math.floor((topPx - gap - 2 - PAD) / lineH); // so it does NOT scale with
+    // the type — inflating it just eats the lines the type is asking for. (2 = canvas-top margin.)
+    //
+    // Three lines is the target at every size. Prefer a roomy gap over the pet's head, but the gap is
+    // decoration too and the words are the message: when big type would otherwise cost a line, the
+    // gap gives way first.
+    let GAP = 20;
     let maxLines = budget(GAP);
     if (maxLines < 3) {
-      const tighter = budget(8);
-      if (tighter > maxLines) { GAP = 8; maxLines = tighter; }
+      const tighter = budget(4);
+      if (tighter > maxLines) { GAP = 4; maxLines = tighter; }
     }
-    maxLines = Math.max(1, Math.min(maxLines, 3)); // 3 lines is plenty; 1 line always fits
+    maxLines = Math.max(1, Math.min(maxLines, 3)); // 3 is plenty; 1 always fits
     const isCJK = (ch) => {
       const c = ch.codePointAt(0);
       return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) ||
@@ -324,7 +342,7 @@
       lines[lines.length - 1] = last + "…";
     }
     const w = fit(Math.max(...lines.map((l) => ctx.measureText(l).width)) + sz(20), W);
-    const h = lines.length * lineH + sz(8);
+    const h = lines.length * lineH + PAD;
     const x = clampX(cx * S - w / 2, w, W);
     // Sit GAP above the pet. The floor is the canvas top — and because maxLines was derived from
     // this very strip, h fits inside it, so the clamp can no longer push the box down onto the pet.
@@ -337,7 +355,7 @@
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#e8e2d8";
-    lines.forEach((l, i) => ctx.fillText(l, x + sz(10), y + sz(16) + i * lineH));
+    lines.forEach((l, i) => ctx.fillText(l, x + sz(10), y + PAD / 2 + fs(12) + i * lineH));
   }
 
   // Top-right status box: terminal-style "❯ cmd..." green text + animated ellipsis
@@ -350,16 +368,18 @@
     // Reserve the widest ellipsis state so the box doesn't twitch wider as the dots animate
     const w = fit(ctx.measureText(text + "...").width + sz(12), W);
     const h = sz(20);
-    // Anchor the box's TOP-RIGHT corner to the canvas, not its left edge to the pet's shoulder.
+    // Sit off the pet's right shoulder, and never past the canvas edge.
     //
-    // The old anchor started the box beside the pet and let it run right — fine at 12px, where it
-    // fits in the gap. Scale the type up and the box outgrows that gap, gets clamped back inside the
-    // canvas, and slides left across the pet's head: the label appears to wander into the middle as
-    // you enlarge it. Pinning the right edge instead keeps it in the same corner at every size; it
-    // grows leftward, which is the one direction with room. The bottom edge clears the pet's head by
-    // a fixed gap, so it never lands on the dome either.
-    const bx = Math.max(W - w - 4, 4);
-    const by = Math.max((y0 - HEAD) * S - sz(8) - h, 2);
+    // This is the natural anchor, and it only works because the canvas is wide enough to hold the
+    // box beside the pet (it wasn't: 200px left 68px of slack next to a tag that needs ~98px even at
+    // its default size, so the right-clamp always fired and dragged the box back across the pet's
+    // head — the bigger the text, the more obviously). With ~140px a side, the clamp is now the rare
+    // case rather than the every case, and the tag stays where it belongs: up and to the right.
+    const bx = Math.min((cx + 13) * S, Math.max(W - w - 4, 4));
+    // Sit ABOVE the ×N badge, which lives on the same shoulder at (cx+15, y0-3). While the canvas was
+    // narrow the tag got clamped away to the left and the two never met; now that it sits where it
+    // belongs, they would print on top of each other.
+    const by = Math.max((y0 - 6) * S - sz(8) - h, 2);
     ctx.fillStyle = "rgba(18,16,14,0.95)";
     ctx.strokeStyle = "rgba(122,222,122,0.45)";
     ctx.lineWidth = 1;
@@ -603,17 +623,30 @@
     const now = new Date();
     const gridW = Math.floor((canvas.clientWidth || canvas.width) / S);
     const h = now.getHours();
+    // The scenery is composed around the PET, not around the canvas. These positions were chosen when
+    // the canvas was 200 wide and the pet sat at grid 25; the canvas has since widened to give the
+    // labels room, and anything still measured from the canvas's own corner drifted away with it —
+    // the moon ended up hanging out by the window's edge, half a screen from the pet it belongs to.
+    // `ox` re-hangs it where it was always meant to be: up and to the pet's left.
+    const ox = centreCx(canvas) - 25;
     if (h >= 20 || h < 7) { // evening & night: hang the moon in the upper-left, out of the badges' way
-      drawMoon(ctx, 8, 7, 3.5, moonPhase(now));
-      px(ctx, 15, 5, 1, 1, "#fff6c0"); // a few tiny stars
-      px(ctx, 4, 14, 1, 1, "#fff6c0");
-      px(ctx, 14, 12, 1, 1, "#fff6c0");
+      drawMoon(ctx, 8 + ox, 7, 3.5, moonPhase(now));
+      px(ctx, 15 + ox, 5, 1, 1, "#fff6c0"); // a few tiny stars
+      px(ctx, 4 + ox, 14, 1, 1, "#fff6c0");
+      px(ctx, 14 + ox, 12, 1, 1, "#fff6c0");
     }
     const w = force || weather(now);
     if (w !== "rain") drawSeason(ctx, t, season(now), gridW, h >= 18 || h < 7, w === "wind");
     if (w !== "clear") drawWeather(ctx, t, w, gridW);
     const f = festival(now);
-    if (f) drawFestival(ctx, t, f, gridW);
+    // Festivals flank the pet (lanterns either side, a tree at its feet), so they're laid out in the
+    // pet's own 50-row neighbourhood rather than smeared to the corners of a wider canvas.
+    if (f) {
+      ctx.save();
+      ctx.translate(ox * S, 0);
+      drawFestival(ctx, t, f, 50);
+      ctx.restore();
+    }
   }
 
   // ---- idle roaming state (skin-internal) ----
@@ -667,7 +700,11 @@
     if (extra && extra.textScale) setTextScale(extra.textScale);
     const x = extra || {};
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const baseCx = 25;
+    const baseCx = centreCx(canvas);
+    // What is the pet wearing this frame? (thinking is a working state with no toolNote)
+    headRoom = state === "working"
+      ? (HEADGEAR[x.toolNote] || (x.toolNote ? 0 : HAIR))
+      : 0;
 
     // Only roam while idle; other states return to the center
     // Just woke up (quota restored / nap ended, back to idle): stretch first
@@ -1176,7 +1213,7 @@
       bulbT--;
     }
 
-    if (bubble) bubbleBox(ctx, canvas, bubble, cx, (y0 - HEAD) * S);
+    if (bubble) bubbleBox(ctx, canvas, bubble, cx, (y0 - headRoom) * S);
   }
 
   window.PetRenderer = { draw };
@@ -1185,5 +1222,5 @@
   // setTextScale is how a skin with its own draw() (bean, tabby) still gets the user's text size:
   // main.js calls it whenever the setting changes. The default skin's draw() also reads
   // extra.textScale, so a skin that ignores PetKit entirely can still be handed the value.
-  window.PetKit = { S, GY, px, heart, zzz, bubbleBox, statusTag, confetti, isNight, ambient, moonPhase, drawMoon, season, festival, weather, drawWeather, setTextScale };
+  window.PetKit = { S, GY, px, heart, zzz, bubbleBox, statusTag, confetti, isNight, ambient, moonPhase, drawMoon, season, festival, weather, drawWeather, setTextScale, centreCx };
 })();
