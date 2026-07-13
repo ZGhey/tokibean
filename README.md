@@ -28,6 +28,8 @@ A desktop pet that lives on your screen and watches Claude Code. No feeding, no 
 
 Cross-platform: Windows / macOS / Linux (Tauri 2).
 
+**What makes it different from the other Claude Code pets:** it reads the **official Anthropic usage API** (connect your account once, in-app OAuth), so the 5-hour-window percentage and reset countdown are the real numbers, not an estimate. It also has a whole ambient world — real moon phases, seasons, weather, festivals — all computed offline from your local clock.
+
 > A community project, not affiliated with or endorsed by Anthropic; "Claude" is used only as a factual compatibility reference. The default mascot "Archway Dundun" (拱门·墩墩) is an original character, and every built-in skin is free to redistribute.
 
 ## State gallery
