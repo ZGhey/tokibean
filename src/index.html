@@ -8,39 +8,30 @@
 </head>
 <body>
   <div id="panel" class="hidden">
-    <div class="row head">
-      <span id="mode-badge" class="badge">订阅</span>
-      <!-- Settings used to be reachable ONLY from the tray menu. That's a hole, not an
-           inconvenience: a user who never thinks to click the tray icon can't configure anything. -->
-      <button id="open-settings" class="gear" data-i18n-title="settings" aria-label="Settings">⚙</button>
-      <select id="mode-select" data-i18n-title="billing_mode">
-        <option value="auto" data-i18n="mode_auto">自动检测</option>
-        <option value="subscription" data-i18n="mode_sub">订阅(Pro/Max)</option>
-        <option value="api" data-i18n="mode_api">API 计费</option>
-      </select>
-    </div>
+    <!-- The panel is a GLANCE. It shows what you check every day and nothing else. Setup (connect,
+         install hooks, billing mode) lives in the Settings window — those are one-time things nobody
+         looks at twice, and while they lived here they crowded out the numbers and overflowed the
+         panel. See ADR-0014 / ADR-0015. -->
 
     <button id="update-row" class="hidden update-row"></button>
 
-    <!-- One quota card per agent, built by renderQuotas(). A Claude 5-hour block and a Codex
-         30-day window are different quantities: they sit side by side and are never compared. -->
+    <!-- One quota card per agent, built by renderQuotas(). A card is only ever rendered for an agent
+         that HAS a usable percentage — an agent with no basis gets no card at all, rather than an
+         empty one reading "--%" that occupies the space while saying nothing. -->
     <div id="sub-block"></div>
 
     <div id="api-block" class="hidden">
       <div class="label-row"><span data-i18n="cost_today">今日成本</span><span id="cost-today" class="num big">$0.00</span></div>
-      <div class="label-row"><span data-i18n="last7">近 7 天</span><span id="cost-week" class="num">$0.00</span></div>
+      <div class="label-row"><span data-i18n="cost_7d">近 7 天成本</span><span id="cost-week" class="num">$0.00</span></div>
     </div>
 
-    <div id="trend" data-i18n-title="trend_title"></div>
-    <div class="label-row"><span data-i18n="tok_today">今日 tokens</span><span id="tok-today" class="num">0</span></div>
-    <div class="label-row"><span data-i18n="last7">近 7 天</span><span id="tok-week" class="num">0</span></div>
-    <div class="label-row"><span data-i18n="models">模型</span></div>
-    <div id="models" class="model-list"></div>
+    <div class="divider"></div>
 
-    <!-- Setup lives in Settings now (ADR-0014). The account row, connect button, hook row and install
-         buttons were one-time things nobody looks at twice, permanently parked on the surface you open
-         every day — and they're what overflowed it. What's left here is only ever an INVITATION: one
-         line, shown only while something actually needs doing, that takes you where you can do it. -->
+    <div class="label-row"><span data-i18n="tok_today">今日 tokens</span><span id="tok-today" class="num">0</span></div>
+    <div id="trend" data-i18n-title="trend_title"></div>
+
+    <!-- Shown only while something genuinely needs doing; takes you to the Settings tab that needs it,
+         and disappears for good once it's done. -->
     <div class="setup-line hidden" id="setup-line">
       <span id="setup-text"></span>
       <span class="setup-go">→</span>
@@ -55,6 +46,16 @@
         <span id="sessions-count" class="num small"></span>
       </div>
       <div id="session-list"></div>
+    </div>
+
+    <!-- Settings goes LAST and quiet. Frequency decides placement: you check your quota daily and
+         open Settings once. It used to be a gear in the header — the first thing your eye landed on,
+         for the thing you almost never click. (It also used to be reachable ONLY from the tray, which
+         was a hole, not an inconvenience.) -->
+    <div class="divider"></div>
+    <div class="settings-row" id="open-settings" role="button" tabindex="0">
+      <span class="settings-ico" aria-hidden="true">⚙</span>
+      <span data-i18n="settings">设置</span>
     </div>
   </div>
 

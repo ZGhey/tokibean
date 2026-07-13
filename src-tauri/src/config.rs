@@ -20,11 +20,15 @@ pub const MIN_WIN_W: f64 = 240.0;
 /// `PANEL_MAX_H - 60` — and PANEL_MAX_H lives twice on the frontend, in src/main.js and as the
 /// `body.prealloc #panel` max-height in style.css. All three are one fact; keep them in step.
 ///
-/// Sized for the worst panel a user actually sees, MEASURED: two quota cards, the update banner, the
-/// setup line and a five-session list came to 399px, and PANEL_MAX_H (500) leaves headroom for a
-/// longer session list. Setup moved to the Settings window (ADR-0014), which is why this can now be
-/// small AND safe — the panel no longer carries the one-time UI that used to overflow it.
-pub const PANEL_ALLOWANCE: f64 = 440.0;
+/// Sized for the worst panel a REAL user has — a connected account with both agents runs to ~580px.
+///
+/// An earlier attempt measured a SYNTHETIC panel at 399px and set this to 440; a real panel promptly
+/// overflowed it, because the mock had omitted the weekly-quota row, the model breakdown, and reset
+/// lines that wrap. Measure the thing, not a model of the thing.
+///
+/// This is `PANEL_MAX_H - 60` (the panel's negative margin-bottom); PANEL_MAX_H lives in src/main.js
+/// and as the `body.prealloc #panel` max-height in style.css. All three are one fact.
+pub const PANEL_ALLOWANCE: f64 = 580.0;
 /// Collapsed window height used by every build before the pet-size setting existed (0.4.4).
 /// A config with `pet_scale: None` had its position saved against a window this tall.
 pub const LEGACY_BASE_H: f64 = 340.0;

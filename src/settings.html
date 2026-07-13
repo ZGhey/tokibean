@@ -138,6 +138,14 @@
       <label id="l-claude-acct">Claude 账号</label>
       <button class="act ghost" id="claude-connect"></button>
     </div>
+    <div class="row">
+      <label id="l-claude-mode">计费模式</label>
+      <select id="cfg-mode">
+        <option value="auto">自动检测</option>
+        <option value="subscription">订阅(Pro/Max)</option>
+        <option value="api">API 计费</option>
+      </select>
+    </div>
     <div class="row" id="claude-dir-row">
       <label id="l-claude-dir">配置目录</label>
       <span class="dir" id="claude-dir"></span>
@@ -216,6 +224,10 @@
         hooks: ["Hooks", "Hooks"],
         acct: ["Claude 账号", "Claude account"],
         cfg_dir: ["配置目录", "Config directory"],
+        mode: ["计费模式", "Billing"],
+        m_auto: ["自动检测", "Auto-detect"],
+        m_sub: ["订阅(Pro/Max)", "Subscription (Pro/Max)"],
+        m_api: ["API 计费", "API billing"],
         st_active: ["已生效", "Active"],
         st_pending: ["待批准", "Awaiting approval"],
         st_ready: ["已安装 hooks · 等待首个事件", "Hooks installed · waiting for the first event"],
@@ -284,6 +296,12 @@
       el("l-claude-hooks").textContent = t("hooks");
       el("l-codex-hooks").textContent = t("hooks");
       el("l-claude-acct").textContent = t("acct");
+      el("l-claude-mode").textContent = t("mode");
+      const mopts = { auto: "m_auto", subscription: "m_sub", api: "m_api" };
+      for (const o of el("cfg-mode").options) o.textContent = t(mopts[o.value] || o.value);
+      el("cfg-mode").addEventListener("change", (e) => {
+        invoke("set_mode", { mode: e.target.value }).catch((err) => (el("result").textContent = String(err)));
+      });
       el("claude-note").textContent = t("claude_note");
       el("codex-note").textContent = t("codex_note");
 
@@ -485,6 +503,7 @@
         el("cfg-size").value = String(c.pet_scale || 0.75);
         if (c.boss_key) { bossKeyAccel = c.boss_key; bossInput.value = prettyAccel(c.boss_key); }
         connected = !!c.connected;
+        if (c.mode) el("cfg-mode").value = c.mode;
         renderClaudeAccount();
       });
       // Reflect the real OS-level autostart state, not a stored copy

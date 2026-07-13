@@ -55,7 +55,7 @@ body {
    too low, the panel silently scrolls and a new user never sees the connect / install buttons — which
    is exactly what happened when the Codex block and the per-agent quota cards pushed a fresh install's
    panel to 569px against a 430px cap. */
-body.prealloc #panel { max-height: 500px; overflow-y: auto; }
+body.prealloc #panel { max-height: 640px; overflow-y: auto; }
 
 /* Panel below the pet — used when there's no room above (pet near the screen top):
    flip the stack so the pet is on top and the panel hangs below it */
@@ -277,27 +277,67 @@ button:active { transform: scale(0.98); }
 }
 #trend span.today.all-codex { background: #6fa3bd; }
 
-/* Settings gear in the panel header. Previously the Settings window could only be opened from the
-   tray menu — a user who never thinks to click a tray icon had no way in at all. */
-.row.head { gap: 6px; }
-.gear {
-  width: auto; margin: 0; padding: 2px 6px; line-height: 1;
-  background: none; border: none; color: #8a8478; font-size: 14px; cursor: pointer;
-  transition: color 0.15s, transform 0.15s;
+/* Settings, last and quiet. Frequency decides placement: you check your quota daily and open Settings
+   once. It used to be a gear in the header — the first thing your eye landed on, for the thing you
+   almost never click. */
+.settings-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 0 2px;
+  color: #8a8478; font-size: 11.5px; cursor: pointer;
+  transition: color 0.15s;
 }
-.gear:hover { background: none; color: #e8916c; transform: rotate(30deg); }
-.gear:active { transform: rotate(30deg) scale(0.92); }
+.settings-row:hover { color: #e8916c; }
+.settings-row .settings-ico { font-size: 12px; line-height: 1; transition: transform 0.25s; }
+.settings-row:hover .settings-ico { transform: rotate(45deg); }
 
-/* The one line the panel keeps about setup: an invitation, shown only while something needs doing,
-   that takes you to the place where you can do it. It disappears for good once you have. */
+/* ---- Weekly quota: a different SHAPE, not just a different colour ----------------------------
+   The 5-hour window is ten DISCRETE blocks (.pixel-bar): time you spend a block at a time.
+   The weekly quota is one CONTINUOUS rail: a reservoir draining over the week.
+
+   They are different quantities with different consequences — running out of the 5-hour window costs
+   you five hours, running out of the weekly one locks you out for the rest of the week. Drawn alike,
+   the eye reads them as the same measure and compares them; drawn as blocks-vs-rail it reads them as
+   "how much of today" vs "how much of the week", which is what they are. Colour alone can't carry
+   that distinction — at a glance, and for a colourblind user, only the geometry survives. */
+.week { margin-top: 8px; padding-left: 8px; border-left: 2px solid #3a3630; }
+.week-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  color: #8a8478; font-size: 11px;
+}
+.week-num { font-size: 11px; color: #b3aca0; }
+.week-rail {
+  height: 4px; margin-top: 4px;
+  background: #2f2c28;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.week-rail > i {
+  display: block; height: 100%;
+  background: #7d8fa8;               /* cool, quiet — not the 5h bar's orange: a different measure */
+  border-radius: 2px;
+  transition: width 0.4s ease-out;
+}
+/* The weekly cap is the harsher one, so it escalates earlier — and the number turns with it, so the
+   warning survives without colour. */
+.week.warn .week-rail > i { background: #e0a63b; }
+.week.warn .week-num { color: #e0a63b; }
+.week.full .week-rail > i { background: #d05045; }
+.week.full .week-num { color: #d05045; }
+
+/* The one line the panel keeps about setup. It answers a question nothing else can — "why isn't my
+   pet moving?" — because without hooks the numbers still work (Claude's quota comes from the API, not
+   from hooks) and only the pet is dead. Numbers fine, pet dead, no explanation anywhere.
+
+   But it is a FOOTNOTE, not an alarm. It used to be a bordered, filled, rounded box: it read as an
+   error dialog and carried more visual weight than the numbers beside it, which are the reason you
+   opened the panel. A boxed alert is for something that has gone wrong — like the quota running out.
+   This is just a "by the way", so it looks like one: one quiet line, same weight as the settings row. */
 .setup-line {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  margin-top: 10px; padding: 8px 10px;
-  border: 1px solid rgba(224, 166, 59, 0.45);
-  border-radius: 8px;
-  background: rgba(224, 166, 59, 0.10);
-  color: #e0a63b; font-size: 11.5px; line-height: 1.45;
+  margin-top: 8px; padding: 3px 0;
+  color: #b3893f; font-size: 11.5px; line-height: 1.45;
   cursor: pointer;
+  transition: color 0.15s;
 }
-.setup-line:hover { background: rgba(224, 166, 59, 0.18); }
-.setup-line .setup-go { flex: none; opacity: 0.8; }
+.setup-line:hover { color: #e0a63b; }
+.setup-line .setup-go { flex: none; opacity: 0.7; }

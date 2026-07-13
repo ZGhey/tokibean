@@ -33,11 +33,10 @@
     ],
     first_run_bubble: ["点我看用量!", "Click me for usage!"],
     no_window: ["暂无活动窗口", "No active window"],
-    week_quota: ["周额度", "Weekly quota"],
     // Cost is Claude-only: we model Anthropic's prices and nobody else's. The label says so,
     // so a two-agent token count next to a one-agent dollar figure can't read as a total.
     cost_today: ["今日成本(Claude)", "Today's cost (Claude)"],
-    last7: ["近 7 天", "Last 7 days"],
+    cost_7d: ["近 7 天成本", "Cost, last 7 days"],
     trend_title: ["近 7 天逐日用量", "Daily usage, last 7 days"],
     tok_today: ["今日 tokens", "Today's tokens"],
     models: ["模型", "Models"],
@@ -69,7 +68,6 @@
     connected_official: ["已连接·官方数据", "Connected · official data"],
     connected: ["已连接", "Connected"],
     authorizing: ["浏览器授权中…", "Authorizing in browser…"],
-    no_claude_data: ["没找到 ~/.claude 数据", "No ~/.claude data found"],
     hook_ok: ["已连通(最近:{ev})", "Connected (last: {ev})"],
     sessions_n: [" · {n} 会话", " · {n} sessions"],
     go_install: ["还没收到,去装 hooks →", "Nothing yet — install hooks →"],
@@ -87,6 +85,8 @@
     update_checking: ["检查更新中…", "Checking for updates…"],
     update_error: ["检查更新失败,点重试", "Update check failed — retry"],
     settings: ["设置", "Settings"],
+    // Weekly cap is the harsher limit — running out locks you out for the WEEK, not five hours.
+    week_quota: ["周额度", "Weekly"],
     sessions_label: ["会话", "Sessions"],
     st_working: ["工作中", "working"],
     st_waiting: ["等你输入", "waiting"],
@@ -252,7 +252,8 @@
     return t("win_mins", { n: mins });
   }
 
-  /// One quota card: title, percentage, 10-cell pixel bar, reset line.
+  /// One quota card: title, percentage, the 10-cell pixel bar, the reset line — and, for Claude, the
+  /// weekly rail underneath.
   function buildQuotaCard(q) {
     const card = document.createElement("div");
     card.className = "quota-card";
@@ -268,6 +269,8 @@
     head.appendChild(title);
     head.appendChild(pct);
 
+    // The 5-hour window: DISCRETE blocks. Ten of them, chunky, gapped — time you spend a block at a
+    // time, in the pet's own pixel language.
     const bar = document.createElement("div");
     bar.className = "pixel-bar";
     bar.setAttribute("aria-label", t("usage_aria"));
@@ -290,22 +293,45 @@
     card.appendChild(bar);
     card.appendChild(hint);
 
-    // Claude's official mode also exposes a weekly quota
+    // The WEEKLY quota (Claude, official mode). Deliberately a different SHAPE, not just a different
+    // colour: a thin CONTINUOUS rail, not ten discrete blocks.
+    //
+    // They are different quantities with different consequences — running out of the 5-hour window
+    // costs you five hours; running out of the weekly one locks you out for the rest of the week. Drawn
+    // identically, the eye reads them as the same measure and compares them. Drawn as blocks-vs-rail,
+    // it reads them as "how much of today" vs "how much of the week", which is what they are.
+    //
+    // (Colour alone can't carry this: a colourblind user, or anyone glancing, sees only the geometry.)
     if (q.week_pct !== null && q.week_pct !== undefined) {
-      const week = document.createElement("div");
-      week.className = "label-row";
+      const wk = document.createElement("div");
+      wk.className = "week";
+      const wrow = document.createElement("div");
+      wrow.className = "week-row";
       const wl = document.createElement("span");
       wl.textContent = t("week_quota");
       const wv = document.createElement("span");
-      wv.className = "num";
+      wv.className = "num week-num";
       wv.textContent = Math.round(q.week_pct * 100) + "%";
-      week.appendChild(wl);
-      week.appendChild(wv);
-      card.appendChild(week);
+      wrow.appendChild(wl);
+      wrow.appendChild(wv);
+
+      const rail = document.createElement("div");
+      rail.className = "week-rail";
+      const fill = document.createElement("i");
+      fill.style.width = Math.min(q.week_pct, 1) * 100 + "%";
+      // The weekly cap is the harsher one — escalate earlier and say so in text, not just in colour.
+      if (q.week_pct >= 1.0) wk.classList.add("full");
+      else if (q.week_pct >= 0.8) wk.classList.add("warn");
+      rail.appendChild(fill);
+
+      wk.appendChild(wrow);
+      wk.appendChild(rail);
+      card.appendChild(wk);
     }
     return card;
   }
 
+  /// The line under a quota bar: when it resets, and what the percentage is based on.
   function resetLine(q) {
     if (q.reset_ts > 0) {
       const left = q.reset_ts - Math.floor(Date.now() / 1000);
@@ -325,7 +351,20 @@
   function renderQuotas(quotas) {
     const box = el("sub-block");
     box.textContent = "";
-    for (const q of quotas || []) box.appendChild(buildQuotaCard(q));
+    // No basis, no card. An "--%" card is an empty seat: it takes the space where the number belongs
+    // and tells you nothing. The setup line below says what to do about it instead.
+    const real = (quotas || []).filter((q) => q.pct_valid);
+    real.forEach((q, i) => {
+      // A divider between agents, so Claude's block and Codex's read as separate things rather than
+      // one continuous list of bars.
+      if (i > 0) {
+        const d = document.createElement("div");
+        d.className = "divider";
+        box.appendChild(d);
+      }
+      box.appendChild(buildQuotaCard(q));
+    });
+    box.classList.toggle("hidden", !real.length);
   }
 
   // Per-session list: one row per parallel session — its state icon, what it's running
@@ -408,8 +447,6 @@
     if (!u) return;
 
     const isSub = u.mode === "subscription";
-    el("mode-badge").textContent = isSub ? t("badge_sub") : "API";
-    el("sub-block").classList.toggle("hidden", !isSub);
     el("api-block").classList.toggle("hidden", isSub);
 
     // Whether a percentage is trustworthy is decided by the backend (projection::usage_flags) and
@@ -444,25 +481,6 @@
       }
     }
     el("tok-today").textContent = fmtTokens(u.today_tokens);
-    el("tok-week").textContent = fmtTokens(u.week_tokens);
-    const mbox = el("models");
-    mbox.textContent = "";
-    if (u.models.length) {
-      u.models.forEach((m) => {
-        const line = document.createElement("div");
-        const name = document.createElement("span");
-        name.className = "m-name";
-        name.textContent = "· " + m.model;
-        const val = document.createElement("span");
-        val.textContent = fmtTokens(m.tokens);
-        line.appendChild(name);
-        line.appendChild(val);
-        mbox.appendChild(line);
-      });
-    } else {
-      mbox.textContent = u.has_data ? "--" : t("no_claude_data");
-    }
-
     renderSetupLine();
 
     // In-app updater row: only visible when an update is actually pending / downloading.
@@ -527,14 +545,16 @@
   //   · `body.prealloc #panel { max-height }` in style.css   (must equal PANEL_MAX_H)
   //   · the panel allowance in src-tauri/src/main.rs's setup  (must equal PANEL_MAX_H - PANEL_OVERLAP)
   //
-  // Sized for the WORST panel a user actually sees, MEASURED, not guessed: two quota cards, the
-  // update banner, the setup line and a five-session list came to 399px. The rest is headroom for a
-  // longer session list; anything past PANEL_MAX_H scrolls inside the panel rather than being cut off.
+  // Sized for the WORST panel a real user actually has. Note "real": an earlier attempt measured a
+  // SYNTHETIC panel (two quota cards, banner, setup line, five sessions) at 399px and set the cap to
+  // 500 — and a real one promptly overflowed it, because the mock had left out the weekly-quota row,
+  // the three-model breakdown, and reset lines that wrap to two lines. A real connected account with
+  // both agents runs to ~580px. Measure the thing, not a model of the thing.
   //
-  // It used to be 430, which a fresh install's panel (569px) silently overflowed — and what scrolled
-  // out of sight was the connect/install buttons a new user needs. Those have since moved to Settings
-  // (ADR-0014), which is why this number can now be small AND safe rather than large and hopeful.
-  const PANEL_MAX_H = 500;
+  // Past this the panel scrolls internally rather than being cut off — the backstop for a long
+  // session list. But scrolling is a LAST RESORT, not the plan: whatever scrolls out of sight is, by
+  // definition, the top of the panel, and the top is where the headline numbers are.
+  const PANEL_MAX_H = 640;
   const PANEL_OVERLAP = 60; // #panel's negative margin-bottom in style.css
 
   let BASE_H, WIN_W, CANVAS_H, PAD_B, PET_CANVAS_TOP, FULL_H, COLLAPSED_H;
@@ -676,6 +696,7 @@
         // so it never flashes above then jumps below; then fade it in at the final spot.
         panel.style.opacity = "0";
         panel.classList.remove("hidden");
+        panel.scrollTop = 0; // if it ever does scroll, never open it scrolled past the headline numbers
         // The user wants to see data: ask the backend to refresh official usage once (it's debounced)
         invoke("panel_opened").catch(() => {});
         // Keep the whole window interactive while open so panel hover is reliable at any height
@@ -856,11 +877,7 @@
     tickleUntil = 0;
   });
 
-  el("mode-select").addEventListener("change", (e) => {
-    invoke("set_mode", { mode: e.target.value }).catch(() => {});
-  });
-
-  // The gear, and the setup line, both land in Settings — the setup line on the tab that needs work.
+  // Settings, and the setup line, both land in Settings — the setup line on the tab that needs work.
   el("open-settings").addEventListener("click", (e) => {
     e.stopPropagation();
     invoke("open_settings_window_on", { tab: "general" }).catch(() => {});
@@ -984,6 +1001,12 @@
     if (newSkin && newSkin !== currentSkin) return location.reload();
     invoke("get_config").then(applyConfig).catch(() => {});
   });
+
+
+
+
+
+
 
   // ---------- 8-bit sound effects (WebAudio, no audio files) ----------
   let audioCtx = null;

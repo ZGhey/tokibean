@@ -79,6 +79,7 @@ fn get_config(app: AppHandle) -> serde_json::Value {
         "block_limit": cfg.block_limit,
         "connected": !cfg.oauth_access.is_empty(),
         "onboarded": cfg.onboarded,
+        "mode": cfg.mode,
         "lang": i18n::tag(),
     })
 }
