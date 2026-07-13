@@ -41,6 +41,12 @@
       "Codex 的 hooks 还没生效 —— 需要你在 Codex 里批准",
       "Codex's hooks aren't live yet — Codex needs you to approve them",
     ],
+    // The upgrade trap: we rewrote the hooks, so Codex re-armed its review and silently stopped
+    // running them. Codex says nothing, and the pet would just look broken.
+    setup_codex_reapprove: [
+      "Codex 的 hooks 变了 —— 要在 Codex 里重新批准一次",
+      "Codex's hooks changed — approve them again in Codex",
+    ],
     first_run_bubble: ["点我看用量!", "Click me for usage!"],
     no_window: ["暂无活动窗口", "No active window"],
     // Cost is Claude-only: we model Anthropic's prices and nobody else's. The label says so,
@@ -181,6 +187,18 @@
   let lastMX = 0, lastMY = 0, tickleUntil = 0; // fast-wiggle (tickle) detection
 
   // ---------- Animation loop ----------
+  // Size of the pet's own labels (bubble, "❯ cmd…", tool tag). The pet's ART is sized separately by
+  // pet_scale — this is only the type, for anyone who can read the pet fine but not the words on it.
+  // MUST be declared above loop(): `let` has no hoisted initialisation, so a declaration further down
+  // the file puts every frame in its temporal dead zone — the first draw throws and the pet vanishes.
+  let textScale = 1;
+
+  // Skins that bring their own draw() never see `extra`, so hand PetKit the value directly too.
+  function applyTextScale(v) {
+    textScale = Number(v) > 0 ? Number(v) : 1;
+    if (window.PetKit && window.PetKit.setTextScale) window.PetKit.setTextScale(textScale);
+  }
+
   function loop() {
     frame++;
     window.PetRenderer.draw(ctx, canvas, cur.state, cur.warn, cur.bubble, frame, {
@@ -198,6 +216,7 @@
       tickle: performance.now() < tickleUntil,
       dragging,
       pat,
+      textScale,
     });
     requestAnimationFrame(loop);
   }
@@ -449,8 +468,17 @@
           ? t("setup_hooks_site", { s: siteLabel(gaps[0]) })
           : t("setup_hooks", { a: AGENT_NAME[needsHooks.agent] || needsHooks.agent });
         tab = needsHooks.agent;
-      } else if (codex && !seen.includes("codex")) {
-        // Written, but Codex won't run a hook until it's approved. Nothing else will tell them.
+      } else if (codex && codex.approval === "stale") {
+        // We rewrote the hooks (an upgrade, or a pollution cleanup), which re-arms Codex's review.
+        // It will keep printing `hook: … Completed` while running nothing. Say so even if events
+        // arrived earlier today — those were the OLD, approved hooks.
+        text = t("setup_codex_reapprove");
+        tab = "codex";
+      } else if (codex && !seen.includes("codex") && codex.approval !== "recorded") {
+        // Written, but never approved, and Codex won't run a hook until it is. Nothing else tells
+        // them. Once Codex has an approval on record we go quiet — nagging a user to do a thing he
+        // has already done is how a panel teaches people to ignore it. (Approved-but-no-event-yet is
+        // not an error state; it resolves itself the moment he runs anything.)
         text = t("setup_codex_approve");
         tab = "codex";
       }
@@ -992,6 +1020,7 @@
   function applyConfig(c) {
     soundOn = c.sound;
     currentSkin = c.skin || "classic";
+    applyTextScale(typeof c.text_scale === "number" ? c.text_scale : 1);
     applyScale(typeof c.pet_scale === "number" ? c.pet_scale : DEFAULT_SCALE).catch(() => {});
   }
 

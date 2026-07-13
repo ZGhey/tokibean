@@ -21,6 +21,22 @@
 (function () {
   const S = 4;            // pixel scale factor
   const GY = 42;          // grid row of the ground
+
+  // Text scale for the pet's own labels — the bubble, the "❯ cmd…" status tag, the tool tag.
+  // Set from extra.textScale each frame (1 = the original sizes). The pet's ART never scales with
+  // this: it's the pixel character, and stretching its geometry to make words bigger would be a
+  // different pet. Only type grows.
+  //
+  // The canvas is a fixed 200 CSS px wide no matter how large the pet is drawn (enlargement is a CSS
+  // transform — see applyCanvasScale in main.js), so bigger type has strictly less room, not more.
+  // Every box below therefore measures its text and CLAMPS to the canvas: `fit()` is the one place
+  // that promises a box cannot grow out of frame, whatever the user picks.
+  let TS = 1;
+  const fs = (base) => Math.round(base * TS);            // font size at the current text scale
+  const sz = (base) => Math.round(base * TS);            // paddings / line heights, likewise
+  const fit = (w, W) => Math.min(w, W - 8);              // never wider than the canvas
+  const clampX = (x, w, W) => Math.min(Math.max(x, 4), Math.max(4, W - w - 4));
+
   const C = "#f2823e";    // persimmon orange (拱门·墩墩)
   const K = "#26221d";    // eyes
   const AMBER = "#e0a63b";
@@ -230,11 +246,11 @@
   function bubbleBox(ctx, canvas, text, cx, topPx) {
     // Note: at high DPI canvas.width is physical pixels, so lay out with the CSS logical width
     const W = canvas.clientWidth || canvas.width;
-    ctx.font = "12px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    ctx.font = fs(12) + "px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
     // Word-aware wrap: keep Latin words whole (never split mid-word), break CJK per character
     // (no spaces to break on) and at spaces; max 3 lines, ellipsize any overflow. Can't use
     // fillText's maxWidth to squeeze — Chinese would get crushed together.
-    const maxW = W - 28;
+    const maxW = W - 8 - sz(20); // the box is text + sz(20) padding, and fit() caps it at W - 8
     const isCJK = (ch) => {
       const c = ch.codePointAt(0);
       return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) ||
@@ -280,13 +296,10 @@
       while (last && ctx.measureText(last + "…").width > maxW) last = last.slice(0, -1);
       lines[lines.length - 1] = last + "…";
     }
-    const lineH = 16;
-    const w = Math.min(
-      Math.max(...lines.map((l) => ctx.measureText(l).width)) + 20,
-      W - 8
-    );
-    const h = lines.length * lineH + 8;
-    const x = Math.min(Math.max(cx * S - w / 2, 4), W - w - 4);
+    const lineH = sz(16);
+    const w = fit(Math.max(...lines.map((l) => ctx.measureText(l).width)) + sz(20), W);
+    const h = lines.length * lineH + sz(8);
+    const x = clampX(cx * S - w / 2, w, W);
     const y = Math.max(topPx - h - 24, 2); // clear the dome (~16px above the body top) with a small gap
     ctx.fillStyle = "rgba(24,22,20,0.92)";
     ctx.strokeStyle = "rgba(217,119,87,0.6)";
@@ -296,42 +309,50 @@
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#e8e2d8";
-    lines.forEach((l, i) => ctx.fillText(l, x + 10, y + 16 + i * lineH));
+    lines.forEach((l, i) => ctx.fillText(l, x + sz(10), y + sz(16) + i * lineH));
   }
 
   // Top-right status box: terminal-style "❯ cmd..." green text + animated ellipsis
   function statusTag(ctx, canvas, cx, y0, text, t) {
     if (bulbT > 0) return; // yield during the lightbulb moment, don't overlap the status box
     const W = canvas.clientWidth || canvas.width;
-    ctx.font = "bold 12px Consolas, monospace";
+    ctx.font = "bold " + fs(12) + "px Consolas, monospace";
     const dots = ".".repeat(Math.floor(t / 20) % 4);
     text = "❯ " + text;
-    const w = ctx.measureText(text + "...").width + 12;
-    const bx = Math.min((cx + 13) * S, W - w - 4);
+    // Reserve the widest ellipsis state so the box doesn't twitch wider as the dots animate
+    const w = fit(ctx.measureText(text + "...").width + sz(12), W);
+    const h = sz(20);
+    const bx = clampX((cx + 13) * S, w, W);
     const by = Math.max((y0 - 13) * S, 2);
     ctx.fillStyle = "rgba(18,16,14,0.95)";
     ctx.strokeStyle = "rgba(122,222,122,0.45)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(bx, by, w, 20, 4);
+    ctx.roundRect(bx, by, w, h, 4);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#7ade7a";
-    ctx.fillText(text + dots, bx + 6, by + 14);
+    ctx.fillText(text + dots, bx + sz(6), by + h - sz(6));
   }
 
   // Small tooltip label (one size smaller than the bubble, doesn't steal the show)
   function toolTag(ctx, canvas, text, cx, topPx) {
-    ctx.font = "11px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    // Lay out against the CSS width, like every other box here. This used to read canvas.width —
+    // PHYSICAL pixels — so on any HiDPI screen the right-edge clamp was computed against a number
+    // 2-3x too large and simply never bit. Invisible at 11px; not invisible once the text can scale.
+    const W = canvas.clientWidth || canvas.width;
+    ctx.font = fs(11) + "px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
     const tw = ctx.measureText(text).width;
-    const x = Math.min(Math.max(cx * S - (tw + 12) / 2, 4), canvas.width - tw - 16);
+    const w = fit(tw + sz(12), W);
+    const h = sz(17);
+    const x = clampX(cx * S - w / 2, w, W);
     const y = Math.max(topPx - 24, 2);
     ctx.fillStyle = "rgba(24,22,20,0.82)";
     ctx.beginPath();
-    ctx.roundRect(x, y, tw + 12, 17, 6);
+    ctx.roundRect(x, y, w, h, 6);
     ctx.fill();
     ctx.fillStyle = "#c9b79a";
-    ctx.fillText(text, x + 6, y + 13);
+    ctx.fillText(text, x + sz(6), y + h - sz(4));
   }
 
   let blinkT = 0;
@@ -599,7 +620,13 @@
     }
   }
 
+  function setTextScale(n) {
+    const v = Number(n);
+    TS = v >= 0.8 && v <= 2 ? v : 1;   // a hand-edited config can't blow the labels off the canvas
+  }
+
   function draw(ctx, canvas, state, warn, bubble, t, extra) {
+    if (extra && extra.textScale) setTextScale(extra.textScale);
     const x = extra || {};
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const baseCx = 25;
@@ -1117,5 +1144,8 @@
   window.PetRenderer = { draw };
   // Shared drawing toolkit: reusable by skin files (pixels, bubbles, status box, hearts, Zzz, confetti,
   // and the calendar ambience — call ambient(ctx, canvas, t) early in a skin's draw for moon/season/festival).
-  window.PetKit = { S, GY, px, heart, zzz, bubbleBox, statusTag, confetti, isNight, ambient, moonPhase, drawMoon, season, festival, weather, drawWeather };
+  // setTextScale is how a skin with its own draw() (bean, tabby) still gets the user's text size:
+  // main.js calls it whenever the setting changes. The default skin's draw() also reads
+  // extra.textScale, so a skin that ignores PetKit entirely can still be handed the value.
+  window.PetKit = { S, GY, px, heart, zzz, bubbleBox, statusTag, confetti, isNight, ambient, moonPhase, drawMoon, season, festival, weather, drawWeather, setTextScale };
 })();

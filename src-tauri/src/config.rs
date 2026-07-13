@@ -140,6 +140,12 @@ pub struct Config {
     /// was always LEGACY_BASE_H tall) — that's the signal for the one-time position migration in
     /// main.rs, so keep it an Option rather than defaulting it away.
     pub pet_scale: Option<f64>,
+    /// Size of the pet's TYPE — the bubble, the "❯ cmd…" status tag, the tool tag. Separate from
+    /// `pet_scale`, which sizes the pixel ART: someone can see the pet perfectly well and still not
+    /// be able to read a 12px label, and blowing up the character to fix that is the wrong lever.
+    /// Steps: 1.0 / 1.2 / 1.4. Clamped by `text_scale()`, since config.json is hand-editable and an
+    /// absurd value would push the labels clean off a canvas that never gets any wider.
+    pub text_scale: Option<f64>,
     /// Boss key (global shortcut) accelerator string, e.g. "CommandOrControl+Shift+B".
     /// Summons/hides the pet in one press; same format as a Tauri accelerator (Cmd/Ctrl/Alt/Shift + key)
     pub boss_key: String,
@@ -188,6 +194,7 @@ impl Default for Config {
             sound: false,
             skin: "classic".into(),
             pet_scale: None,
+            text_scale: None,
             boss_key: "CommandOrControl+Shift+B".into(),
             skip_version: String::new(),
             pos_x: None,
@@ -278,6 +285,15 @@ impl Config {
             s if (s - 1.0).abs() < 0.01 => 1.0,
             s if (s - 1.25).abs() < 0.01 => 1.25,
             _ => DEFAULT_SCALE,
+        }
+    }
+
+    /// Pet label size, snapped to a valid step (see the field). Mirrors `scale()`'s discipline.
+    pub fn text_scale(&self) -> f64 {
+        match self.text_scale.unwrap_or(1.0) {
+            s if (s - 1.2).abs() < 0.01 => 1.2,
+            s if (s - 1.4).abs() < 0.01 => 1.4,
+            _ => 1.0,
         }
     }
 

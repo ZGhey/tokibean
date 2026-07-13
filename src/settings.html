@@ -133,6 +133,14 @@
         <option value="1.25">特大</option>
       </select>
     </div>
+    <div class="row">
+      <label id="l-textsize">文字大小</label>
+      <select id="cfg-textsize">
+        <option value="1">正常(默认)</option>
+        <option value="1.2">大</option>
+        <option value="1.4">特大</option>
+      </select>
+    </div>
   </div>
 
   <!-- Claude Code -->
@@ -229,6 +237,10 @@
         z_normal: ["中(默认)", "Normal (default)"],
         z_large: ["大", "Large"],
         z_xlarge: ["特大", "Extra large"],
+        textsize: ["文字大小", "Text size"],
+        t_normal: ["正常(默认)", "Normal (default)"],
+        t_large: ["大", "Large"],
+        t_xlarge: ["特大", "Extra large"],
         press: ["按下快捷键…", "Press a shortcut…"],
         hk_ok: ["快捷键已更新:{k}", "Hotkey updated: {k}"],
         hk_fail: ["快捷键设置失败:{e}", "Failed to set hotkey: {e}"],
@@ -244,6 +256,12 @@
         m_api: ["API 计费", "API billing"],
         st_active: ["已生效", "Active"],
         st_pending: ["待批准", "Awaiting approval"],
+        st_approved: ["已批准 · 等第一个事件", "Approved · waiting for the first event"],
+        codex_reapprove: [
+          "hooks 已经变了(升级或清理导入的副本),Codex 会重新要求批准 —— 在 Codex 里再执行一次 /hooks 批准它们,否则它会照常打印 Completed 却什么都不做。",
+          "The hooks changed (an upgrade, or cleaning up Codex's imported copies), so Codex re-armed its review: run /hooks inside Codex and approve them again. Until you do, it will print `Completed` for hooks it never ran.",
+        ],
+        st_reapprove: ["hooks 已变更 · 需在 Codex 里重新批准", "Hooks changed · re-approve in Codex"],
         st_ready: ["已安装 hooks · 等待首个事件", "Hooks installed · waiting for the first event"],
         st_need_hooks: ["已检测到 · hooks 还没装", "Detected · hooks not installed"],
         st_absent: ["未检测到", "Not detected"],
@@ -315,6 +333,9 @@
       el("l-size").textContent = t("size");
       const zopts = { "0.5": "z_small", "0.75": "z_normal", "1": "z_large", "1.25": "z_xlarge" };
       for (const o of el("cfg-size").options) o.textContent = t(zopts[o.value] || o.value);
+      el("l-textsize").textContent = t("textsize");
+      const topts = { "1": "t_normal", "1.2": "t_large", "1.4": "t_xlarge" };
+      for (const o of el("cfg-textsize").options) o.textContent = t(topts[o.value] || o.value);
       for (const a of ["claude", "codex"]) {
         el("l-" + a + "-state").textContent = t("state");
         el("l-" + a + "-dir").textContent = t("cfg_dir");
@@ -416,8 +437,16 @@
           cls = "absent"; text = t("st_absent");
         } else if (presence.hooks_incomplete) {
           cls = "pending"; text = t("st_need_hooks");
+        } else if (a === "codex" && presence.approval === "stale") {
+          // We rewrote the hooks since Codex last approved them, so it re-armed its review and is
+          // now running nothing — even if events arrived before. Outranks "active" for that reason.
+          cls = "pending"; text = t("st_reapprove");
         } else if (seen) {
           cls = "ok"; text = t("st_active");
+        } else if (a === "codex" && presence.approval === "recorded") {
+          // Codex has an approval on record and the hooks haven't changed since. Still not "active"
+          // — no event has arrived — but telling him to go approve them would be a lie.
+          cls = "ok"; text = t("st_approved");
         } else if (a === "codex") {
           // Codex hashes each hook and won't run it until you approve it — written is NOT live.
           cls = "pending"; text = t("st_pending");
@@ -450,10 +479,19 @@
           ? t(a === "codex" ? "codex_note" : "claude_note")
           : t(a === "codex" ? "absent_codex" : "absent_claude");
 
-        // Codex's trust gate gets its instruction right where the user is stuck.
-        if (a === "codex" && here && !presence.hooks_incomplete && !seen) {
-          el("codex-note").textContent = t("codex_approve");
-          el("codex-note").classList.add("step");
+        // Codex's trust gate gets its instruction right where the user is stuck — but ONLY while he
+        // is actually stuck. Telling someone to go approve hooks that Codex already has on record
+        // (approval === "recorded") contradicts the green status line right above it, and teaches him
+        // that this panel doesn't know what it's talking about.
+        if (a === "codex" && here && !presence.hooks_incomplete) {
+          const step =
+            presence.approval === "stale"
+              ? t("codex_reapprove")                                   // we changed them; gate re-armed
+              : presence.approval !== "recorded" && !seen
+                ? t("codex_approve")                                   // never approved
+                : "";                                                  // nothing for him to do
+          el("codex-note").classList.toggle("step", !!step);
+          if (step) el("codex-note").textContent = step;
         } else if (a === "codex") {
           el("codex-note").classList.remove("step");
         }
@@ -545,6 +583,7 @@
           sound: el("cfg-sound").checked,
           skin: el("cfg-skin").value,
           petScale: parseFloat(el("cfg-size").value) || 0.75,
+          textScale: parseFloat(el("cfg-textsize").value) || 1,
         })
           .then(() => emit("config-changed", { skin: el("cfg-skin").value }))
           .catch((err) => (el("result").textContent = String(err)));
@@ -554,6 +593,7 @@
       el("cfg-sound").addEventListener("change", () => saveCfg());
       el("cfg-skin").addEventListener("change", () => saveCfg());
       el("cfg-size").addEventListener("change", () => saveCfg());
+      el("cfg-textsize").addEventListener("change", () => saveCfg());
 
       // Launch-at-login is OS-level (registry / LaunchAgent / .desktop), owned by the autostart
       // plugin — kept out of saveCfg/config.json so the two can't drift.
@@ -586,6 +626,7 @@
         el("cfg-sound").checked = c.sound;
         el("cfg-skin").value = c.skin || "classic";
         el("cfg-size").value = String(c.pet_scale || 0.75);
+        el("cfg-textsize").value = String(c.text_scale || 1);
         if (c.boss_key) { bossKeyAccel = c.boss_key; bossInput.value = prettyAccel(c.boss_key); }
         connected = !!c.connected;
         if (c.mode) el("cfg-mode").value = c.mode;
