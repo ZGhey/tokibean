@@ -259,13 +259,153 @@ fn message(p: &Plan) -> String {
     msg
 }
 
-/// Restore a Path import that only the tests use on some platforms.
-#[allow(dead_code)]
-fn _unused(_: &Path) {}
+// --- Has the user approved these hooks? -----------------------------------------------------------
+//
+// Codex records each approval in config.toml as
+//   [hooks.state."<hooks.json path>:<event>:<group>:<hook>"]  trusted_hash = "sha256:…"
+// and re-arms the review whenever a hook's hash changes. So the record is *readable* — but the hash
+// is taken over Codex's own NORMALIZED hook struct, not over the bytes in hooks.json, and
+// reproducing it would mean copying a private data model that is free to change in any Codex
+// release. Get that wrong and we'd claim "approved" for hooks Codex is quietly refusing to run —
+// worse than saying nothing.
+//
+// So we don't reproduce the hash. We read only what cannot be misread:
+//
+//   · No state entry for our hooks at all → they have NEVER been approved. Certain.
+//   · An entry exists, but hooks.json has been written since config.toml was → whatever was approved,
+//     it wasn't this. Codex sees a changed hash and re-arms the gate. Certain enough to act on, and
+//     it is the case that actually bites: we rewrite hooks on upgrade, and Codex then silently stops
+//     running them.
+//   · An entry exists and predates nothing → approved *as far as the record goes*. NOT "live" —
+//     that word still belongs to an arriving event (ADR-0006), and this never claims it.
+//
+// The asymmetry is the point: this can only ever understate how approved we are, never overstate it.
+
+/// What Codex's own records say about our hooks. Never says "live" — only an event says that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Approval {
+    /// Codex has no approval on record for our hooks: the user has never been through `/hooks`.
+    Never,
+    /// Approved once, but the hooks have been rewritten since — Codex has re-armed its review.
+    Stale,
+    /// On record as approved, and unchanged since. Still not proof any event will arrive.
+    Recorded,
+}
+
+/// The decision, separated from the filesystem so it can be tested. `hooks_written` / `state_written`
+/// are the mtimes of hooks.json and config.toml.
+fn decide(has_state: bool, hooks_written: Option<std::time::SystemTime>, state_written: Option<std::time::SystemTime>) -> Approval {
+    if !has_state {
+        return Approval::Never;
+    }
+    match (hooks_written, state_written) {
+        // We touched the hooks after Codex last recorded an approval → it will ask again.
+        (Some(h), Some(s)) if h > s => Approval::Stale,
+        // Can't read a timestamp: say the weaker thing, not the stronger one.
+        (None, _) | (_, None) => Approval::Recorded,
+        _ => Approval::Recorded,
+    }
+}
+
+/// Whether Codex's config.toml records an approval for a hook of ours — i.e. a `hooks.state` key
+/// naming OUR hooks.json. Plugins register under their own keys; those are not us.
+fn has_state_for(config_toml: &str, hooks_json: &Path) -> bool {
+    let needle = hooks_json.display().to_string();
+    config_toml
+        .lines()
+        .filter(|l| l.trim_start().starts_with("[hooks.state."))
+        .any(|l| l.contains(&needle))
+}
+
+/// Read Codex's approval record for our hooks. See the module note above for why this is deliberately
+/// pessimistic rather than exact.
+pub fn approval(cfg: &crate::config::Config) -> Approval {
+    let Some(hooks) = hooks_path(cfg) else { return Approval::Never };
+    let Some(dir) = hooks.parent() else { return Approval::Never };
+    let toml_path = dir.join("config.toml");
+    let Ok(toml) = fs::read_to_string(&toml_path) else {
+        return Approval::Never; // no config.toml → nothing has ever been approved
+    };
+    let mtime = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+    decide(
+        has_state_for(&toml, &hooks),
+        mtime(&hooks),
+        mtime(&toml_path),
+    )
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, SystemTime};
+
+    // --- Approval detection ---------------------------------------------------------------------
+
+    const REAL_STATE: &str = r#"
+[hooks.state]
+
+[hooks.state."/home/u/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:ddf7b3b8"
+enabled = true
+
+[hooks.state."security-guidance@claude-plugins-official:hooks/hooks.json:stop:0:0"]
+trusted_hash = "sha256:e1f574c0"
+"#;
+
+    fn t0() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
+    }
+
+    #[test]
+    fn no_record_means_never_approved() {
+        assert_eq!(decide(false, Some(t0()), Some(t0())), Approval::Never);
+    }
+
+    #[test]
+    fn hooks_rewritten_after_the_approval_needs_reapproving() {
+        // The upgrade case, and the one that actually bites: we rewrite hooks.json, Codex sees a hash
+        // it never approved, and silently stops running them. Nothing else would tell the user.
+        let later = t0() + Duration::from_secs(60);
+        assert_eq!(decide(true, Some(later), Some(t0())), Approval::Stale);
+    }
+
+    #[test]
+    fn an_untouched_approval_is_recorded() {
+        let earlier = t0() - Duration::from_secs(60);
+        assert_eq!(decide(true, Some(earlier), Some(t0())), Approval::Recorded);
+    }
+
+    #[test]
+    fn an_unreadable_timestamp_understates_rather_than_overstates() {
+        // We can't prove it's stale, so we don't say "go re-approve" — but note this is the WEAKER
+        // claim: Recorded never asserts the hooks are live. Only an arriving event does that.
+        assert_eq!(decide(true, None, Some(t0())), Approval::Recorded);
+        assert_eq!(decide(true, Some(t0()), None), Approval::Recorded);
+    }
+
+    #[test]
+    fn only_our_own_hooks_json_counts_as_our_approval() {
+        // A Codex PLUGIN's hooks are approved under the plugin's own key. Reading those as ours would
+        // report "approved" on a machine where the user never approved anything of ours.
+        let ours = Path::new("/home/u/.codex/hooks.json");
+        assert!(has_state_for(REAL_STATE, ours));
+
+        let elsewhere = Path::new("/home/other/.codex/hooks.json");
+        assert!(!has_state_for(REAL_STATE, elsewhere));
+
+        // The plugin lines alone must not read as an approval of ours
+        let plugin_only = r#"
+[hooks.state."security-guidance@claude-plugins-official:hooks/hooks.json:stop:0:0"]
+trusted_hash = "sha256:e1f574c0"
+"#;
+        assert!(!has_state_for(plugin_only, ours));
+    }
+
+    #[test]
+    fn a_config_toml_with_no_hooks_state_is_never_approved() {
+        assert!(!has_state_for("model = \"gpt-5.6\"\n[projects.\"/x\"]\ntrust_level = \"trusted\"\n",
+                               Path::new("/home/u/.codex/hooks.json")));
+    }
 
     const PORT: u16 = 8737;
 

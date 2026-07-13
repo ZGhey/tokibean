@@ -63,6 +63,12 @@ pub struct AgentPresence {
     pub hooks_incomplete: bool,
     /// Every place this agent is installed. `hooks_incomplete` above is the OR over these.
     pub sites: Vec<Site>,
+    /// Codex only: what Codex's own records say about approving our hooks — "never" | "stale" |
+    /// "recorded". Empty for agents with no trust gate. NOT a claim that hooks are live: that word
+    /// still belongs to an arriving event (ADR-0006). It exists so the panel stops telling a user to
+    /// approve hooks he has already approved, and starts telling him when an upgrade re-armed the
+    /// gate under him.
+    pub approval: String,
 }
 
 /// The environment variable each agent uses to relocate its config directory.
@@ -157,6 +163,16 @@ pub fn presence(cfg: &Config) -> Vec<AgentPresence> {
                         _ => crate::hooks_install::incomplete(cfg),
                     },
                 sites: if installed { sites(cfg, agent) } else { Vec::new() },
+                approval: if installed && agent == AGENT_CODEX {
+                    match crate::codex_install::approval(cfg) {
+                        crate::codex_install::Approval::Never => "never",
+                        crate::codex_install::Approval::Stale => "stale",
+                        crate::codex_install::Approval::Recorded => "recorded",
+                    }
+                    .to_string()
+                } else {
+                    String::new()
+                },
             }
         })
         .collect()
