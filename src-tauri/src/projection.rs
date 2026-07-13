@@ -36,6 +36,10 @@ pub struct PetUpdate {
     /// The agents we have actually received an event from. An agent's install status is only
     /// "active" if it appears here — a fact we observed, not one we claimed (ADR-0006).
     pub agents_seen: Vec<String>,
+    /// Which agents are on this machine, where, and whether their hooks need installing. Re-detected
+    /// live (every heartbeat, and on demand when a window opens), so installing Codex while the pet
+    /// runs just works — no restart, and no "click Detect" the user would never think to click.
+    pub agents: Vec<crate::agents::AgentPresence>,
     pub usage: UsageSnapshot,
     /// Number of sessions currently working (frontend draws a ×N badge when >1)
     pub working_count: usize,
@@ -106,6 +110,7 @@ pub fn project(
     update: UpdateState,
     now: Instant,
     hooks_seen: std::collections::HashSet<String>,
+    agents: Vec<crate::agents::AgentPresence>,
     reconnect: bool,
 ) -> PetUpdate {
     let mut working = 0usize;
@@ -183,6 +188,7 @@ pub fn project(
             v.sort(); // stable order across snapshots
             v
         },
+        agents,
         usage: snap,
         working_count: working,
         session_count: core.sessions.len(),
@@ -271,7 +277,7 @@ mod tests {
     }
 
     fn project_now(core: &Core, snap: UsageSnapshot) -> PetUpdate {
-        project(core, snap, UpdateState::default(), Instant::now(), seen(&["claude"]), false)
+        project(core, snap, UpdateState::default(), Instant::now(), seen(&["claude"]), vec![], false)
     }
 
     #[test]
@@ -287,7 +293,7 @@ mod tests {
         let mut core = empty_core();
         core.sessions.insert(key("a"), sess(Base::Attention, now));
         core.sessions.insert(key("b"), sess(Base::Working, now));
-        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), false);
+        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), vec![], false);
         assert_eq!(out.state, "working");
         assert_eq!(out.working_count, 1);
     }
@@ -298,7 +304,7 @@ mod tests {
         let mut core = empty_core();
         core.sessions.insert(key("a"), sess(Base::Attention, now));
         core.sessions.insert(key("b"), sess(Base::Done, now));
-        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), false);
+        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), vec![], false);
         assert_eq!(out.state, "attention");
     }
 
@@ -308,7 +314,7 @@ mod tests {
         let mut core = empty_core();
         core.sessions.insert(key("a"), sess(Base::Done, now));
         // Even at 100% usage, a fresh completion still shows "done", not "limit"
-        let out = project(&core, sub_snap("official", 1.0), UpdateState::default(), now, seen(&["claude"]), false);
+        let out = project(&core, sub_snap("official", 1.0), UpdateState::default(), now, seen(&["claude"]), vec![], false);
         assert_eq!(out.state, "done");
     }
 
@@ -320,7 +326,7 @@ mod tests {
             .insert(key("a"), sess(Base::Working, now - Duration::from_secs(30)));
         core.sessions
             .insert(key("b"), sess(Base::Working, now - Duration::from_secs(90)));
-        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), false);
+        let out = project(&core, UsageSnapshot::default(), UpdateState::default(), now, seen(&["claude"]), vec![], false);
         assert_eq!(out.working_count, 2);
         assert!(out.work_secs >= 90 && out.work_secs < 92);
     }

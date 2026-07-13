@@ -127,16 +127,8 @@ impl CodexScanner {
         }
     }
 
-    /// Whether Codex is installed at all. An agent that isn't on the machine must never appear in
-    /// the UI, so this is what gates every bit of Codex surface.
-    pub fn installed() -> bool {
-        dirs::home_dir()
-            .map(|h| h.join(".codex").is_dir())
-            .unwrap_or(false)
-    }
-
-    fn sessions_dir() -> Option<PathBuf> {
-        let p = dirs::home_dir()?.join(".codex").join("sessions");
+    fn sessions_dir(cfg: &crate::config::Config) -> Option<PathBuf> {
+        let p = crate::agents::dir(cfg, crate::state::AGENT_CODEX)?.join("sessions");
         if p.is_dir() {
             Some(p)
         } else {
@@ -144,9 +136,9 @@ impl CodexScanner {
         }
     }
 
-    pub fn scan(&mut self) -> CodexUsage {
+    pub fn scan(&mut self, cfg: &crate::config::Config) -> CodexUsage {
         let mut files: Vec<PathBuf> = Vec::new();
-        if let Some(root) = Self::sessions_dir() {
+        if let Some(root) = Self::sessions_dir(cfg) {
             collect_rollouts(&root, &mut files, 0);
         }
         for f in &files {

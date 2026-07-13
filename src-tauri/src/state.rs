@@ -124,6 +124,10 @@ pub struct Shared {
     pub warned: HashMap<String, (AtomicBool, AtomicBool)>, // (80%, limit)
     /// Codex's rollout-log scanner. Its quota is free on disk — no OAuth, no API call.
     pub codex_scanner: Mutex<crate::codex::CodexScanner>,
+    /// Which agents are on this machine. Re-detected on the heartbeat and whenever a window opens, so
+    /// a user who installs Codex mid-session just sees the pet start reacting — he never learns a
+    /// detection happened, which is the point (ADR-0014).
+    pub agents: Mutex<Vec<crate::agents::AgentPresence>>,
     /// Whether the usage panel is currently expanded (set by the frontend). While open, the
     /// whole window is made interactive so panel hover works regardless of its pixel height.
     pub panel_open: AtomicBool,
@@ -197,6 +201,7 @@ impl Shared {
                 .map(|a| (a.to_string(), (AtomicBool::new(false), AtomicBool::new(false))))
                 .collect(),
             codex_scanner: Mutex::new(crate::codex::CodexScanner::new()),
+            agents: Mutex::new(Vec::new()),
             panel_open: AtomicBool::new(false),
             pet_at_top: AtomicBool::new(false),
             last_pos_save: Mutex::new(Instant::now()),
@@ -237,6 +242,7 @@ pub fn build_update_from_core(shared: &Shared, core: &Core) -> PetUpdate {
         update,
         Instant::now(),
         shared.hooks_seen.lock().unwrap().clone(),
+        shared.agents.lock().unwrap().clone(),
         shared.reconnect_needed.load(Ordering::Relaxed),
     )
 }
@@ -350,20 +356,29 @@ pub fn expire_transients(shared: &Shared) -> bool {
     changed
 }
 
+/// Re-detect which agents are on this machine. Two stat() calls; call it freely — on the heartbeat,
+/// and on demand whenever a window opens so the answer is never stale in the moment someone looks.
+pub fn refresh_agents(shared: &Shared) {
+    let cfg = shared.cfg.lock().unwrap().clone();
+    let fresh = crate::agents::presence(&cfg);
+    *shared.agents.lock().unwrap() = fresh;
+}
+
 pub fn refresh_usage(shared: &Shared, with_official: bool) {
     let cfg = shared.cfg.lock().unwrap().clone();
     // Codex's quota is free on disk — no OAuth, no API call, no token refresh. Scan it first so its
     // tokens join Claude's in the same snapshot (today/week totals span every agent; cost does not,
     // because we don't model other agents' prices — see ADR-0009).
-    let codex_usage = if crate::codex::CodexScanner::installed() && cfg.agent_enabled(AGENT_CODEX) {
+    let codex_usage = if crate::agents::installed(&cfg, AGENT_CODEX) && cfg.agent_enabled(AGENT_CODEX)
+    {
         let mut cx = shared.codex_scanner.lock().unwrap();
-        Some(cx.scan())
+        Some(cx.scan(&cfg))
     } else {
         None
     };
     let mut snap = {
         let mut scanner = shared.scanner.lock().unwrap();
-        scanner.scan();
+        scanner.scan(&cfg);
         let mut events = scanner.events.clone();
         if codex_usage.is_some() {
             events.extend(shared.codex_scanner.lock().unwrap().events.iter().cloned());

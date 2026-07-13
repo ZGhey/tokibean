@@ -10,6 +10,9 @@
   <div id="panel" class="hidden">
     <div class="row head">
       <span id="mode-badge" class="badge">订阅</span>
+      <!-- Settings used to be reachable ONLY from the tray menu. That's a hole, not an
+           inconvenience: a user who never thinks to click the tray icon can't configure anything. -->
+      <button id="open-settings" class="gear" data-i18n-title="settings" aria-label="Settings">⚙</button>
       <select id="mode-select" data-i18n-title="billing_mode">
         <option value="auto" data-i18n="mode_auto">自动检测</option>
         <option value="subscription" data-i18n="mode_sub">订阅(Pro/Max)</option>
@@ -34,31 +37,13 @@
     <div class="label-row"><span data-i18n="models">模型</span></div>
     <div id="models" class="model-list"></div>
 
-    <div class="divider" id="conn-divider"></div>
-
-    <div class="label-row" id="acct-row">
-      <span data-i18n="official_usage">官方用量</span>
-      <span id="acct-status" class="num small" data-i18n="not_connected">未连接</span>
-    </div>
-    <button id="connect-claude" data-i18n="connect_claude">连接 Claude 账号</button>
-    <div class="hint" id="acct-result"></div>
-
-    <div class="label-row" id="hook-row">
-      <span data-i18n="hook_events">hook 事件</span>
-      <span id="hook-status" class="num small" data-i18n="not_received">还没收到</span>
-    </div>
-    <button id="install-hooks" data-i18n="install_hooks">安装 Claude Code hooks</button>
-    <div class="hint" id="install-result"></div>
-
-    <!-- Codex. Hidden unless ~/.codex actually exists — an agent you don't have never shows up
-         (ADR-0007), so a Claude-only user's panel is exactly what it was. -->
-    <div id="codex-block" class="hidden">
-      <div class="label-row">
-        <span>Codex</span>
-        <span id="codex-status" class="num small"></span>
-      </div>
-      <button id="install-codex" data-i18n="install_codex">安装 Codex hooks</button>
-      <div class="hint" id="codex-result"></div>
+    <!-- Setup lives in Settings now (ADR-0014). The account row, connect button, hook row and install
+         buttons were one-time things nobody looks at twice, permanently parked on the surface you open
+         every day — and they're what overflowed it. What's left here is only ever an INVITATION: one
+         line, shown only while something actually needs doing, that takes you where you can do it. -->
+    <div class="setup-line hidden" id="setup-line">
+      <span id="setup-text"></span>
+      <span class="setup-go">→</span>
     </div>
 
     <!-- Per-session breakdown, pinned to the very bottom so it never pushes the usage numbers around.

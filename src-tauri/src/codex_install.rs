@@ -32,15 +32,8 @@ const EVENTS: [&str; 7] = [
     "SubagentStop",
 ];
 
-pub fn hooks_path() -> Option<PathBuf> {
-    Some(dirs::home_dir()?.join(".codex").join("hooks.json"))
-}
-
-/// Whether Codex is installed at all. No config dir → no Codex UI anywhere in the pet (ADR-0007).
-pub fn installed() -> bool {
-    dirs::home_dir()
-        .map(|h| h.join(".codex").is_dir())
-        .unwrap_or(false)
+pub fn hooks_path(cfg: &crate::config::Config) -> Option<PathBuf> {
+    Some(crate::agents::dir(cfg, crate::state::AGENT_CODEX)?.join("hooks.json"))
 }
 
 /// The hook command Codex should run. `|| echo '{}'` because every agent requires the hook process
@@ -171,19 +164,21 @@ pub fn plan(root: &mut Value, port: u16) -> Result<Plan, String> {
 
 /// Whether Codex's hooks are missing anything (a new event after an upgrade, or fresh pollution
 /// after a re-import), so the panel can re-surface the install button.
-pub fn incomplete(port: u16) -> bool {
-    if !installed() {
+pub fn incomplete(cfg: &crate::config::Config) -> bool {
+    let port = cfg.port;
+    if !crate::agents::installed(cfg, crate::state::AGENT_CODEX) {
         return false; // No Codex → nothing to install → nothing missing
     }
-    let Some(path) = hooks_path() else { return false };
+    let Some(path) = hooks_path(cfg) else { return false };
     let Ok(text) = fs::read_to_string(&path) else { return true };
     let Ok(mut root) = serde_json::from_str::<Value>(&text) else { return true };
     // "Would a fresh plan change anything?" is exactly the question, and plan() is pure — so ask it.
     matches!(plan(&mut root, port), Ok(p) if p.touched())
 }
 
-pub fn install(port: u16) -> Result<String, String> {
-    let path = hooks_path().ok_or_else(|| {
+pub fn install(cfg: &crate::config::Config) -> Result<String, String> {
+    let port = cfg.port;
+    let path = hooks_path(cfg).ok_or_else(|| {
         crate::i18n::t("找不到用户主目录", "Cannot find the user home directory").to_string()
     })?;
     let dir = path.parent().unwrap().to_path_buf();

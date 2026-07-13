@@ -94,6 +94,14 @@ This is a **skin contract**: every skin in `src/skins/` matches on these keys to
 A new agent maps its tool names *onto* this set. Adding a key means auditing every skin — treat it
 as a breaking change.
 
+### Setup vs. the panel
+
+**Setup lives in the Settings window; the panel is what you watch daily.** Connecting an account and
+installing hooks are one-time things nobody looks at twice — they do not belong on the surface you
+open every day to check your quota, and while they lived there they overflowed it. The panel keeps a
+gear and, only while something genuinely needs doing, **one line** that takes you where you can do it.
+See [ADR-0014](docs/adr/0014-setup-lives-in-settings.md).
+
 ### Install status
 
 Per agent, three states — and `active` is **observed, never claimed**:
@@ -133,8 +141,13 @@ These are load-bearing. Breaking one is a regression, not a refactor.
 
 1. **One pet, one window.** N agents do not mean N pets. The window position / click-through /
    `PREALLOC` no-resize machinery is untouched by multi-agent work. See [ADR-0003](docs/adr/0003-one-pet-aggregate.md).
-2. **A Claude-only user's UI is byte-for-byte today's UI.** Agents are detected by their config dir
-   (`~/.codex`); an agent that isn't installed never appears. See [ADR-0007](docs/adr/0007-detect-agents-additive-config.md).
+2. **The panel never shows you an agent you haven't got.** Agents are detected by their config dir
+   (`~/.claude`, `~/.codex` — or wherever you told us they are). An agent that isn't installed never
+   appears in the panel, and is never offered an install button.
+   **The Settings window is the exception, and deliberately so:** it shows every agent, greying out
+   and honestly labelling the ones that aren't here — otherwise a Claude-only user (almost everyone)
+   would never learn Tokibean watches Codex at all. See [ADR-0007](docs/adr/0007-detect-agents-additive-config.md)
+   as amended by [ADR-0014](docs/adr/0014-setup-lives-in-settings.md).
 3. **Tool keys are a closed set.** (See *Tool key*.)
 4. **Claude's credential fields never move.** `oauth_access` / `oauth_refresh` / `oauth_expires_ms`
    stay at the top level of config.json. The refresh token rotates on every use; a migration bug

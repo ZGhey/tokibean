@@ -55,7 +55,7 @@ body {
    too low, the panel silently scrolls and a new user never sees the connect / install buttons — which
    is exactly what happened when the Codex block and the per-agent quota cards pushed a fresh install's
    panel to 569px against a 430px cap. */
-body.prealloc #panel { max-height: 660px; overflow-y: auto; }
+body.prealloc #panel { max-height: 500px; overflow-y: auto; }
 
 /* Panel below the pet — used when there's no room above (pet near the screen top):
    flip the stack so the pet is on top and the panel hangs below it */
@@ -276,3 +276,28 @@ button:active { transform: scale(0.98); }
   background: linear-gradient(to top, #d97757 calc(100% - var(--codex)), #6fa3bd calc(100% - var(--codex)));
 }
 #trend span.today.all-codex { background: #6fa3bd; }
+
+/* Settings gear in the panel header. Previously the Settings window could only be opened from the
+   tray menu — a user who never thinks to click a tray icon had no way in at all. */
+.row.head { gap: 6px; }
+.gear {
+  width: auto; margin: 0; padding: 2px 6px; line-height: 1;
+  background: none; border: none; color: #8a8478; font-size: 14px; cursor: pointer;
+  transition: color 0.15s, transform 0.15s;
+}
+.gear:hover { background: none; color: #e8916c; transform: rotate(30deg); }
+.gear:active { transform: rotate(30deg) scale(0.92); }
+
+/* The one line the panel keeps about setup: an invitation, shown only while something needs doing,
+   that takes you to the place where you can do it. It disappears for good once you have. */
+.setup-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 10px; padding: 8px 10px;
+  border: 1px solid rgba(224, 166, 59, 0.45);
+  border-radius: 8px;
+  background: rgba(224, 166, 59, 0.10);
+  color: #e0a63b; font-size: 11.5px; line-height: 1.45;
+  cursor: pointer;
+}
+.setup-line:hover { background: rgba(224, 166, 59, 0.18); }
+.setup-line .setup-go { flex: none; opacity: 0.8; }

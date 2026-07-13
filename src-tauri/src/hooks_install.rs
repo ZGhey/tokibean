@@ -29,9 +29,23 @@ const EVENTS: [&str; 8] = [
 /// Checks whether the installed hooks are missing any event (newly added events
 /// after an upgrade / newly appeared WSL distros); if so, the panel re-surfaces
 /// the install button.
-pub fn incomplete(port: u16) -> bool {
-    let Some(home) = dirs::home_dir() else { return true };
-    if file_incomplete(&home.join(".claude").join("settings.json"), port) {
+pub fn incomplete(cfg: &crate::config::Config) -> bool {
+    let port = cfg.port;
+    // An agent that isn't here has nothing to install. Saying "incomplete" about a directory that
+    // doesn't exist is what showed an "Install Claude Code hooks" button to people who had never
+    // touched Claude Code — and clicking it created the directory for them (ADR-0014).
+    //
+    // `installed()` is the right question to ask, NOT "does the Windows-side directory exist": on
+    // Windows, Claude Code is often only inside WSL, and that user's Windows-side ~/.claude is absent
+    // while his WSL one is not. Checking the local path alone would hide the install button from the
+    // very user the WSL sync below was built for.
+    if !crate::agents::installed(cfg, crate::state::AGENT_CLAUDE) {
+        return false;
+    }
+    let Some(dir) = crate::agents::dir(cfg, crate::state::AGENT_CLAUDE) else { return false };
+    // Only judge the local settings.json if the local install is actually there — a WSL-only user has
+    // no Windows-side file to be incomplete, and his WSL ones are checked below.
+    if dir.is_dir() && file_incomplete(&dir.join("settings.json"), port) {
         return true;
     }
     #[cfg(target_os = "windows")]
@@ -113,9 +127,10 @@ fn merge_into(path: &Path, cmd: &str, port: u16) -> Result<usize, String> {
     Ok(added)
 }
 
-pub fn install(port: u16) -> Result<String, String> {
-    let home = dirs::home_dir().ok_or_else(|| crate::i18n::t("找不到用户主目录", "Cannot find the user home directory"))?;
-    let dir = home.join(".claude");
+pub fn install(cfg: &crate::config::Config) -> Result<String, String> {
+    let port = cfg.port;
+    let dir = crate::agents::dir(cfg, crate::state::AGENT_CLAUDE)
+        .ok_or_else(|| crate::i18n::t("找不到用户主目录", "Cannot find the user home directory").to_string())?;
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }

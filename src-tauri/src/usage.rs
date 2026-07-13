@@ -91,8 +91,8 @@ impl Scanner {
             .collect()
     }
 
-    fn projects_dir() -> Option<PathBuf> {
-        let p = dirs::home_dir()?.join(".claude").join("projects");
+    fn projects_dir(cfg: &Config) -> Option<PathBuf> {
+        let p = crate::agents::dir(cfg, crate::state::AGENT_CLAUDE)?.join("projects");
         if p.is_dir() {
             Some(p)
         } else {
@@ -100,9 +100,9 @@ impl Scanner {
         }
     }
 
-    pub fn scan(&mut self) {
+    pub fn scan(&mut self, cfg: &Config) {
         let mut files: Vec<PathBuf> = Vec::new();
-        if let Some(root) = Self::projects_dir() {
+        if let Some(root) = Self::projects_dir(cfg) {
             collect_jsonl(&root, &mut files, 0);
         }
         for root in self.wsl_projects_dirs() {

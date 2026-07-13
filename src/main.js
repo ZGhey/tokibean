@@ -20,16 +20,18 @@
     win_week: ["周窗口", "Weekly window"],
     win_mins: ["{n} 分钟窗口", "{n}-minute window"],
     usage_aria: ["窗口用量", "Window usage"],
-    install_codex: ["安装 Codex hooks", "Install Codex hooks"],
-    codex_absent: ["未安装", "Not installed"],
-    // Written, but Codex won't run a hook until you approve it in its own `/hooks` — so this is the
-    // EXPECTED state right after installing, not an error.
-    codex_pending: ["待批准", "Awaiting approval"],
-    codex_active: ["已生效", "Active"],
-    codex_approve_hint: [
-      "hooks 已写入，但还没生效：在 Codex 里执行 /hooks 批准它们",
-      "Hooks are written but not live yet: run /hooks inside Codex and approve them.",
+    // The panel's one line about setup. Says ONE thing — the next step that unblocks you — and links
+    // to the Settings tab where you can do it. Gone for good once there's nothing to do.
+    setup_no_agent: [
+      "没检测到 Claude Code 或 Codex,宠物暂时无事可做",
+      "No Claude Code or Codex found — nothing for the pet to watch yet",
     ],
+    setup_hooks: ["{a} 的 hooks 还没装,去装一下", "{a}'s hooks aren't installed yet"],
+    setup_codex_approve: [
+      "Codex 的 hooks 还没生效 —— 需要你在 Codex 里批准",
+      "Codex's hooks aren't live yet — Codex needs you to approve them",
+    ],
+    first_run_bubble: ["点我看用量!", "Click me for usage!"],
     no_window: ["暂无活动窗口", "No active window"],
     week_quota: ["周额度", "Weekly quota"],
     // Cost is Claude-only: we model Anthropic's prices and nobody else's. The label says so,
@@ -362,9 +364,46 @@
     }
   }
 
+  // The one line the panel keeps about setup. It is an INVITATION, not a form: it appears only while
+  // something genuinely needs doing, names the single most useful next step, and takes you to Settings
+  // where you can actually do it. Once done, it's gone for good. (ADR-0014: setup is not something you
+  // should have to look at every day on the surface you open to check your quota.)
+  //
+  // Priority matters — say ONE thing, the thing that unblocks them:
+  //   1. No agent at all → there is nothing this pet can do; say so plainly.
+  //   2. An agent is here but its hooks aren't → that's why the pet never moves.
+  //   3. Codex's hooks are written but it hasn't run them → the trust gate; this is the step people
+  //      get stuck on, and they'd never guess it.
+  function renderSetupLine() {
+    const agents = cur.agents || [];
+    const seen = cur.agents_seen || [];
+    const here = agents.filter((a) => a.installed);
+    const line = el("setup-line");
+
+    let text = null, tab = "general";
+    if (!here.length) {
+      text = t("setup_no_agent");
+    } else {
+      const needsHooks = here.find((a) => a.hooks_incomplete);
+      const codex = here.find((a) => a.agent === "codex");
+      if (needsHooks) {
+        text = t("setup_hooks", { a: AGENT_NAME[needsHooks.agent] || needsHooks.agent });
+        tab = needsHooks.agent;
+      } else if (codex && !seen.includes("codex")) {
+        // Written, but Codex won't run a hook until it's approved. Nothing else will tell them.
+        text = t("setup_codex_approve");
+        tab = "codex";
+      }
+    }
+    line.classList.toggle("hidden", !text);
+    if (text) {
+      el("setup-text").textContent = text;
+      line.dataset.tab = tab;
+    }
+  }
+
   function renderPanel() {
     renderSessions();
-    renderCodex();
     const u = cur.usage;
     if (!u) return;
 
@@ -375,12 +414,8 @@
 
     // Whether a percentage is trustworthy is decided by the backend (projection::usage_flags) and
     // stamped onto each quota as pct_valid, so that rule isn't duplicated across the IPC seam.
-    const claude = (u.quotas || []).find((q) => q.agent === "claude");
     if (isSub) {
       renderQuotas(u.quotas);
-      if (claude && claude.basis === "official") {
-        el("acct-status").textContent = t("connected_official");
-      }
     } else {
       el("cost-today").textContent = fmtCost(u.today_cost);
       el("cost-week").textContent = fmtCost(u.week_cost);
@@ -428,30 +463,7 @@
       mbox.textContent = u.has_data ? "--" : t("no_claude_data");
     }
 
-    const sess = cur.session_count > 1 ? t("sessions_n", { n: cur.session_count }) : "";
-    // hooksIncomplete = a port marker is missing from settings.json (something to install).
-    // hooks_seen = at least one event has actually reached us (end-to-end proven).
-    const hooksInstalled = !hooksIncomplete;
-    el("hook-status").textContent = cur.hooks_seen
-      ? t("hook_ok", { ev: cur.last_event || "--" }) + sess
-      : hooksInstalled
-      ? t("hook_installed") // installed but no event yet — likely needs a Claude Code restart
-      : t("go_install");
-    // A dead refresh token (reconnect) counts as NOT connected — re-surface the connect button/row.
-    const official = claude && claude.basis === "official";
-    const acctDone = (official || cfgConnected) && !u.reconnect;
-    if (u.reconnect) el("acct-status").textContent = t("reconnect_needed");
-    // Install button only when something is genuinely missing — not merely because no event
-    // has arrived yet (installed + waiting for a restart shouldn't nag to reinstall)
-    el("install-hooks").classList.toggle("hidden", hooksInstalled);
-    el("connect-claude").classList.toggle("hidden", acctDone);
-    // Once connected / working, drop the redundant status rows — show them only when action is needed
-    el("acct-row").classList.toggle("hidden", acctDone);
-    el("hook-row").classList.toggle("hidden", cur.hooks_seen);
-    // The install-result text belongs to the button — hide it once there's nothing to install
-    el("install-result").classList.toggle("hidden", hooksInstalled);
-    // Nothing below the divider when both sections are fully done
-    el("conn-divider").classList.toggle("hidden", acctDone && cur.hooks_seen);
+    renderSetupLine();
 
     // In-app updater row: only visible when an update is actually pending / downloading.
     // "Up to date" / "checking" are NOT shown here — a manual check reports those via the dialog.
@@ -515,11 +527,14 @@
   //   · `body.prealloc #panel { max-height }` in style.css   (must equal PANEL_MAX_H)
   //   · the panel allowance in src-tauri/src/main.rs's setup  (must equal PANEL_MAX_H - PANEL_OVERLAP)
   //
-  // Sized for the WORST panel a user actually sees: a brand-new install, which stacks the account
-  // row, the connect button, the hook row, the install button, and (if Codex is present) the Codex
-  // block on top of the usage cards — measured at 569px. Anything past PANEL_MAX_H scrolls inside the
-  // panel rather than being cut off, which is the backstop for a long session list.
-  const PANEL_MAX_H = 660;
+  // Sized for the WORST panel a user actually sees, MEASURED, not guessed: two quota cards, the
+  // update banner, the setup line and a five-session list came to 399px. The rest is headroom for a
+  // longer session list; anything past PANEL_MAX_H scrolls inside the panel rather than being cut off.
+  //
+  // It used to be 430, which a fresh install's panel (569px) silently overflowed — and what scrolled
+  // out of sight was the connect/install buttons a new user needs. Those have since moved to Settings
+  // (ADR-0014), which is why this number can now be small AND safe rather than large and hopeful.
+  const PANEL_MAX_H = 500;
   const PANEL_OVERLAP = 60; // #panel's negative margin-bottom in style.css
 
   let BASE_H, WIN_W, CANVAS_H, PAD_B, PET_CANVAS_TOP, FULL_H, COLLAPSED_H;
@@ -683,6 +698,11 @@
         invoke("set_panel_open", { open: false }).catch(() => {});
       }
     } finally {
+      // Always restore opacity, even if fitPanel() threw. Opening sets it to 0 to measure and place
+      // the panel before revealing it; without this, one failure anywhere in there leaves the panel
+      // expanded but fully transparent — the user clicks, nothing appears, and clicking again just
+      // closes the panel they never saw.
+      panel.style.opacity = "";
       resizing = false;
     }
   }
@@ -837,17 +857,21 @@
   });
 
   el("mode-select").addEventListener("change", (e) => {
-    invoke("set_mode", { mode: e.target.value }).catch((err) => {
-      el("acct-result").textContent = String(err);
-    });
+    invoke("set_mode", { mode: e.target.value }).catch(() => {});
+  });
+
+  // The gear, and the setup line, both land in Settings — the setup line on the tab that needs work.
+  el("open-settings").addEventListener("click", (e) => {
+    e.stopPropagation();
+    invoke("open_settings_window_on", { tab: "general" }).catch(() => {});
+  });
+  el("setup-line").addEventListener("click", (e) => {
+    e.stopPropagation();
+    invoke("open_settings_window_on", { tab: el("setup-line").dataset.tab || "general" }).catch(() => {});
   });
 
   // ---------- Config (settings now live in the tray Settings window) ----------
-  let cfgConnected = false;
   let soundOn = false;
-  let hooksIncomplete = false;
-  // Codex's presence + whether its hooks are written. null = we haven't asked yet.
-  let codexCfg = null;
   let currentSkin = "classic";
 
   /// Where the pet's feet must land for the whole pet — dome to toes, at the NEW scale — to fit on
@@ -929,45 +953,10 @@
 
   function applyConfig(c) {
     soundOn = c.sound;
-    cfgConnected = c.connected;
-    hooksIncomplete = !!c.hooks_incomplete;
     currentSkin = c.skin || "classic";
-    codexCfg = (c.agents && c.agents.codex) || null;
-    if (hooksIncomplete) el("install-hooks").textContent = t("update_hooks");
-    if (c.connected) el("acct-status").textContent = t("connected");
-    renderCodex();
     applyScale(typeof c.pet_scale === "number" ? c.pet_scale : DEFAULT_SCALE).catch(() => {});
   }
 
-  // Codex's three-state install status (ADR-0006). "active" is a fact we OBSERVED — an event
-  // actually arrived — not a claim we made when we wrote the file. That distinction matters here
-  // and nowhere else: Codex hashes each hook definition and refuses to run it until the user
-  // approves it in `/hooks`, so "written" and "live" are genuinely different states. A user who
-  // saw "installed" and then saw nothing happen would conclude the pet is broken.
-  function renderCodex() {
-    const block = el("codex-block");
-    // Not installed on this machine → no Codex UI at all
-    if (!codexCfg || !codexCfg.installed || !codexCfg.enabled) {
-      block.classList.add("hidden");
-      return;
-    }
-    block.classList.remove("hidden");
-
-    const live = (cur.agents_seen || []).includes("codex");
-    const written = !codexCfg.hooks_incomplete;
-    const state = live ? "active" : written ? "pending" : "absent";
-
-    el("codex-status").textContent = t("codex_" + state);
-    // `pending` is the EXPECTED state right after installing — it is not an error, and must not be
-    // styled as one. It just means: your turn, go approve them.
-    el("codex-status").className = "num small codex-" + state;
-    el("install-codex").classList.toggle("hidden", state !== "absent");
-    // While pending, keep the instruction on screen — it's the only way the user learns what to do
-    if (state === "pending" && !el("codex-result").textContent) {
-      el("codex-result").textContent = t("codex_approve_hint");
-    }
-    if (state === "active") el("codex-result").textContent = "";
-  }
   invoke("get_config").then((c) => {
     applyConfig(c);
     // Non-default skin: dynamically load it to override PetRenderer
@@ -976,6 +965,18 @@
       s.src = "skins/" + encodeURIComponent(currentSkin) + ".js";
       document.body.appendChild(s);
     }
+    // First run: the pet introduces itself by SPEAKING — the backend gives it a "Hi! Click me for
+    // usage~" bubble (see main.rs). That's the whole onboarding, and it's deliberate.
+    //
+    // No modal: a desktop pet's entire proposition is that it doesn't interrupt you — transparent,
+    // click-through, ignorable — and a dialog stealing focus mid-keystroke is the exact thing the
+    // click-through thread and the boss key exist to prevent.
+    //
+    // We also tried auto-expanding the panel once, to demonstrate rather than explain. It expands in
+    // the DOM but does not render, and we could not explain why. Shipping a behaviour we don't
+    // understand is worse than shipping one less nicety, so it's out: the bubble says the same thing,
+    // and every route in (the gear, the setup line) is one click behind it.
+    if (!c.onboarded) invoke("mark_onboarded").catch(() => {});
   });
   // The Settings window persists changes and emits "config-changed" — re-sync here (reload on skin change)
   listen("config-changed", (e) => {
@@ -1015,44 +1016,6 @@
     else if (s === "attention") beep([[520, 0.07], [520, 0.07]]); // Waiting for you: tap-tap
     prevState = s;
   }
-
-  el("connect-claude").addEventListener("click", () => {
-    el("acct-status").textContent = t("authorizing");
-    el("acct-result").textContent = "";
-    invoke("connect_claude")
-      .then((msg) => {
-        el("acct-status").textContent = t("connected");
-        el("acct-result").textContent = msg;
-      })
-      .catch((err) => {
-        // Keep connect errors in the account area — don't leak into the hook area below.
-        el("acct-status").textContent = t("not_connected");
-        el("acct-result").textContent = t("connect_fail", { e: err });
-      });
-  });
-
-  el("install-hooks").addEventListener("click", () => {
-    el("install-result").textContent = t("installing");
-    invoke("install_hooks")
-      .then((msg) => {
-        el("install-result").textContent = msg;
-        hooksIncomplete = false;
-      })
-      .catch((err) => (el("install-result").textContent = t("fail", { e: err })));
-  });
-
-  el("install-codex").addEventListener("click", () => {
-    el("codex-result").textContent = t("installing");
-    invoke("install_codex_hooks")
-      .then((msg) => {
-        // The message says what was written AND — if Codex's importer had copied our Claude hooks
-        // in — what pollution was cleaned up. Then it says the hooks aren't live until approved.
-        el("codex-result").textContent = msg;
-        if (codexCfg) codexCfg.hooks_incomplete = false;
-        renderCodex();
-      })
-      .catch((err) => (el("codex-result").textContent = t("fail", { e: err })));
-  });
 
   el("update-row").addEventListener("click", () => {
     const up = cur.update || {};
