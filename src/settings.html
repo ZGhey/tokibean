@@ -134,11 +134,11 @@
       </select>
     </div>
     <div class="row">
-      <label id="l-textsize">文字大小</label>
+      <label id="l-textsize">字号</label>
       <select id="cfg-textsize">
-        <option value="1">正常(默认)</option>
-        <option value="1.2">大</option>
-        <option value="1.4">特大</option>
+        <option value="1">小</option>
+        <option value="1.2">正常(默认)</option>
+        <option value="1.4">大</option>
       </select>
     </div>
   </div>
@@ -237,10 +237,10 @@
         z_normal: ["中(默认)", "Normal (default)"],
         z_large: ["大", "Large"],
         z_xlarge: ["特大", "Extra large"],
-        textsize: ["文字大小", "Text size"],
+        textsize: ["字号", "Font size"],
+        t_small: ["小", "Small"],
         t_normal: ["正常(默认)", "Normal (default)"],
         t_large: ["大", "Large"],
-        t_xlarge: ["特大", "Extra large"],
         press: ["按下快捷键…", "Press a shortcut…"],
         hk_ok: ["快捷键已更新:{k}", "Hotkey updated: {k}"],
         hk_fail: ["快捷键设置失败:{e}", "Failed to set hotkey: {e}"],
@@ -334,7 +334,7 @@
       const zopts = { "0.5": "z_small", "0.75": "z_normal", "1": "z_large", "1.25": "z_xlarge" };
       for (const o of el("cfg-size").options) o.textContent = t(zopts[o.value] || o.value);
       el("l-textsize").textContent = t("textsize");
-      const topts = { "1": "t_normal", "1.2": "t_large", "1.4": "t_xlarge" };
+      const topts = { "1": "t_small", "1.2": "t_normal", "1.4": "t_large" };
       for (const o of el("cfg-textsize").options) o.textContent = t(topts[o.value] || o.value);
       for (const a of ["claude", "codex"]) {
         el("l-" + a + "-state").textContent = t("state");
@@ -583,7 +583,7 @@
           sound: el("cfg-sound").checked,
           skin: el("cfg-skin").value,
           petScale: parseFloat(el("cfg-size").value) || 0.75,
-          textScale: parseFloat(el("cfg-textsize").value) || 1,
+          textScale: parseFloat(el("cfg-textsize").value) || 1.2,
         })
           .then(() => emit("config-changed", { skin: el("cfg-skin").value }))
           .catch((err) => (el("result").textContent = String(err)));
@@ -626,7 +626,7 @@
         el("cfg-sound").checked = c.sound;
         el("cfg-skin").value = c.skin || "classic";
         el("cfg-size").value = String(c.pet_scale || 0.75);
-        el("cfg-textsize").value = String(c.text_scale || 1);
+        el("cfg-textsize").value = String(c.text_scale || 1.2);
         if (c.boss_key) { bossKeyAccel = c.boss_key; bossInput.value = prettyAccel(c.boss_key); }
         connected = !!c.connected;
         if (c.mode) el("cfg-mode").value = c.mode;

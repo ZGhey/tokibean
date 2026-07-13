@@ -191,11 +191,13 @@
   // pet_scale — this is only the type, for anyone who can read the pet fine but not the words on it.
   // MUST be declared above loop(): `let` has no hoisted initialisation, so a declaration further down
   // the file puts every frame in its temporal dead zone — the first draw throws and the pet vanishes.
-  let textScale = 1;
+  // Keep DEFAULT_TEXT_SCALE in sync with config.rs.
+  const DEFAULT_TEXT_SCALE = 1.2;
+  let textScale = DEFAULT_TEXT_SCALE;
 
   // Skins that bring their own draw() never see `extra`, so hand PetKit the value directly too.
   function applyTextScale(v) {
-    textScale = Number(v) > 0 ? Number(v) : 1;
+    textScale = Number(v) > 0 ? Number(v) : DEFAULT_TEXT_SCALE;
     if (window.PetKit && window.PetKit.setTextScale) window.PetKit.setTextScale(textScale);
   }
 
@@ -1020,7 +1022,7 @@
   function applyConfig(c) {
     soundOn = c.sound;
     currentSkin = c.skin || "classic";
-    applyTextScale(typeof c.text_scale === "number" ? c.text_scale : 1);
+    applyTextScale(typeof c.text_scale === "number" ? c.text_scale : DEFAULT_TEXT_SCALE);
     applyScale(typeof c.pet_scale === "number" ? c.pet_scale : DEFAULT_SCALE).catch(() => {});
   }
 

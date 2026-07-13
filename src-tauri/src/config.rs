@@ -33,6 +33,8 @@ enum Choice {
 /// The collapsed window is BASE_H_AT_1X · scale tall, with the pet canvas (184 · scale, plus a
 /// fixed 4px body padding) sitting at its bottom edge.
 pub const DEFAULT_SCALE: f64 = 0.75;
+/// Default label size ("normal"). Keep in sync with DEFAULT_TEXT_SCALE in src/main.js.
+pub const DEFAULT_TEXT_SCALE: f64 = 1.2;
 pub const BASE_H_AT_1X: f64 = 340.0;
 pub const CANVAS_H_AT_1X: f64 = 184.0;
 /// Canvas width. The pet is centred in it, and the slack on either side is what the floating labels
@@ -153,8 +155,11 @@ pub struct Config {
     /// Size of the pet's TYPE — the bubble, the "❯ cmd…" status tag, the tool tag. Separate from
     /// `pet_scale`, which sizes the pixel ART: someone can see the pet perfectly well and still not
     /// be able to read a 12px label, and blowing up the character to fix that is the wrong lever.
-    /// Steps: 1.0 / 1.2 / 1.4. Clamped by `text_scale()`, since config.json is hand-editable and an
-    /// absurd value would push the labels clean off a canvas that never gets any wider.
+    /// Steps: 1.0 (small) / 1.2 (normal, the default) / 1.4 (large). The whole scale shifted up one
+    /// notch — what used to be "large" is simply what the labels should have been all along, so it is
+    /// now "normal", and the old default became "small" for anyone who liked it that way.
+    /// Clamped by `text_scale()`, since config.json is hand-editable and an absurd value would push
+    /// the labels clean off a canvas that does not grow to match.
     pub text_scale: Option<f64>,
     /// Layout generation. Bumped when a geometry change would move an existing pet on screen, so the
     /// one-time fix in main.rs runs exactly once. 0 = a config written before the canvas widened.
@@ -304,10 +309,10 @@ impl Config {
 
     /// Pet label size, snapped to a valid step (see the field). Mirrors `scale()`'s discipline.
     pub fn text_scale(&self) -> f64 {
-        match self.text_scale.unwrap_or(1.0) {
-            s if (s - 1.2).abs() < 0.01 => 1.2,
-            s if (s - 1.4).abs() < 0.01 => 1.4,
-            _ => 1.0,
+        match self.text_scale.unwrap_or(DEFAULT_TEXT_SCALE) {
+            s if (s - 1.0).abs() < 0.01 => 1.0, // small
+            s if (s - 1.4).abs() < 0.01 => 1.4, // large
+            _ => DEFAULT_TEXT_SCALE,            // normal
         }
     }
 

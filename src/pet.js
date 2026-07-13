@@ -31,7 +31,7 @@
   // transform — see applyCanvasScale in main.js), so bigger type has strictly less room, not more.
   // Every box below therefore measures its text and CLAMPS to the canvas: `fit()` is the one place
   // that promises a box cannot grow out of frame, whatever the user picks.
-  let TS = 1;
+  let TS = 1.2; // matches DEFAULT_TEXT_SCALE (main.js / config.rs)
 
   // The body top (`y0`) is not the top of the pet — it wears things. Reading puts on a mortarboard and
   // coding a hard hat (both rise 7 rows above the body), and thinking grows Einstein hair. A bubble
@@ -375,11 +375,11 @@
     // its default size, so the right-clamp always fired and dragged the box back across the pet's
     // head — the bigger the text, the more obviously). With ~140px a side, the clamp is now the rare
     // case rather than the every case, and the tag stays where it belongs: up and to the right.
-    const bx = Math.min((cx + 13) * S, Math.max(W - w - 4, 4));
+    const bx = Math.min((cx + 10) * S, Math.max(W - w - 4, 4));
     // Sit ABOVE the ×N badge, which lives on the same shoulder at (cx+15, y0-3). While the canvas was
     // narrow the tag got clamped away to the left and the two never met; now that it sits where it
     // belongs, they would print on top of each other.
-    const by = Math.max((y0 - 6) * S - sz(8) - h, 2);
+    const by = Math.max((y0 - 8) * S - sz(8) - h, 2);
     ctx.fillStyle = "rgba(18,16,14,0.95)";
     ctx.strokeStyle = "rgba(122,222,122,0.45)";
     ctx.lineWidth = 1;
@@ -693,7 +693,7 @@
 
   function setTextScale(n) {
     const v = Number(n);
-    TS = v >= 0.8 && v <= 2 ? v : 1;   // a hand-edited config can't blow the labels off the canvas
+    TS = v >= 0.8 && v <= 2 ? v : 1.2;  // a hand-edited config can't blow the labels off the canvas
   }
 
   function draw(ctx, canvas, state, warn, bubble, t, extra) {
