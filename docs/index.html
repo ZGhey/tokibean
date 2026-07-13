@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>Tokibean — Claude Code desktop pet &amp; token usage monitor</title>
+<meta name="description" content="Tokibean is a free open-source desktop pet for Claude Code. A pixel mascot animates what Claude Code is doing in real time, and a live usage panel shows your real 5-hour window percentage, weekly limit and reset countdown from the official Anthropic usage API. macOS, Windows and Linux.">
+<link rel="canonical" href="https://zghey.github.io/tokibean/">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://zghey.github.io/tokibean/">
+<meta property="og:title" content="Tokibean — Claude Code desktop pet &amp; token usage monitor">
+<meta property="og:description" content="A pixel desktop pet that shows what Claude Code is doing — and tracks your real 5-hour token window from the official Anthropic usage API. Free, open source, macOS / Windows / Linux.">
+<meta property="og:image" content="https://zghey.github.io/tokibean/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tokibean — Claude Code desktop pet &amp; token usage monitor">
+<meta name="twitter:description" content="A pixel desktop pet that shows what Claude Code is doing — and tracks your real 5-hour token window.">
+<meta name="twitter:image" content="https://zghey.github.io/tokibean/og.png">
+
+<link rel="icon" href="og.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Tokibean",
+  "alternateName": "Tokibean 码豆",
+  "description": "A desktop pet that shows what Claude Code is doing in real time and monitors your token usage, including the official 5-hour window percentage and reset countdown.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Windows, Linux",
+  "url": "https://zghey.github.io/tokibean/",
+  "downloadUrl": "https://github.com/ZGhey/tokibean/releases/latest",
+  "softwareVersion": "0.4.6",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "ZGhey" }
+}
+</script>
+
+<style>
+:root{
+  --bg:#fdf7f2; --fg:#2c231d; --muted:#7a6a5e; --card:#fff;
+  --line:#e8dbcf; --accent:#e8916c; --accent-ink:#fff;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#191512; --fg:#f0e6dd; --muted:#a2907f; --card:#221c18;
+         --line:#3a2f27; --accent:#e8916c; --accent-ink:#1a120c; }
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+img{max-width:100%}
+a{color:var(--accent)}
+.wrap{max-width:880px; margin:0 auto; padding:0 20px}
+
+header{text-align:center; padding:64px 20px 40px}
+h1{font-size:clamp(38px,7vw,60px); margin:0 0 4px; letter-spacing:-.02em}
+.tag{font-size:clamp(17px,2.6vw,21px); color:var(--muted); margin:0 auto 26px; max-width:620px}
+.strip{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin:26px 0 30px}
+.strip img{width:120px; image-rendering:pixelated}
+.cta{display:flex; gap:12px; justify-content:center; flex-wrap:wrap; align-items:center}
+.btn{
+  display:inline-block; padding:13px 24px; border-radius:10px; font-weight:650;
+  text-decoration:none; border:1px solid var(--line); color:var(--fg); background:var(--card);
+}
+.btn.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+code.brew{
+  display:inline-block; background:var(--card); border:1px solid var(--line);
+  padding:11px 15px; border-radius:10px; font-size:14px; overflow-x:auto; max-width:100%;
+}
+.badges{margin-top:22px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap}
+
+section{padding:44px 0; border-top:1px solid var(--line)}
+h2{font-size:27px; margin:0 0 10px; letter-spacing:-.01em}
+h3{font-size:18px; margin:26px 0 6px}
+p{margin:0 0 14px}
+.lede{color:var(--muted); margin-bottom:26px}
+
+.grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:18px}
+.cell{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; text-align:center}
+.cell img{width:104px; image-rendering:pixelated}
+.cell b{display:block; font-size:14px; margin-top:6px}
+.cell span{display:block; font-size:13px; color:var(--muted); line-height:1.45}
+
+ul{margin:0 0 14px; padding-left:20px}
+li{margin-bottom:7px}
+
+footer{padding:38px 20px 60px; text-align:center; color:var(--muted); font-size:14px; border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>Tokibean 🫘</h1>
+    <p class="tag">A desktop pet that shows you what <b>Claude Code</b> is doing — and how much of your token budget is left.</p>
+
+    <div class="strip">
+      <img src="gifs/thinking.gif" alt="Tokibean thinking while Claude Code works" loading="lazy">
+      <img src="gifs/coding.gif" alt="Tokibean editing code" loading="lazy">
+      <img src="gifs/searching.gif" alt="Tokibean searching code" loading="lazy">
+      <img src="gifs/done.gif" alt="Tokibean celebrating a finished task" loading="lazy">
+    </div>
+
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/ZGhey/tokibean/releases/latest">⬇ Download for macOS / Windows / Linux</a>
+      <a class="btn" href="https://github.com/ZGhey/tokibean">View on GitHub</a>
+    </div>
+    <p style="margin-top:16px"><code class="brew">brew install --cask zghey/tap/tokibean</code></p>
+
+    <div class="badges">
+      <img src="https://img.shields.io/github/v/release/ZGhey/tokibean?style=flat-square&color=e8916c" alt="Latest release">
+      <img src="https://img.shields.io/github/stars/ZGhey/tokibean?style=flat-square&color=e8916c" alt="GitHub stars">
+      <img src="https://img.shields.io/github/license/ZGhey/tokibean?style=flat-square" alt="MIT license">
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>Real usage numbers, not a guess</h2>
+    <p class="lede">This is what sets Tokibean apart from the other Claude Code pets.</p>
+    <p>Connect your Claude account once, straight from the panel (a normal OAuth flow in your browser — the token stays on your machine). Tokibean then reads the <b>official Anthropic usage endpoint</b>, so the numbers it shows you are the real ones:</p>
+    <ul>
+      <li><b>5-hour window percentage</b> and the exact reset countdown</li>
+      <li><b>Weekly limit</b> progress</li>
+      <li>An exclamation mark over the pet's head past 80% — and it flops down to sleep once the quota is spent</li>
+      <li>On an API key instead of a subscription? It shows today's and last-7-days dollar cost, parsed from your local logs</li>
+    </ul>
+    <p>Everything else — every animation, every event — is driven by <a href="https://docs.claude.com/en/docs/claude-code/hooks">Claude Code hooks</a> posted to a local server on <code>127.0.0.1</code>. Nothing about your code or prompts ever leaves your machine.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Every state has its own animation</h2>
+    <p class="lede">One glance tells you where Claude Code is.</p>
+    <div class="grid">
+      <div class="cell"><img src="gifs/thinking.gif" alt="thinking" loading="lazy"><b>Thinking</b><span>Einstein hair, pacing with a pipe</span></div>
+      <div class="cell"><img src="gifs/cmd.gif" alt="running a command" loading="lazy"><b>Running a command</b><span>QWER keycaps light up as it types</span></div>
+      <div class="cell"><img src="gifs/coding.gif" alt="editing code" loading="lazy"><b>Editing code</b><span>Lightbulb, then hard hat and pickaxe</span></div>
+      <div class="cell"><img src="gifs/reading.gif" alt="reading files" loading="lazy"><b>Reading files</b><span>Scholar's cap and monocle</span></div>
+      <div class="cell"><img src="gifs/searching.gif" alt="searching code" loading="lazy"><b>Searching</b><span>Sweeping with a magnifying glass</span></div>
+      <div class="cell"><img src="gifs/browsing.gif" alt="browsing the web" loading="lazy"><b>Browsing</b><span>A tiny globe spinning beside it</span></div>
+      <div class="cell"><img src="gifs/agents.gif" alt="spawning subagents" loading="lazy"><b>Subagents</b><span>Mini clones hopping in sync</span></div>
+      <div class="cell"><img src="gifs/planning.gif" alt="planning" loading="lazy"><b>Planning</b><span>Ticking off a clipboard</span></div>
+      <div class="cell"><img src="gifs/attention.gif" alt="waiting for you" loading="lazy"><b>Waiting for you</b><span>Waves, then escalates to a horn</span></div>
+      <div class="cell"><img src="gifs/oops.gif" alt="error" loading="lazy"><b>Something errored</b><span>Angry red marks, shaking</span></div>
+      <div class="cell"><img src="gifs/done.gif" alt="celebrating" loading="lazy"><b>Done</b><span>Confetti; bubble reports duration</span></div>
+      <div class="cell"><img src="gifs/idle.gif" alt="idle" loading="lazy"><b>Idle</b><span>Naps, stretches, chases a butterfly</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>A little world, running offline</h2>
+    <p class="lede">All from your local clock — no network, no accounts, no telemetry.</p>
+    <ul>
+      <li>🌙 <b>Real moon phases</b> at night, computed from the date — waxing and waning over the month</li>
+      <li>🍂 <b>Seasons</b>: drifting snow, spring blossom, summer fireflies at dusk, autumn leaves</li>
+      <li>🎉 <b>Festivals</b>: New Year fireworks, Lunar New Year lanterns, a Christmas tree, a Halloween pumpkin</li>
+      <li>🌦 <b>Weather</b>: the odd spell of rain (it puts up an umbrella) or wind</li>
+      <li>👀 Eyes that follow your cursor; tickle it for a giggle, pat it for hearts</li>
+    </ul>
+    <p>Three built-in skins (Archway Dundun, Bean, Tabby cat), and a skin is one standalone JS file — write your own.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Get started in two minutes</h2>
+    <ol>
+      <li><a href="https://github.com/ZGhey/tokibean/releases/latest">Download the installer</a>, or <code>brew install --cask zghey/tap/tokibean</code> on macOS.</li>
+      <li>Click the pet to open its panel, then hit <b>Install Claude Code hooks</b> — it writes the event forwarders into <code>~/.claude/settings.json</code> (backing the file up first).</li>
+      <li>Restart Claude Code. Send any message. The pet starts thinking.</li>
+      <li>Optional: click <b>Connect Claude account</b> for the official usage percentages.</li>
+    </ol>
+    <p>Free and open source under the MIT license. Auto-updates from GitHub Releases.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Questions</h2>
+
+    <h3>How do I check my Claude Code 5-hour window usage?</h3>
+    <p>Tokibean shows it live in its panel: the window percentage, the token count, and a countdown to the reset. Connect your Claude account once and the figure comes from Anthropic's own usage endpoint rather than a local estimate.</p>
+
+    <h3>Does it work with a Claude Pro or Max subscription?</h3>
+    <p>Yes — subscription mode is what it's built for. If you use an API key instead, it switches to dollar-cost tracking (today and the last 7 days) parsed from your local <code>~/.claude/projects/*.jsonl</code> logs.</p>
+
+    <h3>Does it send my code anywhere?</h3>
+    <p>No. Hooks post to a local server on <code>127.0.0.1:8737</code>, and usage is parsed from files already on your disk. The only outbound request is the official usage endpoint at <code>api.anthropic.com</code>, and only if you connect an account.</p>
+
+    <h3>Does it run on Windows and Linux, and does it see Claude Code inside WSL?</h3>
+    <p>Yes to all three. On Windows the hook installer also syncs into every WSL distro's <code>~/.claude/settings.json</code>, so Claude Code running in WSL is detected from the Windows-side pet.</p>
+
+    <h3>Is it affiliated with Anthropic?</h3>
+    <p>No. It's an independent community project. "Claude" and "Claude Code" are used only as factual compatibility references.</p>
+  </div>
+</section>
+
+<footer>
+  <p><a href="https://github.com/ZGhey/tokibean">GitHub</a> · <a href="https://github.com/ZGhey/tokibean/releases/latest">Download</a> · <a href="https://github.com/ZGhey/tokibean/blob/main/README.zh-CN.md">中文说明</a> · MIT</p>
+  <p>Tokibean 码豆 — a community project, not affiliated with or endorsed by Anthropic.</p>
+</footer>
+
+</body>
+</html>
