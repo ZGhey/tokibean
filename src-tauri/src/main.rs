@@ -3,6 +3,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agents;
+mod codex;
+mod codex_install;
 mod config;
 mod fetch_policy;
 mod hooks_install;
@@ -11,6 +14,7 @@ mod i18n;
 mod login;
 mod official;
 mod projection;
+mod reducer;
 mod state;
 mod updater;
 mod usage;
@@ -34,8 +38,15 @@ fn get_update(app: AppHandle) -> state::PetUpdate {
 #[tauri::command]
 fn install_hooks(app: AppHandle) -> Result<String, String> {
     let shared = app.state::<Arc<Shared>>();
-    let port = shared.cfg.lock().unwrap().port;
-    hooks_install::install(port)
+    let cfg = shared.cfg.lock().unwrap().clone();
+    hooks_install::install(&cfg)
+}
+
+#[tauri::command]
+fn install_codex_hooks(app: AppHandle) -> Result<String, String> {
+    let shared = app.state::<Arc<Shared>>();
+    let cfg = shared.cfg.lock().unwrap().clone();
+    codex_install::install(&cfg)
 }
 
 #[tauri::command]
@@ -67,7 +78,8 @@ fn get_config(app: AppHandle) -> serde_json::Value {
         "boss_key": cfg.boss_key,
         "block_limit": cfg.block_limit,
         "connected": !cfg.oauth_access.is_empty(),
-        "hooks_incomplete": hooks_install::incomplete(cfg.port),
+        "onboarded": cfg.onboarded,
+        "mode": cfg.mode,
         "lang": i18n::tag(),
     })
 }
@@ -113,6 +125,7 @@ fn panel_opened(app: AppHandle) {
     // hook activity (a run finishing), never on "click to view". Rescan local JSONL (cheap,
     // updates token counts) and re-render; do NOT raise official_want / hit the usage API.
     let shared = app.state::<Arc<Shared>>();
+    state::refresh_agents(&shared); // the answer is never stale in the moment you look at it
     state::refresh_usage(&shared, false);
     state::push_update(&app, &shared);
 }
@@ -270,12 +283,91 @@ fn open_about_window(app: AppHandle) {
 }
 
 #[tauri::command]
-fn open_settings_window(app: AppHandle) {
+async fn open_settings_window_on(app: AppHandle, tab: String) {
+    {
+        let shared = app.state::<Arc<Shared>>();
+        state::refresh_agents(&shared);
+        state::push_update(&app, &shared);
+    }
+    show_settings_window_on(&app, if tab.is_empty() { None } else { Some(tab) });
+}
+
+/// The panel has now been seen. Called once, by the frontend, after it opens itself on first run.
+#[tauri::command]
+fn mark_onboarded(app: AppHandle) {
+    let shared = app.state::<Arc<Shared>>();
+    let mut cfg = shared.cfg.lock().unwrap();
+    if !cfg.onboarded {
+        cfg.onboarded = true;
+        let _ = cfg.save();
+    }
+}
+
+#[tauri::command]
+fn set_agent_dir(app: AppHandle, agent: String, dir: String) -> Result<String, String> {
+    if !state::AGENTS.contains(&agent.as_str()) {
+        return Err(i18n::t("未知 agent", "Unknown agent").into());
+    }
+    let shared = app.state::<Arc<Shared>>();
+    {
+        let mut cfg = shared.cfg.lock().unwrap();
+        let entry = cfg.agents.entry(agent.clone()).or_default();
+        // An empty string clears the override and hands the agent back to auto-detection.
+        entry.dir = if dir.trim().is_empty() { None } else { Some(dir.trim().to_string()) };
+        cfg.save().map_err(|e| e.to_string())?;
+    }
+    // The path changed, so everything downstream of it is stale: re-detect, and re-scan from scratch —
+    // the usage scanners remember byte offsets per FILE, and we're now reading different files.
+    {
+        let mut sc = shared.scanner.lock().unwrap();
+        *sc = crate::usage::Scanner::new();
+    }
+    {
+        let mut cx = shared.codex_scanner.lock().unwrap();
+        *cx = crate::codex::CodexScanner::new();
+    }
+    state::refresh_agents(&shared);
+    state::refresh_usage(&shared, false);
+    state::push_update(&app, &shared);
+
+    let found = agents::installed(&shared.cfg.lock().unwrap(), &agent);
+    Ok(if found {
+        i18n::t("找到了", "Found it").into()
+    } else {
+        i18n::t("这个目录不存在", "That directory doesn't exist").to_string()
+    })
+}
+
+// async: a sync command runs on the main thread, and refresh_agents stats an agent's config dir —
+// which on Windows means reading a WSL distro's ~/.claude over \\wsl$. A stopped distro is started
+// on demand for that read, so the call can block for seconds; on the main thread that is a frozen UI.
+#[tauri::command]
+async fn open_settings_window(app: AppHandle) {
+    // Same reason as panel_opened: someone is about to look at the agent list, so make it true first.
+    {
+        let shared = app.state::<Arc<Shared>>();
+        state::refresh_agents(&shared);
+        state::push_update(&app, &shared);
+    }
     show_settings_window(&app);
 }
 
 /// Open (or focus) the Settings window. Same macOS activation-policy handling as the updater/about.
 fn show_settings_window(app: &AppHandle) {
+    show_settings_window_on(app, None)
+}
+
+/// Open the Settings window, optionally on a given tab.
+///
+/// The window is built at most once and never closed-and-rebuilt to land a deep link. Two reasons,
+/// both learned the hard way on Windows:
+///   · `close()` is asynchronous. Closing and immediately re-opening finds the *still-dying* window
+///     and show()s it — a blank zombie nobody can close.
+///   · `build()` on the main thread pumps the message loop while WebView2 initialises, so a second
+///     build scheduled meanwhile is re-entered inside the first. The two creations wedge each other
+///     and the UI thread never returns: every window hangs, unclosable.
+/// So: if it's already open, just focus it and tell the page which tab to show.
+fn show_settings_window_on(app: &AppHandle, tab: Option<String>) {
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
         #[cfg(target_os = "macos")]
@@ -283,16 +375,23 @@ fn show_settings_window(app: &AppHandle) {
         if let Some(w) = app.get_webview_window("settings") {
             let _ = w.show();
             let _ = w.set_focus();
+            if let Some(t) = &tab {
+                let _ = w.emit("settings-tab", t.clone());
+            }
             return;
         }
+        let url = match &tab {
+            Some(t) => format!("settings.html?tab={}", t),
+            None => "settings.html".to_string(),
+        };
         let _ = tauri::WebviewWindowBuilder::new(
             &app,
             "settings",
-            tauri::WebviewUrl::App("settings.html".into()),
+            tauri::WebviewUrl::App(url.into()),
         )
         .initialization_script(lang_init())
         .title(i18n::t("码豆 · 设置", "Tokibean · Settings"))
-        .inner_size(360.0, 350.0)
+        .inner_size(420.0, 440.0)
         .resizable(false)
         .center()
         .build();
@@ -464,6 +563,19 @@ fn macos_float_panel(window: &tauri::WebviewWindow) {
 
 fn main() {
     let shared = Arc::new(Shared::new());
+    // Detect before the first paint, so the very first panel a user ever sees is already correct —
+    // no flash of "install Claude Code hooks" at someone who hasn't got Claude Code.
+    state::refresh_agents(&shared);
+    // First run: the pet introduces itself the way a pet should — by saying something, not by
+    // throwing a dialog in your face. The frontend also opens the panel once; between the two, nobody
+    // has to guess that clicking the pet does anything.
+    if !shared.cfg.lock().unwrap().onboarded {
+        let mut core = shared.core.lock().unwrap();
+        core.bubble = Some((
+            i18n::t("你好!点我看用量~", "Hi! Click me for usage~").to_string(),
+            std::time::Instant::now() + Duration::from_secs(12),
+        ));
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
@@ -480,6 +592,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_update,
             install_hooks,
+            install_codex_hooks,
+            set_agent_dir,
+            mark_onboarded,
+            open_settings_window_on,
             set_mode,
             get_config,
             set_config,
@@ -653,11 +769,11 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 let mut cfg = shared.cfg.lock().unwrap();
                 // Geometry mirrors recomputeGeom() in src/main.js — keep both in sync. Only the pet
-                // canvas scales; the panel allowance (412) is fixed, so FULL_H grows by the canvas delta.
+                // canvas scales; the panel allowance is fixed, so FULL_H grows by the canvas delta.
                 let scale = cfg.scale();
                 let canvas_h = config::CANVAS_H_AT_1X * scale;
                 let pad_b = config::PAD_B; // body padding-bottom is a fixed 4px CSS gap, not scaled
-                let full_h_l = (canvas_h + pad_b + 412.0).round();
+                let full_h_l = (canvas_h + pad_b + config::PANEL_ALLOWANCE).round();
                 let win_w_l = config::win_w(scale);
                 let f = w.scale_factor().unwrap_or(1.0);
                 let _ = w.set_size(tauri::LogicalSize::new(win_w_l, full_h_l));
@@ -893,6 +1009,16 @@ fn main() {
                             state::refresh_usage(&s, false);
                             state::check_usage_alerts(&h, &s);
                             changed = true;
+                        }
+                        // Re-detect agents on the same beat. Two stat() calls — the cost is nothing,
+                        // and this is what makes "install Codex and the pet just starts watching it"
+                        // true without the user knowing a detection exists (ADR-0014).
+                        if tick % 30 == 0 {
+                            let before = s.agents.lock().unwrap().clone();
+                            state::refresh_agents(&s);
+                            if *s.agents.lock().unwrap() != before {
+                                changed = true;
+                            }
                         }
                         if tick % 30 == 0 {
                             // Fallback save of the window position (drag throttling may miss the last bit of movement).

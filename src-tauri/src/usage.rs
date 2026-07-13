@@ -19,6 +19,10 @@ pub struct UsageEvent {
     pub cache_w: u64,
     pub cache_r: u64,
     pub model: String,
+    /// Which agent burned these tokens. Token totals span every agent; Claude's 5-hour billing block
+    /// and the USD cost do NOT — we don't model other agents' prices, and Codex's tokens have
+    /// nothing to do with Claude's billing window.
+    pub agent: String,
 }
 
 impl UsageEvent {
@@ -87,8 +91,8 @@ impl Scanner {
             .collect()
     }
 
-    fn projects_dir() -> Option<PathBuf> {
-        let p = dirs::home_dir()?.join(".claude").join("projects");
+    fn projects_dir(cfg: &Config) -> Option<PathBuf> {
+        let p = crate::agents::dir(cfg, crate::state::AGENT_CLAUDE)?.join("projects");
         if p.is_dir() {
             Some(p)
         } else {
@@ -96,9 +100,9 @@ impl Scanner {
         }
     }
 
-    pub fn scan(&mut self) {
+    pub fn scan(&mut self, cfg: &Config) {
         let mut files: Vec<PathBuf> = Vec::new();
-        if let Some(root) = Self::projects_dir() {
+        if let Some(root) = Self::projects_dir(cfg) {
             collect_jsonl(&root, &mut files, 0);
         }
         for root in self.wsl_projects_dirs() {
@@ -177,6 +181,7 @@ impl Scanner {
             cache_w: usage["cache_creation_input_tokens"].as_u64().unwrap_or(0),
             cache_r: usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
             model: v["message"]["model"].as_str().unwrap_or("unknown").to_string(),
+            agent: crate::state::AGENT_CLAUDE.to_string(),
         };
         if ev.total() > 0 {
             self.events.push(ev);
@@ -205,35 +210,92 @@ pub struct ModelUsage {
     pub tokens: u64,
 }
 
+/// One agent's quota window, self-describing.
+///
+/// Deliberately NOT normalized against any other agent's: Claude's 5-hour billing block and Codex's
+/// window (43200 minutes — thirty days — on the free plan) are different quantities. They are shown
+/// side by side, one card each, and are never averaged, summed, or compared. An agent with no quota
+/// data has no entry here at all — never an entry reading 0% or "unknown".
+#[derive(Serialize, Clone, Default, PartialEq, Debug)]
+pub struct AgentQuota {
+    /// Stable agent slug: "claude" | "codex"
+    pub agent: String,
+    /// Window utilization, 0.0-1.0
+    pub pct: f64,
+    /// Percentage basis: official (from the agent itself) | manual (tokens vs. a configured limit) | none
+    pub basis: String,
+    /// Whether `pct` is trustworthy enough to display / drive warn + sleep (basis official || manual)
+    pub pct_valid: bool,
+    /// The window's own length in minutes. Claude's block is 300; Codex reports its own. The label is
+    /// rendered FROM this — hard-coding "5h" is wrong for any agent but Claude.
+    pub window_minutes: u64,
+    /// Epoch seconds when the window resets, 0 = no active window
+    pub reset_ts: i64,
+    /// Tokens counted in the current window (Claude's manual basis shows this against `limit_tokens`)
+    pub tokens: u64,
+    /// The configured manual token limit, 0 = not applicable
+    pub limit_tokens: u64,
+    /// Official weekly-limit utilization, 0.0-1.0. Claude only (Codex's second window, when its plan
+    /// has one, is its own entry in `secondary_pct`-free terms — see codex.rs).
+    pub week_pct: Option<f64>,
+}
+
+/// Claude's billing block is five hours.
+pub const CLAUDE_WINDOW_MINUTES: u64 = 300;
+
 #[derive(Serialize, Clone, Default)]
 pub struct UsageSnapshot {
     pub mode: String, // subscription | api
-    /// Current 5-hour window
+    /// One entry per agent that has quota data. Empty = no percentage anywhere (show no card).
+    pub quotas: Vec<AgentQuota>,
+    /// Tokens in Claude's current 5-hour window (kept for the manual-limit readout)
     pub block_tokens: u64,
-    pub block_limit: u64, // 0 = unknown
-    pub block_pct: f64,
-    /// Percentage basis: manual = tokens/manual limit; auto = weighted cost/historical peak-window weighted cost
-    pub basis: String,
-    /// Whether block_pct is trustworthy enough to display / drive sleep (basis official || manual).
-    /// Stamped by the projection (projection::usage_flags) so the frontend never re-derives the rule.
-    pub pct_valid: bool,
-    pub block_reset_ts: i64, // epoch seconds when the window ends, 0 = no active window currently
     pub max_block_tokens: u64,
-    /// Today (local timezone)
+    /// Today (local timezone), across ALL agents
     pub today_tokens: u64,
+    /// Claude-only. The panel labels it as such — we don't model other agents' prices, so this must
+    /// never pretend to be a total (see ADR-0009).
     pub today_cost: f64,
-    /// Last 7 days (rolling, approximates the weekly-limit basis; the official basis is undisclosed)
+    /// Last 7 days (rolling), across ALL agents
     pub week_tokens: u64,
+    /// Claude-only, same caveat as today_cost
     pub week_cost: f64,
-    /// Official weekly-limit utilization (present only when basis=official), 0.0-1.0
-    pub week_pct: Option<f64>,
     pub models: Vec<ModelUsage>,
     pub has_data: bool,
-    /// Per-day tokens over the last 7 days (oldest → today), for the trend chart
+    /// Per-day tokens over the last 7 days (oldest → today), for the trend chart. ALL agents.
     pub daily_tokens: Vec<u64>,
+    /// The Codex share of each of those days, so the chart can show which agent burned what rather
+    /// than blending two agents' work into one indistinguishable bar.
+    pub daily_codex: Vec<u64>,
 }
 
+impl UsageSnapshot {
+    /// The quota entry for one agent, if it has one.
+    pub fn quota(&self, agent: &str) -> Option<&AgentQuota> {
+        self.quotas.iter().find(|q| q.agent == agent)
+    }
+
+    /// Insert or replace an agent's quota entry, keeping the list stable-ordered by agent slug so
+    /// the panel's cards don't reshuffle between snapshots.
+    pub fn set_quota(&mut self, q: AgentQuota) {
+        match self.quotas.iter_mut().find(|e| e.agent == q.agent) {
+            Some(slot) => *slot = q,
+            None => {
+                self.quotas.push(q);
+                self.quotas.sort_by(|a, b| a.agent.cmp(&b.agent));
+            }
+        }
+    }
+}
+
+/// USD cost of one event. **Claude only.** We model Anthropic's prices and nobody else's, so another
+/// agent's tokens cost zero here rather than being silently priced as if they were Sonnet's — which
+/// is exactly what would happen if this fell through to the default arm (ADR-0009). The panel labels
+/// the cost as Claude's so the figure never pretends to be a total.
 fn cost_of(e: &UsageEvent, cfg: &Config) -> f64 {
+    if e.agent != crate::state::AGENT_CLAUDE {
+        return 0.0;
+    }
     let p = &cfg.prices;
     let m = e.model.to_lowercase();
     let (i, o) = if m.contains("opus") || m.contains("fable") || m.contains("mythos") {
@@ -261,8 +323,16 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config, now_ts: i64) -> Usage
     let mut evs: Vec<&UsageEvent> = events.iter().collect();
     evs.sort_by_key(|e| e.ts);
 
+    // The 5-hour billing block is ANTHROPIC's. Only Claude's tokens belong in it — Codex's have
+    // nothing to do with Claude's billing window, and folding them in would inflate the manual-limit
+    // percentage with work Anthropic never billed for.
+    let claude_evs: Vec<&&UsageEvent> = evs
+        .iter()
+        .filter(|e| e.agent == crate::state::AGENT_CLAUDE)
+        .collect();
+
     let mut blocks: Vec<(i64, i64, u64, f64)> = Vec::new(); // (start, end, tokens, weighted cost)
-    for e in &evs {
+    for e in &claude_evs {
         let fits = blocks.last().map(|b| e.ts < b.1).unwrap_or(false);
         if fits {
             let last = blocks.last_mut().unwrap();
@@ -313,23 +383,41 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config, now_ts: i64) -> Usage
     let mut week_cost = 0.0f64;
     let mut per_model: HashMap<String, u64> = HashMap::new();
     let mut daily_tokens = vec![0u64; 7];
+    let mut daily_codex = vec![0u64; 7];
 
+    // Tokens and the trend span EVERY agent — "today's work" means all of it. Cost does not: we
+    // model Anthropic's prices and nobody else's, so cost_of() returns zero for another agent's
+    // tokens and the panel labels the figure as Claude's (ADR-0009). A dollar number that silently
+    // omitted an agent while the token count beside it included one would be a lie by juxtaposition.
     for e in &evs {
         if e.ts >= week_cutoff {
             week_tokens += e.total();
             week_cost += cost_of(e, cfg);
-            *per_model.entry(short_model(&e.model)).or_insert(0) += e.total();
+            // Another agent's tokens are listed under the agent, not squeezed into Anthropic's model
+            // names — Codex's model is not a Sonnet, and calling it "other" would hide it.
+            let label = if e.agent == crate::state::AGENT_CLAUDE {
+                short_model(&e.model)
+            } else {
+                e.agent.clone()
+            };
+            *per_model.entry(label).or_insert(0) += e.total();
         }
         if e.ts >= local_midnight {
             today_tokens += e.total();
             today_cost += cost_of(e, cfg);
             daily_tokens[6] += e.total();
+            if e.agent != crate::state::AGENT_CLAUDE {
+                daily_codex[6] += e.total();
+            }
         } else {
             // yesterday=5, day before=4…
             let days_back = (local_midnight - e.ts - 1).div_euclid(86400);
             let idx = 5 - days_back;
             if (0..=5).contains(&idx) {
                 daily_tokens[idx as usize] += e.total();
+                if e.agent != crate::state::AGENT_CLAUDE {
+                    daily_codex[idx as usize] += e.total();
+                }
             }
         }
     }
@@ -341,24 +429,35 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config, now_ts: i64) -> Usage
     models.sort_by(|a, b| b.tokens.cmp(&a.tokens));
     models.truncate(3);
 
-    UsageSnapshot {
-        mode: cfg.resolved_mode().to_string(),
-        block_tokens,
-        block_limit: limit,
-        block_pct: pct,
+    // Claude's quota entry. `official` data (from the usage API) overwrites this in
+    // state::refresh_usage when it's available; a basis of "none" means we have no percentage at all
+    // and the panel shows no bar — never a guess.
+    let claude = AgentQuota {
+        agent: "claude".into(),
+        pct,
         basis: basis.to_string(),
         // Final value is stamped by the projection; build_snapshot sets the local-data baseline
         pct_valid: basis == "manual",
-        block_reset_ts: block_reset,
+        window_minutes: CLAUDE_WINDOW_MINUTES,
+        reset_ts: block_reset,
+        tokens: block_tokens,
+        limit_tokens: limit,
+        week_pct: None, // filled by state::refresh_usage in official mode
+    };
+
+    UsageSnapshot {
+        mode: cfg.resolved_mode().to_string(),
+        quotas: vec![claude],
+        block_tokens,
         max_block_tokens: max_block,
         today_tokens,
         today_cost,
         week_tokens,
         week_cost,
-        week_pct: None, // filled by state::refresh_usage in official mode
         models,
         has_data: !evs.is_empty(),
         daily_tokens,
+        daily_codex,
     }
 }
 
@@ -384,6 +483,19 @@ mod tests {
             cache_w: 0,
             cache_r: 0,
             model: "sonnet".into(),
+            agent: "claude".into(),
+        }
+    }
+
+    fn codex_ev(ts: i64, tokens: u64) -> UsageEvent {
+        UsageEvent {
+            ts,
+            input: tokens,
+            output: 0,
+            cache_w: 0,
+            cache_r: 0,
+            model: "codex".into(),
+            agent: "codex".into(),
         }
     }
 
@@ -396,7 +508,7 @@ mod tests {
         let snap = build_snapshot(&evs, &Config::default(), H + 7200);
         assert_eq!(snap.block_tokens, 150);
         // window starts at the floored hour of first activity and lasts 5 hours
-        assert_eq!(snap.block_reset_ts, H + 5 * 3600);
+        assert_eq!(snap.quota("claude").unwrap().reset_ts, H + 5 * 3600);
     }
 
     #[test]
@@ -416,7 +528,7 @@ mod tests {
         // now is well past the window end (H + 5h)
         let snap = build_snapshot(&evs, &Config::default(), H + 10 * 3600);
         assert_eq!(snap.block_tokens, 0);
-        assert_eq!(snap.block_reset_ts, 0);
+        assert_eq!(snap.quota("claude").unwrap().reset_ts, 0);
     }
 
     #[test]
@@ -424,16 +536,20 @@ mod tests {
         let mut cfg = Config::default();
         cfg.block_limit = 1000;
         let snap = build_snapshot(&[ev(H + 60, 250)], &cfg, H + 3600);
-        assert_eq!(snap.basis, "manual");
-        assert!((snap.block_pct - 0.25).abs() < 1e-9);
-        assert_eq!(snap.block_limit, 1000);
+        let q = snap.quota("claude").unwrap();
+        assert_eq!(q.basis, "manual");
+        assert!((q.pct - 0.25).abs() < 1e-9);
+        assert_eq!(q.limit_tokens, 1000);
+        assert_eq!(q.window_minutes, CLAUDE_WINDOW_MINUTES);
     }
 
     #[test]
     fn no_limit_gives_none_basis_and_no_pct() {
         let snap = build_snapshot(&[ev(H + 60, 250)], &Config::default(), H + 3600);
-        assert_eq!(snap.basis, "none");
-        assert_eq!(snap.block_pct, 0.0);
+        let q = snap.quota("claude").unwrap();
+        assert_eq!(q.basis, "none");
+        assert_eq!(q.pct, 0.0);
+        assert!(!q.pct_valid, "no basis → no percentage may drive anything");
     }
 
     #[test]
@@ -450,5 +566,60 @@ mod tests {
         let snap = build_snapshot(&[], &Config::default(), H);
         assert!(!snap.has_data);
         assert_eq!(snap.block_tokens, 0);
+    }
+
+    // --- Cross-agent token accounting (ticket 09 / ADR-0009) ---
+
+    #[test]
+    fn todays_tokens_span_every_agent() {
+        // "Today's work" means all of it — the daily battle-report bubble would undercount a day
+        // spent in Codex otherwise.
+        let now = H + 7200;
+        let snap = build_snapshot(&[ev(now, 300), codex_ev(now, 200)], &Config::default(), now);
+        assert_eq!(snap.today_tokens, 500);
+        assert_eq!(snap.week_tokens, 500);
+        assert_eq!(*snap.daily_tokens.last().unwrap(), 500);
+    }
+
+    #[test]
+    fn codex_tokens_cost_nothing_rather_than_being_priced_as_sonnet() {
+        // The trap this test exists for: cost_of() matches on the model NAME, and its fallback arm is
+        // Sonnet's price. Without the agent check, every Codex token would be silently billed at
+        // Anthropic's Sonnet rate and quietly inflate the dollar figure.
+        let now = H + 7200;
+        let claude_only = build_snapshot(&[ev(now, 1_000_000)], &Config::default(), now);
+        let with_codex = build_snapshot(
+            &[ev(now, 1_000_000), codex_ev(now, 5_000_000)],
+            &Config::default(),
+            now,
+        );
+        assert_eq!(
+            with_codex.today_cost, claude_only.today_cost,
+            "5M Codex tokens must not add a cent to the cost"
+        );
+        assert!(with_codex.today_cost > 0.0, "Claude's own cost is still counted");
+        assert_eq!(with_codex.today_tokens, 6_000_000, "…but the tokens are all there");
+    }
+
+    #[test]
+    fn codex_tokens_stay_out_of_claudes_billing_block() {
+        // The 5-hour block is Anthropic's. Codex's tokens have nothing to do with it, and folding
+        // them in would inflate the manual-limit percentage with work Anthropic never billed for.
+        let mut cfg = Config::default();
+        cfg.block_limit = 1000;
+        let snap = build_snapshot(&[ev(H + 60, 250), codex_ev(H + 60, 900)], &cfg, H + 3600);
+        assert_eq!(snap.block_tokens, 250, "only Claude's tokens are in Claude's block");
+        let q = snap.quota("claude").unwrap();
+        assert!((q.pct - 0.25).abs() < 1e-9, "Codex must not push Claude's block to 115%");
+    }
+
+    #[test]
+    fn codex_is_listed_under_its_own_name_not_squeezed_into_a_model() {
+        // short_model() would file "codex" under "other", hiding it. It isn't a Sonnet; say so.
+        let now = H + 7200;
+        let snap = build_snapshot(&[ev(now, 100), codex_ev(now, 400)], &Config::default(), now);
+        let codex = snap.models.iter().find(|m| m.model == "codex").expect("a codex row");
+        assert_eq!(codex.tokens, 400);
+        assert!(snap.models.iter().any(|m| m.model == "sonnet"));
     }
 }

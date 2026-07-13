@@ -8,56 +8,34 @@
 </head>
 <body>
   <div id="panel" class="hidden">
-    <div class="row head">
-      <span id="mode-badge" class="badge">订阅</span>
-      <select id="mode-select" data-i18n-title="billing_mode">
-        <option value="auto" data-i18n="mode_auto">自动检测</option>
-        <option value="subscription" data-i18n="mode_sub">订阅(Pro/Max)</option>
-        <option value="api" data-i18n="mode_api">API 计费</option>
-      </select>
-    </div>
+    <!-- The panel is a GLANCE. It shows what you check every day and nothing else. Setup (connect,
+         install hooks, billing mode) lives in the Settings window — those are one-time things nobody
+         looks at twice, and while they lived here they crowded out the numbers and overflowed the
+         panel. See ADR-0014 / ADR-0015. -->
 
     <button id="update-row" class="hidden update-row"></button>
 
-    <div id="sub-block">
-      <div class="label-row">
-        <span data-i18n="win5h">5 小时窗口</span>
-        <span id="block-pct" class="num">--%</span>
-      </div>
-      <div id="pixel-bar" data-i18n-aria="usage_aria"></div>
-      <div class="hint" id="block-reset" data-i18n="no_window">暂无活动窗口</div>
-      <div class="label-row hidden" id="week-row">
-        <span data-i18n="week_quota">周额度</span>
-        <span id="week-pct" class="num">--%</span>
-      </div>
-    </div>
+    <!-- One quota card per agent, built by renderQuotas(). A card is only ever rendered for an agent
+         that HAS a usable percentage — an agent with no basis gets no card at all, rather than an
+         empty one reading "--%" that occupies the space while saying nothing. -->
+    <div id="sub-block"></div>
 
     <div id="api-block" class="hidden">
       <div class="label-row"><span data-i18n="cost_today">今日成本</span><span id="cost-today" class="num big">$0.00</span></div>
-      <div class="label-row"><span data-i18n="last7">近 7 天</span><span id="cost-week" class="num">$0.00</span></div>
+      <div class="label-row"><span data-i18n="cost_7d">近 7 天成本</span><span id="cost-week" class="num">$0.00</span></div>
     </div>
 
-    <div id="trend" data-i18n-title="trend_title"></div>
+    <div class="divider"></div>
+
     <div class="label-row"><span data-i18n="tok_today">今日 tokens</span><span id="tok-today" class="num">0</span></div>
-    <div class="label-row"><span data-i18n="last7">近 7 天</span><span id="tok-week" class="num">0</span></div>
-    <div class="label-row"><span data-i18n="models">模型</span></div>
-    <div id="models" class="model-list"></div>
+    <div id="trend" data-i18n-title="trend_title"></div>
 
-    <div class="divider" id="conn-divider"></div>
-
-    <div class="label-row" id="acct-row">
-      <span data-i18n="official_usage">官方用量</span>
-      <span id="acct-status" class="num small" data-i18n="not_connected">未连接</span>
+    <!-- Shown only while something genuinely needs doing; takes you to the Settings tab that needs it,
+         and disappears for good once it's done. -->
+    <div class="setup-line hidden" id="setup-line">
+      <span id="setup-text"></span>
+      <span class="setup-go">→</span>
     </div>
-    <button id="connect-claude" data-i18n="connect_claude">连接 Claude 账号</button>
-    <div class="hint" id="acct-result"></div>
-
-    <div class="label-row" id="hook-row">
-      <span data-i18n="hook_events">hook 事件</span>
-      <span id="hook-status" class="num small" data-i18n="not_received">还没收到</span>
-    </div>
-    <button id="install-hooks" data-i18n="install_hooks">安装 Claude Code hooks</button>
-    <div class="hint" id="install-result"></div>
 
     <!-- Per-session breakdown, pinned to the very bottom so it never pushes the usage numbers around.
          The divider is inside the block, so both appear/disappear together (only when >1 session). -->
@@ -68,6 +46,16 @@
         <span id="sessions-count" class="num small"></span>
       </div>
       <div id="session-list"></div>
+    </div>
+
+    <!-- Settings goes LAST and quiet. Frequency decides placement: you check your quota daily and
+         open Settings once. It used to be a gear in the header — the first thing your eye landed on,
+         for the thing you almost never click. (It also used to be reachable ONLY from the tray, which
+         was a hole, not an inconvenience.) -->
+    <div class="divider"></div>
+    <div class="settings-row" id="open-settings" role="button" tabindex="0">
+      <span class="settings-ico" aria-hidden="true">⚙</span>
+      <span data-i18n="settings">设置</span>
     </div>
   </div>
 

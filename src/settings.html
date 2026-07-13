@@ -8,11 +8,13 @@
     :root {
       --bg: #f4f4f6; --card: #fff; --fg: #1c1c1e; --sub: #6b6b70; --line: #e3e3e6;
       --accent: #2e6b39; --field: #ececef; --field-b: #d7d7db;
+      --ok: #2e6b39; --pending: #a97514; --absent: #8a8a90;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #1e1e20; --card: #2a2a2d; --fg: #f2f2f4; --sub: #9a9aa0; --line: #38383c;
         --accent: #3a8f4c; --field: #333338; --field-b: #46464b;
+        --ok: #6cc07f; --pending: #e0a63b; --absent: #8a8a90;
       }
     }
     * { box-sizing: border-box; }
@@ -20,9 +22,24 @@
     body {
       background: var(--bg); color: var(--fg);
       font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      font-size: 13px; padding: 18px 20px; user-select: none;
+      font-size: 13px; padding: 14px 20px 18px; user-select: none;
     }
-    h1 { font-size: 15px; margin: 0 0 14px; font-weight: 600; }
+    h1 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+
+    /* Tabs. One per agent, plus General. A new agent is a new tab — the panel stays untouched. */
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+    .tab {
+      padding: 7px 12px; cursor: pointer; border: none; background: none; color: var(--sub);
+      font: inherit; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    .tab:hover { color: var(--fg); }
+    .tab.on { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+    /* An agent that isn't on this machine still gets a tab — greyed, and honest about why. Hiding it
+       would mean a Claude-only user (almost everyone) never learns Tokibean watches Codex at all. */
+    .tab.off { color: var(--absent); }
+    .pane { display: none; }
+    .pane.on { display: block; }
+
     .row {
       display: flex; align-items: center; justify-content: space-between;
       gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line);
@@ -36,56 +53,158 @@
     }
     input[type="text"].hotkey { text-align: center; cursor: pointer; min-width: 120px; }
     input[type="text"].hotkey.recording { border-color: var(--accent); color: var(--accent); }
+    input[type="text"].path { min-width: 240px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; }
     select { cursor: pointer; }
     .result { color: var(--sub); font-size: 11.5px; min-height: 14px; margin-top: 10px; }
+
+    button.act {
+      background: var(--accent); color: #fff; border: none; border-radius: 6px;
+      padding: 7px 14px; font: inherit; cursor: pointer;
+    }
+    button.act:hover { filter: brightness(1.08); }
+    button.act.ghost { background: none; color: var(--accent); border: 1px solid var(--accent); }
+
+    .status { font-size: 12px; }
+    .status.ok { color: var(--ok); }
+    .status.pending { color: var(--pending); }
+    .status.absent { color: var(--absent); }
+    .note { color: var(--sub); font-size: 11.5px; line-height: 1.55; margin: 8px 0 0; }
+    .note.step { color: var(--pending); }
+    .dir { color: var(--sub); font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+    /* Install sites: one line per config directory hooks live in. Indented under the Hooks row —
+       they explain what that one button just did (or still has to do), and where. */
+    .site { padding: 7px 0 7px 10px; border-bottom: 1px solid var(--line); border-left: 2px solid var(--line); margin-left: 2px; }
+    .site:last-child { border-bottom: none; }
+    .site-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .site-name { font-size: 12.5px; }
+    .site-what { color: var(--sub); font-size: 11px; }
+    .site-mark { font-size: 11.5px; white-space: nowrap; }
+    .site-mark.ok { color: var(--ok); }
+    .site-mark.pending { color: var(--pending); }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <h1 id="title">设置</h1>
 
-  <div class="row">
-    <label id="l-notify">系统通知</label>
-    <input type="checkbox" id="cfg-notify" />
+  <div class="tabs">
+    <button class="tab on" id="tab-general" data-pane="general">通用</button>
+    <button class="tab" id="tab-claude" data-pane="claude">Claude Code</button>
+    <button class="tab" id="tab-codex" data-pane="codex">Codex</button>
   </div>
-  <div class="row">
-    <label id="l-minsecs">不足此秒数不提醒</label>
-    <input type="number" id="cfg-minsecs" min="0" max="3600" />
+
+  <!-- General: everything that isn't about a specific agent -->
+  <div class="pane on" id="pane-general">
+    <div class="row">
+      <label id="l-notify">系统通知</label>
+      <input type="checkbox" id="cfg-notify" />
+    </div>
+    <div class="row">
+      <label id="l-minsecs">不足此秒数不提醒</label>
+      <input type="number" id="cfg-minsecs" min="0" max="3600" />
+    </div>
+    <div class="row">
+      <label id="l-sound">提示音</label>
+      <input type="checkbox" id="cfg-sound" />
+    </div>
+    <div class="row">
+      <label id="l-autostart">开机启动</label>
+      <input type="checkbox" id="cfg-autostart" />
+    </div>
+    <div class="row">
+      <label id="l-hotkey">快捷键</label>
+      <input type="text" id="cfg-bosskey" class="hotkey" readonly />
+    </div>
+    <div class="row">
+      <label id="l-skin">皮肤</label>
+      <select id="cfg-skin">
+        <option value="classic">墩墩(默认)</option>
+        <option value="bean">豆豆</option>
+        <option value="tabby">橘猫·摸鱼</option>
+      </select>
+    </div>
+    <div class="row">
+      <label id="l-size">大小</label>
+      <select id="cfg-size">
+        <option value="0.5">小</option>
+        <option value="0.75">中(默认)</option>
+        <option value="1">大</option>
+        <option value="1.25">特大</option>
+      </select>
+    </div>
   </div>
-  <div class="row">
-    <label id="l-sound">提示音</label>
-    <input type="checkbox" id="cfg-sound" />
+
+  <!-- Claude Code -->
+  <div class="pane" id="pane-claude">
+    <div class="row">
+      <label id="l-claude-state">状态</label>
+      <span class="status" id="claude-status"></span>
+    </div>
+    <div class="row">
+      <label id="l-claude-hooks">Hooks</label>
+      <button class="act" id="claude-install"></button>
+    </div>
+    <!-- One row per install site. The desktop app and the Windows terminal share one ~/.claude, so
+         they are ONE site (named by the entrypoints actually seen); each WSL distro is its own. -->
+    <div id="claude-sites"></div>
+    <div class="row">
+      <label id="l-claude-acct">Claude 账号</label>
+      <button class="act ghost" id="claude-connect"></button>
+    </div>
+    <div class="row">
+      <label id="l-claude-mode">计费模式</label>
+      <select id="cfg-mode">
+        <option value="auto">自动检测</option>
+        <option value="subscription">订阅(Pro/Max)</option>
+        <option value="api">API 计费</option>
+      </select>
+    </div>
+    <div class="row" id="claude-dir-row">
+      <label id="l-claude-dir">配置目录</label>
+      <span class="dir" id="claude-dir"></span>
+    </div>
+    <!-- Only when detection failed. It doesn't guess — it asks. -->
+    <div class="hidden" id="claude-add">
+      <p class="note" id="claude-add-note"></p>
+      <div class="row">
+        <input type="text" class="path" id="claude-path" placeholder="/path/to/.claude" />
+        <button class="act ghost" id="claude-save-path"></button>
+      </div>
+    </div>
+    <p class="note" id="claude-note"></p>
   </div>
-  <div class="row">
-    <label id="l-autostart">开机启动</label>
-    <input type="checkbox" id="cfg-autostart" />
+
+  <!-- Codex -->
+  <div class="pane" id="pane-codex">
+    <div class="row">
+      <label id="l-codex-state">状态</label>
+      <span class="status" id="codex-status"></span>
+    </div>
+    <div class="row" id="codex-hooks-row">
+      <label id="l-codex-hooks">Hooks</label>
+      <button class="act" id="codex-install"></button>
+    </div>
+    <div class="row" id="codex-dir-row">
+      <label id="l-codex-dir">配置目录</label>
+      <span class="dir" id="codex-dir"></span>
+    </div>
+    <div class="hidden" id="codex-add">
+      <p class="note" id="codex-add-note"></p>
+      <div class="row">
+        <input type="text" class="path" id="codex-path" placeholder="/path/to/.codex" />
+        <button class="act ghost" id="codex-save-path"></button>
+      </div>
+    </div>
+    <p class="note" id="codex-note"></p>
   </div>
-  <div class="row">
-    <label id="l-hotkey">快捷键</label>
-    <input type="text" id="cfg-bosskey" class="hotkey" readonly />
-  </div>
-  <div class="row">
-    <label id="l-skin">皮肤</label>
-    <select id="cfg-skin">
-      <option value="classic">墩墩(默认)</option>
-      <option value="bean">豆豆</option>
-      <option value="tabby">橘猫·摸鱼</option>
-    </select>
-  </div>
-  <div class="row">
-    <label id="l-size">大小</label>
-    <select id="cfg-size">
-      <option value="0.5">小</option>
-      <option value="0.75">中(默认)</option>
-      <option value="1">大</option>
-      <option value="1.25">特大</option>
-    </select>
-  </div>
+
   <div class="result" id="result"></div>
 
   <script>
     (function () {
       const { invoke } = window.__TAURI__.core;
-      const { emit } = window.__TAURI__.event;
+      const { emit, listen } = window.__TAURI__.event;
       // Language injected by the backend (system locale) as __PET_ZH__; navigator.language is
       // unreliable in WebView2 on Windows, so it's only a last-resort fallback.
       const ZH = typeof window.__PET_ZH__ === "boolean"
@@ -95,6 +214,7 @@
       const el = (id) => document.getElementById(id);
       const T = {
         title: ["设置", "Settings"],
+        tab_general: ["通用", "General"],
         notify: ["系统通知", "Notifications"],
         minsecs: ["不足此秒数不提醒", "Skip notify under N sec"],
         sound: ["提示音", "Sound"],
@@ -112,10 +232,78 @@
         press: ["按下快捷键…", "Press a shortcut…"],
         hk_ok: ["快捷键已更新:{k}", "Hotkey updated: {k}"],
         hk_fail: ["快捷键设置失败:{e}", "Failed to set hotkey: {e}"],
+
+        // Agent panes
+        state: ["状态", "Status"],
+        hooks: ["Hooks", "Hooks"],
+        acct: ["Claude 账号", "Claude account"],
+        cfg_dir: ["配置目录", "Config directory"],
+        mode: ["计费模式", "Billing"],
+        m_auto: ["自动检测", "Auto-detect"],
+        m_sub: ["订阅(Pro/Max)", "Subscription (Pro/Max)"],
+        m_api: ["API 计费", "API billing"],
+        st_active: ["已生效", "Active"],
+        st_pending: ["待批准", "Awaiting approval"],
+        st_ready: ["已安装 hooks · 等待首个事件", "Hooks installed · waiting for the first event"],
+        st_need_hooks: ["已检测到 · hooks 还没装", "Detected · hooks not installed"],
+        st_absent: ["未检测到", "Not detected"],
+        install: ["安装 hooks", "Install hooks"],
+        reinstall: ["更新 hooks", "Update hooks"],
+        installed_ok: ["hooks 已装好", "Hooks are installed"],
+        connect: ["连接账号", "Connect account"],
+        connected: ["已连接", "Connected"],
+        connecting: ["浏览器授权中…", "Authorizing in browser…"],
+        reconnect: ["连接已失效,重新连接", "Connection expired — reconnect"],
+        installing: ["安装中…", "Installing…"],
+        savepath: ["保存", "Save"],
+        cleared: ["已恢复自动检测", "Back to auto-detection"],
+        manual: ["(手动指定)", "(set by hand)"],
+
+        // Install sites: which Claude Code, and where
+        site_windows: ["Windows", "Windows"],
+        site_local: ["本机", "This machine"],
+        site_wsl: ["WSL · {d}", "WSL · {d}"],
+        site_ok: ["hooks 已装", "Hooks installed"],
+        site_need: ["hooks 待装", "Hooks needed"],
+        ep_desktop: ["桌面版", "desktop app"],
+        ep_cli: ["终端", "terminal"],
+        ep_both: ["桌面版和终端", "desktop app and terminal"],
+        ep_none: ["还没在这里用过", "not used here yet"],
+        used_now: ["刚刚在用", "in use now"],
+        used_days: ["{n} 天前用过", "last used {n}d ago"],
+        used_today: ["今天用过", "used today"],
+
+        // The one instruction that unsticks a Codex user. Written where it's needed, not in a doc.
+        codex_approve: [
+          "hooks 已写入,但 Codex 还不会执行它们 —— 它要求你先批准。在 Codex 里执行 /hooks,批准列出的 hook。",
+          "The hooks are written, but Codex won't run them until you approve them: run /hooks inside Codex and approve them.",
+        ],
+        codex_note: [
+          "Codex 的额度直接读它自己的本地日志 —— 不用登录、不用连账号。",
+          "Codex's quota is read straight from its own local logs — no login, no account to connect.",
+        ],
+        claude_note: [
+          "连接账号后,5 小时窗口的百分比来自 Anthropic 官方接口,而不是估算。",
+          "Once connected, the 5-hour window percentage comes from Anthropic's official endpoint rather than an estimate.",
+        ],
+        absent_claude: [
+          "没找到 Claude Code 的配置目录。装好并运行一次 Claude Code,Tokibean 会自动发现它 —— 不用重启。",
+          "No Claude Code config directory found. Install Claude Code and run it once; Tokibean will notice on its own — no restart needed.",
+        ],
+        absent_codex: [
+          "没找到 Codex 的配置目录。装好并运行一次 Codex,Tokibean 会自动发现它 —— 不用重启。",
+          "No Codex config directory found. Install Codex and run it once; Tokibean will notice on its own — no restart needed.",
+        ],
+        add_note: [
+          "已经装了却没被检测到?(比如设过 CLAUDE_CONFIG_DIR / CODEX_HOME)把它的配置目录填在这里。",
+          "Installed it but we didn't find it? (e.g. you set CLAUDE_CONFIG_DIR / CODEX_HOME.) Point us at its config directory.",
+        ],
       };
       const t = (k, v) => { let s = T[k] ? T[k][ZH ? 0 : 1] : k; if (v) for (const x in v) s = s.split("{" + x + "}").join(v[x]); return s; };
-      // Static labels
+
+      // ---------- Static labels ----------
       el("title").textContent = t("title");
+      el("tab-general").textContent = t("tab_general");
       el("l-notify").textContent = t("notify");
       el("l-minsecs").textContent = t("minsecs");
       el("l-sound").textContent = t("sound");
@@ -127,7 +315,199 @@
       el("l-size").textContent = t("size");
       const zopts = { "0.5": "z_small", "0.75": "z_normal", "1": "z_large", "1.25": "z_xlarge" };
       for (const o of el("cfg-size").options) o.textContent = t(zopts[o.value] || o.value);
+      for (const a of ["claude", "codex"]) {
+        el("l-" + a + "-state").textContent = t("state");
+        el("l-" + a + "-dir").textContent = t("cfg_dir");
+        el(a + "-add-note").textContent = t("add_note");
+        el(a + "-save-path").textContent = t("savepath");
+      }
+      el("l-claude-hooks").textContent = t("hooks");
+      el("l-codex-hooks").textContent = t("hooks");
+      el("l-claude-acct").textContent = t("acct");
+      el("l-claude-mode").textContent = t("mode");
+      const mopts = { auto: "m_auto", subscription: "m_sub", api: "m_api" };
+      for (const o of el("cfg-mode").options) o.textContent = t(mopts[o.value] || o.value);
+      el("cfg-mode").addEventListener("change", (e) => {
+        invoke("set_mode", { mode: e.target.value }).catch((err) => (el("result").textContent = String(err)));
+      });
+      el("claude-note").textContent = t("claude_note");
+      el("codex-note").textContent = t("codex_note");
 
+      // ---------- Tabs ----------
+      document.querySelectorAll(".tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          document.querySelectorAll(".tab").forEach((x) => x.classList.remove("on"));
+          document.querySelectorAll(".pane").forEach((x) => x.classList.remove("on"));
+          tab.classList.add("on");
+          el("pane-" + tab.dataset.pane).classList.add("on");
+        });
+      });
+
+      // A deep link that arrives while we're already open: the window is never rebuilt to land one
+      // (that wedged the UI thread on Windows), so the tab comes over as an event instead.
+      listen("settings-tab", (e) => {
+        const want = e.payload;
+        if (want && el("tab-" + want)) el("tab-" + want).click();
+      });
+
+      // ---------- Agent panes ----------
+      // Fed by the live pet-update: detection is re-run on the heartbeat AND the moment this window
+      // opens, so what you're looking at is never stale.
+      let connected = false, reconnectNeeded = false;
+
+      // "Which Claude Code do you use?" — the honest answer is per install site. The desktop app and
+      // the Windows terminal share one ~/.claude, so they are one site; a WSL distro is another. What
+      // the user needs to see is which of them the hooks actually cover, and which one he really uses.
+      function siteLabel(s) {
+        if (s.kind === "wsl") return t("site_wsl", { d: s.name || "WSL" });
+        return t(s.kind === "windows" ? "site_windows" : "site_local");
+      }
+
+      function siteWhat(s) {
+        const eps = s.entrypoints || [];
+        const who = eps.length === 2 ? t("ep_both")
+          : eps[0] === "desktop" ? t("ep_desktop")
+          : eps[0] === "cli" ? t("ep_cli")
+          : null;
+        if (!who) return t("ep_none");
+        const days = s.last_used == null ? null
+          : Math.floor((Date.now() / 1000 - s.last_used) / 86400);
+        const when = days == null ? ""
+          : days <= 0 ? t("used_today")
+          : t("used_days", { n: days });
+        return when ? who + " · " + when : who;
+      }
+
+      function renderSites(sites) {
+        const box = el("claude-sites");
+        box.innerHTML = "";
+        // One site is the ordinary case (no WSL, no split) — the Hooks row already says it all.
+        if (!sites || sites.length < 2) return;
+        for (const s of sites) {
+          const row = document.createElement("div");
+          row.className = "site";
+          const top = document.createElement("div");
+          top.className = "site-top";
+          const name = document.createElement("span");
+          name.className = "site-name";
+          name.textContent = siteLabel(s);
+          const mark = document.createElement("span");
+          mark.className = "site-mark " + (s.hooks_incomplete ? "pending" : "ok");
+          mark.textContent = (s.hooks_incomplete ? "⚠ " : "✓ ") + t(s.hooks_incomplete ? "site_need" : "site_ok");
+          top.append(name, mark);
+          const what = document.createElement("div");
+          what.className = "site-what";
+          what.textContent = siteWhat(s);
+          row.append(top, what);
+          box.appendChild(row);
+        }
+      }
+
+      function renderAgent(a, presence, seen) {
+        const tab = el("tab-" + a);
+        const st = el(a + "-status");
+        const here = presence && presence.installed;
+        tab.classList.toggle("off", !here);
+
+        // Status: absent → detected-but-no-hooks → written-but-not-live → active.
+        // "Active" is only ever claimed because an event ACTUALLY arrived (ADR-0006).
+        let cls, text;
+        if (!here) {
+          cls = "absent"; text = t("st_absent");
+        } else if (presence.hooks_incomplete) {
+          cls = "pending"; text = t("st_need_hooks");
+        } else if (seen) {
+          cls = "ok"; text = t("st_active");
+        } else if (a === "codex") {
+          // Codex hashes each hook and won't run it until you approve it — written is NOT live.
+          cls = "pending"; text = t("st_pending");
+        } else {
+          cls = "pending"; text = t("st_ready");
+        }
+        st.className = "status " + cls;
+        st.textContent = text;
+
+        // Hooks button: only meaningful for an agent that's actually here.
+        const btn = el(a + "-install");
+        const hooksRow = btn.closest(".row");
+        hooksRow.classList.toggle("hidden", !here);
+        if (here) {
+          btn.disabled = false;
+          btn.textContent = presence.hooks_incomplete ? t("install") : t("installed_ok");
+          btn.classList.toggle("ghost", !presence.hooks_incomplete);
+        }
+
+        if (a === "claude") renderSites(presence && presence.sites);
+
+        // Where we looked, and the manual override — shown only when detection failed, so the 99%
+        // who never need it never see it.
+        el(a + "-dir-row").classList.toggle("hidden", !here);
+        el(a + "-dir").textContent =
+          (presence ? presence.dir : "") + (presence && presence.manual ? " " + t("manual") : "");
+        el(a + "-add").classList.toggle("hidden", here);
+        if (!here && presence) el(a + "-path").value = presence.manual ? presence.dir : "";
+        el(a + "-note").textContent = here
+          ? t(a === "codex" ? "codex_note" : "claude_note")
+          : t(a === "codex" ? "absent_codex" : "absent_claude");
+
+        // Codex's trust gate gets its instruction right where the user is stuck.
+        if (a === "codex" && here && !presence.hooks_incomplete && !seen) {
+          el("codex-note").textContent = t("codex_approve");
+          el("codex-note").classList.add("step");
+        } else if (a === "codex") {
+          el("codex-note").classList.remove("step");
+        }
+      }
+
+      function renderClaudeAccount() {
+        const btn = el("claude-connect");
+        const done = connected && !reconnectNeeded;
+        btn.textContent = reconnectNeeded ? t("reconnect") : done ? t("connected") : t("connect");
+        btn.disabled = done;
+      }
+
+      function applyUpdate(u) {
+        const seen = u.agents_seen || [];
+        for (const a of ["claude", "codex"]) {
+          const p = (u.agents || []).find((x) => x.agent === a);
+          renderAgent(a, p, seen.includes(a));
+        }
+        reconnectNeeded = !!u.reconnect;
+        renderClaudeAccount();
+      }
+      invoke("get_update").then(applyUpdate).catch(() => {});
+      listen("pet-update", (e) => applyUpdate(e.payload));
+
+      // ---------- Actions ----------
+      el("claude-install").addEventListener("click", () => {
+        el("result").textContent = t("installing");
+        invoke("install_hooks")
+          .then((msg) => { el("result").textContent = msg; return invoke("get_update").then(applyUpdate); })
+          .catch((err) => (el("result").textContent = String(err)));
+      });
+      el("codex-install").addEventListener("click", () => {
+        el("result").textContent = t("installing");
+        invoke("install_codex_hooks")
+          .then((msg) => { el("result").textContent = msg; return invoke("get_update").then(applyUpdate); })
+          .catch((err) => (el("result").textContent = String(err)));
+      });
+      el("claude-connect").addEventListener("click", () => {
+        el("result").textContent = t("connecting");
+        invoke("connect_claude")
+          .then((msg) => { connected = true; reconnectNeeded = false; el("result").textContent = msg; renderClaudeAccount(); })
+          .catch((err) => (el("result").textContent = String(err)));
+      });
+
+      for (const a of ["claude", "codex"]) {
+        el(a + "-save-path").addEventListener("click", () => {
+          const dir = el(a + "-path").value.trim();
+          invoke("set_agent_dir", { agent: a, dir })
+            .then((msg) => { el("result").textContent = dir ? msg : t("cleared"); return invoke("get_update").then(applyUpdate); })
+            .catch((err) => (el("result").textContent = String(err)));
+        });
+      }
+
+      // ---------- General ----------
       let bossKeyAccel = "CommandOrControl+Shift+B";
       function prettyAccel(a) {
         const parts = a.split("+").map((p) => {
@@ -207,11 +587,18 @@
         el("cfg-skin").value = c.skin || "classic";
         el("cfg-size").value = String(c.pet_scale || 0.75);
         if (c.boss_key) { bossKeyAccel = c.boss_key; bossInput.value = prettyAccel(c.boss_key); }
+        connected = !!c.connected;
+        if (c.mode) el("cfg-mode").value = c.mode;
+        renderClaudeAccount();
       });
       // Reflect the real OS-level autostart state, not a stored copy
       invoke("plugin:autostart|is_enabled")
         .then((on) => { el("cfg-autostart").checked = !!on; })
         .catch(() => {});
+
+      // Deep-link: the panel's "hooks aren't installed →" line opens us straight on the right tab.
+      const want = new URLSearchParams(location.search).get("tab");
+      if (want && el("tab-" + want)) el("tab-" + want).click();
     })();
   </script>
 </body>

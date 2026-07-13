@@ -13,12 +13,40 @@
     mode_api: ["API 计费", "API billing"],
     billing_mode: ["计费模式", "Billing mode"],
     badge_sub: ["订阅", "Sub"],
-    win5h: ["5 小时窗口", "5-hour window"],
+    // A quota window's length is rendered FROM the agent's own data — Claude's block is 5 hours,
+    // but Codex's free plan reports a 30-day window. Never hard-code "5h".
+    win_hours: ["{n} 小时窗口", "{n}-hour window"],
+    win_days: ["{n} 天窗口", "{n}-day window"],
+    win_week: ["周窗口", "Weekly window"],
+    win_mins: ["{n} 分钟窗口", "{n}-minute window"],
     usage_aria: ["窗口用量", "Window usage"],
+    // The panel's one line about setup. Says ONE thing — the next step that unblocks you — and links
+    // to the Settings tab where you can do it. Gone for good once there's nothing to do.
+    setup_no_agent: [
+      "没检测到 Claude Code 或 Codex,宠物暂时无事可做",
+      "No Claude Code or Codex found — nothing for the pet to watch yet",
+    ],
+    setup_hooks: ["{a} 的 hooks 还没装,去装一下", "{a}'s hooks aren't installed yet"],
+    // Which install, not just which agent: on Windows a user can have Claude Code in three places
+    // (desktop app, terminal, WSL) and only the WSL one be un-hooked. "Claude Code 的 hooks 还没装"
+    // then reads as a lie to someone whose desktop app is plainly being watched.
+    setup_hooks_site: [
+      "{s} 里的 Claude Code hooks 还没装,去装一下",
+      "Claude Code's hooks aren't installed in {s}",
+    ],
+    site_windows: ["Windows", "Windows"],
+    site_local: ["本机", "this machine"],
+    site_wsl: ["WSL · {d}", "WSL · {d}"],
+    setup_codex_approve: [
+      "Codex 的 hooks 还没生效 —— 需要你在 Codex 里批准",
+      "Codex's hooks aren't live yet — Codex needs you to approve them",
+    ],
+    first_run_bubble: ["点我看用量!", "Click me for usage!"],
     no_window: ["暂无活动窗口", "No active window"],
-    week_quota: ["周额度", "Weekly quota"],
-    cost_today: ["今日成本", "Today's cost"],
-    last7: ["近 7 天", "Last 7 days"],
+    // Cost is Claude-only: we model Anthropic's prices and nobody else's. The label says so,
+    // so a two-agent token count next to a one-agent dollar figure can't read as a total.
+    cost_today: ["今日成本(Claude)", "Today's cost (Claude)"],
+    cost_7d: ["近 7 天成本", "Cost, last 7 days"],
     trend_title: ["近 7 天逐日用量", "Daily usage, last 7 days"],
     tok_today: ["今日 tokens", "Today's tokens"],
     models: ["模型", "Models"],
@@ -50,7 +78,6 @@
     connected_official: ["已连接·官方数据", "Connected · official data"],
     connected: ["已连接", "Connected"],
     authorizing: ["浏览器授权中…", "Authorizing in browser…"],
-    no_claude_data: ["没找到 ~/.claude 数据", "No ~/.claude data found"],
     hook_ok: ["已连通(最近:{ev})", "Connected (last: {ev})"],
     sessions_n: [" · {n} 会话", " · {n} sessions"],
     go_install: ["还没收到,去装 hooks →", "Nothing yet — install hooks →"],
@@ -68,6 +95,8 @@
     update_checking: ["检查更新中…", "Checking for updates…"],
     update_error: ["检查更新失败,点重试", "Update check failed — retry"],
     settings: ["设置", "Settings"],
+    // Weekly cap is the harsher limit — running out locks you out for the WEEK, not five hours.
+    week_quota: ["周额度", "Weekly"],
     sessions_label: ["会话", "Sessions"],
     st_working: ["工作中", "working"],
     st_waiting: ["等你输入", "waiting"],
@@ -118,6 +147,13 @@
     // Grow upward from the feet so the pet stays planted on the ground as it scales.
     canvas.style.transformOrigin = "bottom center";
     canvas.style.transform = scale === 1 ? "" : "scale(" + scale + ")";
+    // The canvas keeps its 200×184 CSS box at every scale (so pet.js and every skin still draw into a
+    // fixed 200×184 space), which means an enlarged pet spills OUT of that box — upward, since it
+    // grows from its feet. In the up-layout that spill lands in the panel's empty area and nobody
+    // notices. In the BELOW layout the canvas is flush with the window's top edge, so the spill goes
+    // straight past it and the window clips the pet's head off (46px of it at the largest size).
+    // Publish the overflow so the below-layout can reserve exactly that much room above the box.
+    document.body.style.setProperty("--pet-overflow", CANVAS_H0 * (scale - 1) + "px");
   }
   applyCanvasScale(DEFAULT_SCALE);
   const panel = document.getElementById("panel");
@@ -156,10 +192,7 @@
       oops: cur.oops,
       bgCount: cur.bg_count,
       agentCount: cur.agent_count,
-      resetSecs:
-        cur.usage && cur.usage.block_reset_ts > 0
-          ? cur.usage.block_reset_ts - Math.floor(Date.now() / 1000)
-          : null,
+      resetSecs: soonestReset(),
       gazeX,
       gazeY,
       tickle: performance.now() < tickleUntil,
@@ -196,16 +229,153 @@
   const SESS_ICON = { working: "▶", attention: "‖", done: "✓", idle: "·" };
   const SESS_LABEL = { working: "st_working", attention: "st_waiting", done: "st_done", idle: "st_idle" };
 
+  // Seconds until the pet could work again: the EARLIEST reset among the agents that have a live
+  // window. The pet only sleeps once every agent is exhausted (ADR-0005), so the first window to
+  // roll over is the one that wakes it.
+  function soonestReset() {
+    const now = Math.floor(Date.now() / 1000);
+    const resets = ((cur.usage && cur.usage.quotas) || [])
+      .filter((q) => q.reset_ts > now)
+      .map((q) => q.reset_ts - now);
+    return resets.length ? Math.min(...resets) : null;
+  }
+
   // ---------- Panel rendering ----------
   const el = (id) => document.getElementById(id);
 
-  // Pixel progress bar: 10 cells
-  const bar = el("pixel-bar");
-  for (let i = 0; i < 10; i++) bar.appendChild(document.createElement("span"));
   // 7-day trend bars
   const trend = el("trend");
   for (let i = 0; i < 7; i++) trend.appendChild(document.createElement("span"));
   trend.lastChild.className = "today";
+
+  const AGENT_NAME = { claude: "Claude", codex: "Codex" };
+
+  // A quota window's own length, spelled out. Read FROM the data — Claude's block is 5h, but Codex's
+  // free plan reports 43200 minutes (thirty days). Hard-coding "5h" is wrong for anyone but Claude.
+  function windowLabel(mins) {
+    if (!mins) return "";
+    if (mins % (24 * 60) === 0) {
+      const d = mins / (24 * 60);
+      return d === 7 ? t("win_week") : t("win_days", { n: d });
+    }
+    if (mins % 60 === 0) return t("win_hours", { n: mins / 60 });
+    return t("win_mins", { n: mins });
+  }
+
+  /// One quota card: title, percentage, the 10-cell pixel bar, the reset line — and, for Claude, the
+  /// weekly rail underneath.
+  function buildQuotaCard(q) {
+    const card = document.createElement("div");
+    card.className = "quota-card";
+
+    const head = document.createElement("div");
+    head.className = "label-row";
+    const title = document.createElement("span");
+    const win = windowLabel(q.window_minutes);
+    title.textContent = (AGENT_NAME[q.agent] || q.agent) + (win ? " · " + win : "");
+    const pct = document.createElement("span");
+    pct.className = "num";
+    pct.textContent = q.pct_valid ? Math.round(q.pct * 100) + "%" : "--%";
+    head.appendChild(title);
+    head.appendChild(pct);
+
+    // The 5-hour window: DISCRETE blocks. Ten of them, chunky, gapped — time you spend a block at a
+    // time, in the pet's own pixel language.
+    const bar = document.createElement("div");
+    bar.className = "pixel-bar";
+    bar.setAttribute("aria-label", t("usage_aria"));
+    const lit = q.pct_valid ? Math.round(Math.min(q.pct, 1) * 10) : 0;
+    for (let i = 0; i < 10; i++) {
+      const c = document.createElement("span");
+      if (i < lit) {
+        c.className = "on";
+        if (q.pct >= 1.0) c.classList.add("full");
+        else if (q.pct >= 0.8) c.classList.add("warn");
+      }
+      bar.appendChild(c);
+    }
+
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = resetLine(q);
+
+    card.appendChild(head);
+    card.appendChild(bar);
+    card.appendChild(hint);
+
+    // The WEEKLY quota (Claude, official mode). Deliberately a different SHAPE, not just a different
+    // colour: a thin CONTINUOUS rail, not ten discrete blocks.
+    //
+    // They are different quantities with different consequences — running out of the 5-hour window
+    // costs you five hours; running out of the weekly one locks you out for the rest of the week. Drawn
+    // identically, the eye reads them as the same measure and compares them. Drawn as blocks-vs-rail,
+    // it reads them as "how much of today" vs "how much of the week", which is what they are.
+    //
+    // (Colour alone can't carry this: a colourblind user, or anyone glancing, sees only the geometry.)
+    if (q.week_pct !== null && q.week_pct !== undefined) {
+      const wk = document.createElement("div");
+      wk.className = "week";
+      const wrow = document.createElement("div");
+      wrow.className = "week-row";
+      const wl = document.createElement("span");
+      wl.textContent = t("week_quota");
+      const wv = document.createElement("span");
+      wv.className = "num week-num";
+      wv.textContent = Math.round(q.week_pct * 100) + "%";
+      wrow.appendChild(wl);
+      wrow.appendChild(wv);
+
+      const rail = document.createElement("div");
+      rail.className = "week-rail";
+      const fill = document.createElement("i");
+      fill.style.width = Math.min(q.week_pct, 1) * 100 + "%";
+      // The weekly cap is the harsher one — escalate earlier and say so in text, not just in colour.
+      if (q.week_pct >= 1.0) wk.classList.add("full");
+      else if (q.week_pct >= 0.8) wk.classList.add("warn");
+      rail.appendChild(fill);
+
+      wk.appendChild(wrow);
+      wk.appendChild(rail);
+      card.appendChild(wk);
+    }
+    return card;
+  }
+
+  /// The line under a quota bar: when it resets, and what the percentage is based on.
+  function resetLine(q) {
+    if (q.reset_ts > 0) {
+      const left = q.reset_ts - Math.floor(Date.now() / 1000);
+      const at = new Date(q.reset_ts * 1000);
+      const hh = String(at.getHours()).padStart(2, "0");
+      const mm = String(at.getMinutes()).padStart(2, "0");
+      const note =
+        q.basis === "official"
+          ? t("official_data")
+          : t("limit_manual", { v: fmtTokens(q.limit_tokens) });
+      return t("reset_line", { hh, mm, left: fmtCountdown(left), note });
+    }
+    if (q.basis === "official") return t("no_window_official");
+    return q.pct_valid ? t("no_window2") : t("usage_need_connect");
+  }
+
+  function renderQuotas(quotas) {
+    const box = el("sub-block");
+    box.textContent = "";
+    // No basis, no card. An "--%" card is an empty seat: it takes the space where the number belongs
+    // and tells you nothing. The setup line below says what to do about it instead.
+    const real = (quotas || []).filter((q) => q.pct_valid);
+    real.forEach((q, i) => {
+      // A divider between agents, so Claude's block and Codex's read as separate things rather than
+      // one continuous list of bars.
+      if (i > 0) {
+        const d = document.createElement("div");
+        d.className = "divider";
+        box.appendChild(d);
+      }
+      box.appendChild(buildQuotaCard(q));
+    });
+    box.classList.toggle("hidden", !real.length);
+  }
 
   // Per-session list: one row per parallel session — its state icon, what it's running
   // (the tool if mid-call, else the state label), and how long it's been in that state.
@@ -220,6 +390,7 @@
     el("sessions-count").textContent = "×" + list.length;
     const box = el("session-list");
     box.textContent = "";
+    const multiAgent = new Set(list.map((s) => s.agent)).size > 1;
     for (const s of list) {
       const row = document.createElement("div");
       row.className = "s-row s-" + s.state;
@@ -228,7 +399,10 @@
       ic.textContent = SESS_ICON[s.state] || "·";
       const label = document.createElement("span");
       label.className = "s-label";
-      label.textContent = s.cwd || t(SESS_LABEL[s.state] || "st_idle");
+      const what = s.cwd || t(SESS_LABEL[s.state] || "st_idle");
+      // Name the agent too — with several agents running, "which one needs me?" must be answerable
+      // in one glance. Only worth the space once more than one agent is actually in the list.
+      label.textContent = multiAgent ? (AGENT_NAME[s.agent] || s.agent) + " · " + what : what;
       const time = document.createElement("span");
       time.className = "s-time";
       time.textContent = fmtDur(s.secs || 0);
@@ -239,119 +413,96 @@
     }
   }
 
+  // The one line the panel keeps about setup. It is an INVITATION, not a form: it appears only while
+  // something genuinely needs doing, names the single most useful next step, and takes you to Settings
+  // where you can actually do it. Once done, it's gone for good. (ADR-0014: setup is not something you
+  // should have to look at every day on the surface you open to check your quota.)
+  //
+  // Priority matters — say ONE thing, the thing that unblocks them:
+  //   1. No agent at all → there is nothing this pet can do; say so plainly.
+  //   2. An agent is here but its hooks aren't → that's why the pet never moves.
+  //   3. Codex's hooks are written but it hasn't run them → the trust gate; this is the step people
+  //      get stuck on, and they'd never guess it.
+  function siteLabel(s) {
+    if (s.kind === "wsl") return t("site_wsl", { d: s.name || "WSL" });
+    return t(s.kind === "windows" ? "site_windows" : "site_local");
+  }
+
+  function renderSetupLine() {
+    const agents = cur.agents || [];
+    const seen = cur.agents_seen || [];
+    const here = agents.filter((a) => a.installed);
+    const line = el("setup-line");
+
+    let text = null, tab = "general";
+    if (!here.length) {
+      text = t("setup_no_agent");
+    } else {
+      const needsHooks = here.find((a) => a.hooks_incomplete);
+      const codex = here.find((a) => a.agent === "codex");
+      if (needsHooks) {
+        // Name the place when there is more than one, so the line can't be read as "your Claude
+        // Code isn't hooked up" by someone whose other install is working fine.
+        const sites = needsHooks.sites || [];
+        const gaps = sites.filter((s) => s.hooks_incomplete);
+        text = sites.length > 1 && gaps.length === 1
+          ? t("setup_hooks_site", { s: siteLabel(gaps[0]) })
+          : t("setup_hooks", { a: AGENT_NAME[needsHooks.agent] || needsHooks.agent });
+        tab = needsHooks.agent;
+      } else if (codex && !seen.includes("codex")) {
+        // Written, but Codex won't run a hook until it's approved. Nothing else will tell them.
+        text = t("setup_codex_approve");
+        tab = "codex";
+      }
+    }
+    line.classList.toggle("hidden", !text);
+    if (text) {
+      el("setup-text").textContent = text;
+      line.dataset.tab = tab;
+    }
+  }
+
   function renderPanel() {
     renderSessions();
     const u = cur.usage;
     if (!u) return;
 
     const isSub = u.mode === "subscription";
-    el("mode-badge").textContent = isSub ? t("badge_sub") : "API";
-    el("sub-block").classList.toggle("hidden", !isSub);
     el("api-block").classList.toggle("hidden", isSub);
 
+    // Whether a percentage is trustworthy is decided by the backend (projection::usage_flags) and
+    // stamped onto each quota as pct_valid, so that rule isn't duplicated across the IPC seam.
     if (isSub) {
-      // Whether the percentage is trustworthy is decided by the backend (projection::usage_flags)
-      // and sent as u.pct_valid, so this rule isn't duplicated across the IPC seam.
-      const known = u.pct_valid;
-      const pct = Math.min(u.block_pct, 1.5);
-      el("block-pct").textContent = known ? Math.round(u.block_pct * 100) + "%" : "--%";
-      const cells = bar.children;
-      const lit = known ? Math.round(Math.min(pct, 1) * 10) : 0;
-      for (let i = 0; i < 10; i++) {
-        const c = cells[i];
-        c.className = "";
-        if (i < lit) {
-          c.classList.add("on");
-          if (u.block_pct >= 1.0) c.classList.add("full");
-          else if (u.block_pct >= 0.8) c.classList.add("warn");
-        }
-      }
-      if (u.block_reset_ts > 0) {
-        const left = u.block_reset_ts - Math.floor(Date.now() / 1000);
-        const resetAt = new Date(u.block_reset_ts * 1000);
-        const hh = String(resetAt.getHours()).padStart(2, "0");
-        const mm = String(resetAt.getMinutes()).padStart(2, "0");
-        const limitNote =
-          u.basis === "official"
-            ? t("official_data")
-            : t("limit_manual", { v: fmtTokens(u.block_limit) });
-        el("block-reset").textContent = t("reset_line", {
-          hh,
-          mm,
-          left: fmtCountdown(left),
-          note: limitNote,
-        });
-      } else {
-        // No active window (official/manual) or not connected at all
-        el("block-reset").textContent = u.basis === "official"
-          ? t("no_window_official")
-          : known
-          ? t("no_window2")
-          : t("usage_need_connect");
-      }
-      if (u.basis === "official") el("acct-status").textContent = t("connected_official");
-      // Weekly quota (only available in official mode)
-      const hasWeek =
-        u.basis === "official" && u.week_pct !== null && u.week_pct !== undefined;
-      el("week-row").classList.toggle("hidden", !hasWeek);
-      if (hasWeek) el("week-pct").textContent = Math.round(u.week_pct * 100) + "%";
+      renderQuotas(u.quotas);
     } else {
       el("cost-today").textContent = fmtCost(u.today_cost);
       el("cost-week").textContent = fmtCost(u.week_cost);
     }
 
-    // Normalize trend bar heights against the 7-day maximum
+    // Normalize trend bar heights against the 7-day maximum. Each bar stacks the Codex share on top
+    // of Claude's, so a day spent in Codex is visible as Codex's rather than blended into one bar.
     if (u.daily_tokens && u.daily_tokens.length === 7) {
       const max = Math.max(...u.daily_tokens, 1);
+      const codexDaily = u.daily_codex || [];
       for (let i = 0; i < 7; i++) {
         const cell = trend.children[i];
-        cell.style.height = Math.max(2, Math.round((u.daily_tokens[i] / max) * 24)) + "px";
-        cell.title = fmtTokens(u.daily_tokens[i]);
+        const total = u.daily_tokens[i];
+        const cx = codexDaily[i] || 0;
+        const h = Math.max(2, Math.round((total / max) * 24));
+        cell.style.height = h + "px";
+        // The Codex slice, as a fraction of this bar, drawn from the top down
+        const cxFrac = total > 0 ? cx / total : 0;
+        cell.style.setProperty("--codex", Math.round(cxFrac * 100) + "%");
+        cell.classList.toggle("mixed", cx > 0 && cx < total);
+        cell.classList.toggle("all-codex", cx > 0 && cx === total);
+        cell.title =
+          cx > 0
+            ? fmtTokens(total) + " (Codex " + fmtTokens(cx) + ")"
+            : fmtTokens(total);
       }
     }
     el("tok-today").textContent = fmtTokens(u.today_tokens);
-    el("tok-week").textContent = fmtTokens(u.week_tokens);
-    const mbox = el("models");
-    mbox.textContent = "";
-    if (u.models.length) {
-      u.models.forEach((m) => {
-        const line = document.createElement("div");
-        const name = document.createElement("span");
-        name.className = "m-name";
-        name.textContent = "· " + m.model;
-        const val = document.createElement("span");
-        val.textContent = fmtTokens(m.tokens);
-        line.appendChild(name);
-        line.appendChild(val);
-        mbox.appendChild(line);
-      });
-    } else {
-      mbox.textContent = u.has_data ? "--" : t("no_claude_data");
-    }
-
-    const sess = cur.session_count > 1 ? t("sessions_n", { n: cur.session_count }) : "";
-    // hooksIncomplete = a port marker is missing from settings.json (something to install).
-    // hooks_seen = at least one event has actually reached us (end-to-end proven).
-    const hooksInstalled = !hooksIncomplete;
-    el("hook-status").textContent = cur.hooks_seen
-      ? t("hook_ok", { ev: cur.last_event || "--" }) + sess
-      : hooksInstalled
-      ? t("hook_installed") // installed but no event yet — likely needs a Claude Code restart
-      : t("go_install");
-    // A dead refresh token (reconnect) counts as NOT connected — re-surface the connect button/row.
-    const acctDone = (u.basis === "official" || cfgConnected) && !u.reconnect;
-    if (u.reconnect) el("acct-status").textContent = t("reconnect_needed");
-    // Install button only when something is genuinely missing — not merely because no event
-    // has arrived yet (installed + waiting for a restart shouldn't nag to reinstall)
-    el("install-hooks").classList.toggle("hidden", hooksInstalled);
-    el("connect-claude").classList.toggle("hidden", acctDone);
-    // Once connected / working, drop the redundant status rows — show them only when action is needed
-    el("acct-row").classList.toggle("hidden", acctDone);
-    el("hook-row").classList.toggle("hidden", cur.hooks_seen);
-    // The install-result text belongs to the button — hide it once there's nothing to install
-    el("install-result").classList.toggle("hidden", hooksInstalled);
-    // Nothing below the divider when both sections are fully done
-    el("conn-divider").classList.toggle("hidden", acctDone && cur.hooks_seen);
+    renderSetupLine();
 
     // In-app updater row: only visible when an update is actually pending / downloading.
     // "Up to date" / "checking" are NOT shown here — a manual check reports those via the dialog.
@@ -407,6 +558,26 @@
   //   PET_CANVAS_TOP  empty space above the pet drawing inside the canvas (dome top ≈ 64px down)
   //   FULL_H     pre-allocated collapsed height on Windows/macOS (never resized after startup — that's
   //              what kills the stale-frame jump on open); = scaled canvas + fixed panel room
+  // How much window height the panel gets. The panel overlaps the canvas by PANEL_OVERLAP (its
+  // negative margin-bottom), so a panel of height H needs (H - PANEL_OVERLAP) px above the canvas.
+  //
+  // THESE THREE NUMBERS ARE ONE FACT, in three places — keep them in sync or the panel gets clipped:
+  //   · PANEL_MAX_H here
+  //   · `body.prealloc #panel { max-height }` in style.css   (must equal PANEL_MAX_H)
+  //   · the panel allowance in src-tauri/src/main.rs's setup  (must equal PANEL_MAX_H - PANEL_OVERLAP)
+  //
+  // Sized for the WORST panel a real user actually has. Note "real": an earlier attempt measured a
+  // SYNTHETIC panel (two quota cards, banner, setup line, five sessions) at 399px and set the cap to
+  // 500 — and a real one promptly overflowed it, because the mock had left out the weekly-quota row,
+  // the three-model breakdown, and reset lines that wrap to two lines. A real connected account with
+  // both agents runs to ~580px. Measure the thing, not a model of the thing.
+  //
+  // Past this the panel scrolls internally rather than being cut off — the backstop for a long
+  // session list. But scrolling is a LAST RESORT, not the plan: whatever scrolls out of sight is, by
+  // definition, the top of the panel, and the top is where the headline numbers are.
+  const PANEL_MAX_H = 640;
+  const PANEL_OVERLAP = 60; // #panel's negative margin-bottom in style.css
+
   let BASE_H, WIN_W, CANVAS_H, PAD_B, PET_CANVAS_TOP, FULL_H, COLLAPSED_H;
   function recomputeGeom(scale) {
     BASE_H = Math.round(340 * scale);
@@ -414,7 +585,7 @@
     CANVAS_H = Math.round(184 * scale); // visual pet height (canvas is CSS 184, transform-scaled)
     PAD_B = 4;                          // body padding-bottom is a fixed 4px CSS gap, not scaled
     PET_CANVAS_TOP = Math.round(64 * scale);
-    FULL_H = Math.round(CANVAS_H + PAD_B + 412);
+    FULL_H = Math.round(CANVAS_H + PAD_B + (PANEL_MAX_H - PANEL_OVERLAP));
     COLLAPSED_H = PREALLOC ? FULL_H : BASE_H;
   }
   recomputeGeom(DEFAULT_SCALE);
@@ -546,6 +717,7 @@
         // so it never flashes above then jumps below; then fade it in at the final spot.
         panel.style.opacity = "0";
         panel.classList.remove("hidden");
+        panel.scrollTop = 0; // if it ever does scroll, never open it scrolled past the headline numbers
         // The user wants to see data: ask the backend to refresh official usage once (it's debounced)
         invoke("panel_opened").catch(() => {});
         // Keep the whole window interactive while open so panel hover is reliable at any height
@@ -568,6 +740,11 @@
         invoke("set_panel_open", { open: false }).catch(() => {});
       }
     } finally {
+      // Always restore opacity, even if fitPanel() threw. Opening sets it to 0 to measure and place
+      // the panel before revealing it; without this, one failure anywhere in there leaves the panel
+      // expanded but fully transparent — the user clicks, nothing appears, and clicking again just
+      // closes the panel they never saw.
+      panel.style.opacity = "";
       resizing = false;
     }
   }
@@ -721,17 +898,41 @@
     tickleUntil = 0;
   });
 
-  el("mode-select").addEventListener("change", (e) => {
-    invoke("set_mode", { mode: e.target.value }).catch((err) => {
-      el("acct-result").textContent = String(err);
-    });
+  // Settings, and the setup line, both land in Settings — the setup line on the tab that needs work.
+  el("open-settings").addEventListener("click", (e) => {
+    e.stopPropagation();
+    invoke("open_settings_window_on", { tab: "general" }).catch(() => {});
+  });
+  el("setup-line").addEventListener("click", (e) => {
+    e.stopPropagation();
+    invoke("open_settings_window_on", { tab: el("setup-line").dataset.tab || "general" }).catch(() => {});
   });
 
   // ---------- Config (settings now live in the tray Settings window) ----------
-  let cfgConnected = false;
   let soundOn = false;
-  let hooksIncomplete = false;
   let currentSkin = "classic";
+
+  /// Where the pet's feet must land for the whole pet — dome to toes, at the NEW scale — to fit on
+  /// screen. Takes the desired feet Y, returns it nudged inside the monitor (unchanged if it already
+  /// fits, and unchanged if we can't read the monitor: never move the pet on a guess).
+  ///
+  /// Call recomputeGeom(newScale) first — this reads the new CANVAS_H / PET_CANVAS_TOP.
+  async function clampFeet(feetY) {
+    let mon;
+    try {
+      mon = await window.__TAURI__.window.currentMonitor();
+    } catch (e) {}
+    if (!mon) return feetY;
+    const mp = mon.position.toLogical(mon.scaleFactor);
+    const ms = mon.size.toLogical(mon.scaleFactor);
+    // The canvas reserves PET_CANVAS_TOP of empty space above the drawing (bubble headroom), so the
+    // pet's visible top is that far below the canvas top.
+    const domeY = feetY - CANVAS_H + PET_CANVAS_TOP;
+    if (domeY < mp.y) feetY += mp.y - domeY; // head poking off the top → push it down
+    const floor = mp.y + ms.height;
+    if (feetY > floor) feetY = floor; // feet through the bottom → lift them back onto it
+    return feetY;
+  }
 
   // Apply a pet size change: rescale the canvas + all window geometry, keeping the pet's feet (the
   // canvas bottom) pinned so it grows/shrinks in place. Called on first config load and whenever the
@@ -748,7 +949,7 @@
       const factor = await win.scaleFactor();
       const winPos = (await win.outerPosition()).toLogical(factor);
       // Pin the pet's feet: remember the canvas bottom's screen Y, restore it after resizing.
-      const bottomY = winPos.y + canvas.getBoundingClientRect().bottom;
+      let bottomY = winPos.y + canvas.getBoundingClientRect().bottom;
       // Resize the COLLAPSED window; if the panel is open, collapse it first (it re-fits on next open).
       if (!panel.classList.contains("hidden")) {
         panel.classList.add("hidden");
@@ -760,6 +961,13 @@
       recomputeGeom(scale);
       const below = PREALLOC ? curBelow : false;
       const targetH = COLLAPSED_H;
+      // Growing pins the pet's FEET, so it gets taller by pushing its head UP — and a pet sitting near
+      // the top of the screen grows its head straight off it. (Shrinking near the bottom is the mirror
+      // image.) Nudge the target so the whole pet lands on-screen. This has to happen HERE, folded into
+      // the geometry we're about to apply: clamping afterwards means a second window move — and on
+      // macOS set_window_rect is dispatched to the main thread, so a follow-up read of the window
+      // position races it and clamps against stale coordinates. One atomic move, correct the first time.
+      bottomY = await clampFeet(bottomY);
       const newTop = Math.round(bottomY - canvasTopIn(targetH, below) - CANVAS_H);
       // Atomic move+size in native code; the pet is hidden across it anyway (its size changes here).
       await invoke("set_window_rect", { x: Math.round(winPos.x), y: newTop, w: WIN_W, h: targetH }).catch(async () => {
@@ -783,13 +991,10 @@
 
   function applyConfig(c) {
     soundOn = c.sound;
-    cfgConnected = c.connected;
-    hooksIncomplete = !!c.hooks_incomplete;
     currentSkin = c.skin || "classic";
-    if (hooksIncomplete) el("install-hooks").textContent = t("update_hooks");
-    if (c.connected) el("acct-status").textContent = t("connected");
     applyScale(typeof c.pet_scale === "number" ? c.pet_scale : DEFAULT_SCALE).catch(() => {});
   }
+
   invoke("get_config").then((c) => {
     applyConfig(c);
     // Non-default skin: dynamically load it to override PetRenderer
@@ -798,6 +1003,18 @@
       s.src = "skins/" + encodeURIComponent(currentSkin) + ".js";
       document.body.appendChild(s);
     }
+    // First run: the pet introduces itself by SPEAKING — the backend gives it a "Hi! Click me for
+    // usage~" bubble (see main.rs). That's the whole onboarding, and it's deliberate.
+    //
+    // No modal: a desktop pet's entire proposition is that it doesn't interrupt you — transparent,
+    // click-through, ignorable — and a dialog stealing focus mid-keystroke is the exact thing the
+    // click-through thread and the boss key exist to prevent.
+    //
+    // We also tried auto-expanding the panel once, to demonstrate rather than explain. It expands in
+    // the DOM but does not render, and we could not explain why. Shipping a behaviour we don't
+    // understand is worse than shipping one less nicety, so it's out: the bubble says the same thing,
+    // and every route in (the gear, the setup line) is one click behind it.
+    if (!c.onboarded) invoke("mark_onboarded").catch(() => {});
   });
   // The Settings window persists changes and emits "config-changed" — re-sync here (reload on skin change)
   listen("config-changed", (e) => {
@@ -805,6 +1022,12 @@
     if (newSkin && newSkin !== currentSkin) return location.reload();
     invoke("get_config").then(applyConfig).catch(() => {});
   });
+
+
+
+
+
+
 
   // ---------- 8-bit sound effects (WebAudio, no audio files) ----------
   let audioCtx = null;
@@ -837,31 +1060,6 @@
     else if (s === "attention") beep([[520, 0.07], [520, 0.07]]); // Waiting for you: tap-tap
     prevState = s;
   }
-
-  el("connect-claude").addEventListener("click", () => {
-    el("acct-status").textContent = t("authorizing");
-    el("acct-result").textContent = "";
-    invoke("connect_claude")
-      .then((msg) => {
-        el("acct-status").textContent = t("connected");
-        el("acct-result").textContent = msg;
-      })
-      .catch((err) => {
-        // Keep connect errors in the account area — don't leak into the hook area below.
-        el("acct-status").textContent = t("not_connected");
-        el("acct-result").textContent = t("connect_fail", { e: err });
-      });
-  });
-
-  el("install-hooks").addEventListener("click", () => {
-    el("install-result").textContent = t("installing");
-    invoke("install_hooks")
-      .then((msg) => {
-        el("install-result").textContent = msg;
-        hooksIncomplete = false;
-      })
-      .catch((err) => (el("install-result").textContent = t("fail", { e: err })));
-  });
 
   el("update-row").addEventListener("click", () => {
     const up = cur.update || {};
