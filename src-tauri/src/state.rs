@@ -450,7 +450,7 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
                     let suspect = crate::official::is_suspect_spike(prev_raw, fresh.five_pct);
                     if suspect {
                         eprintln!(
-                            "[claude-pet] Official usage: ignoring a suspected 100% spike (previous tick {:.0}%), waiting for next tick to confirm",
+                            "[tokibean] Official usage: ignoring a suspected 100% spike (previous tick {:.0}%), waiting for next tick to confirm",
                             prev_raw * 100.0
                         );
                     } else {
@@ -460,7 +460,7 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
                             .unwrap_or(true);
                         if changed {
                             println!(
-                                "[claude-pet] Official usage: 5h {:.0}%, 7d {}",
+                                "[tokibean] Official usage: 5h {:.0}%, 7d {}",
                                 fresh.five_pct * 100.0,
                                 fresh
                                     .week_pct

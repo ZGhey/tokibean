@@ -76,7 +76,7 @@ impl Scanner {
                 .filter(|p| p.is_dir())
                 .collect();
             if !self.wsl_roots.is_empty() {
-                println!("[claude-pet] WSL usage directories: {}", self.wsl_roots.len());
+                println!("[tokibean] WSL usage directories: {}", self.wsl_roots.len());
             }
         }
         self.wsl_roots.clone()

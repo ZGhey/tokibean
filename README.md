@@ -102,18 +102,19 @@ npm install
 npm run dev        # launch in dev mode
 ```
 
-Once the pet shows up on screen:
+Once the pet shows up on screen, open **Settings** (from the tray, or the ⚙ at the bottom of the usage panel). Setup lives there, not in the daily panel — you do it once and never look at it again.
 
-1. **Click the pet** → expand the usage panel.
-2. Click **"Install Claude Code hooks"** → it writes 7 event forwarders into `~/.claude/settings.json` (backing the file up as `settings.json.bak-claude-pet` first).
-3. **Restart Claude Code** (or run `/hooks` inside it) to apply.
-4. Send any message in Claude Code → the pet should immediately switch to its "thinking" state.
+**Claude Code** — the *Claude Code* tab:
 
-**Codex** (only shown if you have it installed):
+1. Click **"Install hooks"** → it writes 7 event forwarders into `~/.claude/settings.json` (backing the file up as `settings.json.bak-tokibean` first). On Windows this also syncs into each WSL distro that has Claude Code.
+2. **Restart Claude Code** (or run `/hooks` inside it) to apply.
+3. Send any message in Claude Code → the pet should immediately switch to its "thinking" state.
 
-1. Click **"Install Codex hooks"** → writes into `~/.codex/hooks.json` (backed up first).
-2. **Run `/hooks` inside Codex and approve them.** This step is not optional: Codex hashes every hook definition and refuses to run it until you say so, and any edit re-arms that review. Until you approve, the panel honestly says *"Awaiting approval"* — the hooks are written, but they are not live.
-3. Run anything in Codex → the panel flips to *"Active"*, because an event actually arrived.
+**Codex** — the *Codex* tab (Settings lists it whether or not you have it; the panel only ever shows agents you actually run):
+
+1. Click **"Install hooks"** → writes into `~/.codex/hooks.json` (backed up first).
+2. **Run `/hooks` inside Codex and approve them.** This step is not optional: Codex hashes every hook definition and refuses to run it until you say so, and any edit re-arms that review. Until then Codex is not merely quiet — it will happily print `hook: … Completed` while never running the command at all.
+3. Run anything in Codex → the panel flips to *"Active"*, because an event actually arrived. That is the only honest proof, which is why we wait for it.
 
 > **If you let Codex import your Claude Code setup** (its onboarding offers this), it copied Tokibean's own hooks into `~/.codex/hooks.json` — still pointing at Claude's endpoint. Left alone, your Codex work would be counted as Claude's. Installing Codex hooks cleans those copies up; the panel tells you when it did.
 
@@ -148,7 +149,9 @@ Codex hooks       ──POST──▶ 127.0.0.1:8737/event/codex  ─┴─▶ o
 
 ## Configuration
 
-Config file: `~/.config/claude-pet/config.json` (macOS: `~/Library/Application Support/claude-pet/config.json`; Windows: `%APPDATA%\claude-pet\config.json`), auto-generated on first run:
+Config file: `~/.config/tokibean/config.json` (macOS: `~/Library/Application Support/tokibean/config.json`; Windows: `%APPDATA%\tokibean\config.json`), auto-generated on first run.
+
+> Upgrading from a build older than 0.5.0? That one kept its config in a `claude-pet` directory, back when the pet only watched Claude Code. The new build adopts it on first launch — connected account, pet position, skin and all — so there is nothing to do and nothing to reconnect. The old directory is left untouched, in case you ever go back.
 
 ```jsonc
 {
@@ -162,7 +165,7 @@ Config file: `~/.config/claude-pet/config.json` (macOS: `~/Library/Application S
 
 ## Uninstalling hooks
 
-Open `~/.claude/settings.json` and delete every hook entry whose `command` contains `127.0.0.1:8737/event`; or just restore from the backup `settings.json.bak-claude-pet`.
+Open `~/.claude/settings.json` (and/or `~/.codex/hooks.json`) and delete every hook entry whose `command` contains `127.0.0.1:8737/event`; or just restore from the backup — `settings.json.bak-tokibean` for Claude Code, `hooks.json.bak-tokibean` for Codex.
 
 ## Skins
 

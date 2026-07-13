@@ -847,7 +847,7 @@ fn main() {
             {
                 let accel = shared.cfg.lock().unwrap().boss_key.clone();
                 if let Err(e) = register_boss_key(&handle, &accel) {
-                    eprintln!("[claude-pet] Failed to register boss key: {}", e);
+                    eprintln!("[tokibean] Failed to register boss key: {}", e);
                 }
             }
 
@@ -1061,5 +1061,5 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("claude-pet 启动失败");
+        .expect("tokibean 启动失败");
 }

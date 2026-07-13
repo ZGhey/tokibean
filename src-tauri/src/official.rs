@@ -56,11 +56,11 @@ fn note_refresh(shared: &Shared, outcome: &RefreshOutcome) {
         // Ok clears; Invalid clears too (the credential is wiped, nothing to back off)
         RefreshOutcome::Ok(..) | RefreshOutcome::Invalid => None,
         RefreshOutcome::RateLimited => {
-            eprintln!("[claude-pet] token refresh rate-limited, backing off for 6 hours");
+            eprintln!("[tokibean] token refresh rate-limited, backing off for 6 hours");
             Some(std::time::Instant::now() + std::time::Duration::from_secs(6 * 3600))
         }
         RefreshOutcome::Fail => {
-            eprintln!("[claude-pet] token refresh failed, backing off for 15 minutes");
+            eprintln!("[tokibean] token refresh failed, backing off for 15 minutes");
             Some(std::time::Instant::now() + std::time::Duration::from_secs(900))
         }
     };
@@ -156,7 +156,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
                     let _ = cfg.save();
                 }
                 shared.reconnect_needed.store(false, std::sync::atomic::Ordering::Relaxed);
-                eprintln!("[claude-pet] official mode: token refreshed via claude.ai");
+                eprintln!("[tokibean] official mode: token refreshed via claude.ai");
                 return Some(new_access);
             }
             RefreshOutcome::Invalid => {
@@ -170,7 +170,7 @@ fn get_token(shared: &Shared, cfg_token: &str) -> Option<String> {
                     let _ = cfg.save();
                 }
                 shared.reconnect_needed.store(true, std::sync::atomic::Ordering::Relaxed);
-                eprintln!("[claude-pet] official mode: refresh token invalid — please reconnect");
+                eprintln!("[tokibean] official mode: refresh token invalid — please reconnect");
                 return None;
             }
             _ => return Some(access), // rate-limited / transient — keep old token, backoff is set
@@ -207,7 +207,7 @@ fn fetch_inner(shared: &Shared, cfg_token: &str) -> Option<FetchOutcome> {
     use std::process::{Command, Stdio};
 
     let Some(token) = get_token(shared, cfg_token) else {
-        eprintln!("[claude-pet] official mode: no Claude Code credential found");
+        eprintln!("[tokibean] official mode: no Claude Code credential found");
         return None;
     };
     let mut cmd = Command::new("curl");
@@ -235,19 +235,19 @@ fn fetch_inner(shared: &Shared, cfg_token: &str) -> Option<FetchOutcome> {
         .ok()?;
     let out = child.wait_with_output().ok()?;
     if !out.status.success() {
-        eprintln!("[claude-pet] official mode: curl failed ({})", out.status);
+        eprintln!("[tokibean] official mode: curl failed ({})", out.status);
         return None;
     }
     let body = String::from_utf8_lossy(&out.stdout);
     match interpret_response(&body) {
         FetchOutcome::Ok(u) => Some(FetchOutcome::Ok(u)),
         FetchOutcome::RateLimited => {
-            eprintln!("[claude-pet] official mode: rate limited, backing off for 5 minutes");
+            eprintln!("[tokibean] official mode: rate limited, backing off for 5 minutes");
             Some(FetchOutcome::RateLimited)
         }
         FetchOutcome::Fail => {
             let head: String = body.chars().take(200).collect();
-            eprintln!("[claude-pet] official mode: could not parse response: {}", head);
+            eprintln!("[tokibean] official mode: could not parse response: {}", head);
             None
         }
     }

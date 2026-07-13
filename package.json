@@ -1,7 +1,7 @@
 {
-  "name": "claude-pet",
+  "name": "tokibean",
   "private": true,
-  "version": "0.4.6",
+  "version": "0.5.0",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

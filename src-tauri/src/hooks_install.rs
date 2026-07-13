@@ -1,7 +1,7 @@
 // One-click install of Claude Code hooks.
 // Merges a command hook for each event into ~/.claude/settings.json (using curl
 // to forward to the local port).
-// - Backs up to settings.json.bak-claude-pet before writing.
+// - Backs up to settings.json.bak-tokibean before writing.
 // - Idempotent: events whose command already contains this port are skipped.
 // - Uses curl rather than an http-type hook for compatibility with more Claude
 //   Code versions; curl ships by default on Win10+/macOS/mainstream Linux.
@@ -82,7 +82,7 @@ fn merge_into(path: &Path, cmd: &str, port: u16) -> Result<usize, String> {
         let text = fs::read_to_string(path)
             .map_err(|e| format!("{}: {}", crate::i18n::t("读取 settings.json 失败", "Failed to read settings.json"), e))?;
         // Back up.
-        let _ = fs::write(dir.join("settings.json.bak-claude-pet"), &text);
+        let _ = fs::write(dir.join("settings.json.bak-tokibean"), &text);
         serde_json::from_str(&text)
             .map_err(|e| format!("{}: {}", crate::i18n::t("settings.json 不是合法 JSON", "settings.json is not valid JSON"), e))?
     } else {

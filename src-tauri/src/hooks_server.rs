@@ -23,13 +23,13 @@ pub fn run(app: AppHandle, shared: Arc<Shared>) {
         Ok(s) => s,
         Err(e) => {
             eprintln!(
-                "[claude-pet] hook server failed to start (port {} in use?): {}",
+                "[tokibean] hook server failed to start (port {} in use?): {}",
                 port, e
             );
             return;
         }
     };
-    println!("[claude-pet] hook server listening on {}:{}", bind, port);
+    println!("[tokibean] hook server listening on {}:{}", bind, port);
 
     for mut request in server.incoming_requests() {
         let mut body = String::new();

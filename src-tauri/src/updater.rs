@@ -27,7 +27,7 @@ pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
         let updater = match app.updater() {
             Ok(u) => u,
             Err(e) => {
-                eprintln!("[claude-pet] updater unavailable: {}", e);
+                eprintln!("[tokibean] updater unavailable: {}", e);
                 set_status(&shared, if manual { "error" } else { "" });
                 state::push_update(&app, &shared);
                 return;
@@ -80,7 +80,7 @@ pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
                         };
                         state::notify(&app, i18n::t("有新版本", "Update available"), &body);
                     }
-                    println!("[claude-pet] update available: {}", info.version);
+                    println!("[tokibean] update available: {}", info.version);
                 }
                 state::push_update(&app, &shared);
                 // Pop the dedicated update dialog (version + release notes + Update button)
@@ -103,7 +103,7 @@ pub fn spawn_check(app: AppHandle, shared: Arc<Shared>, manual: bool) {
                 }
             }
             Err(e) => {
-                eprintln!("[claude-pet] update check failed: {}", e);
+                eprintln!("[tokibean] update check failed: {}", e);
                 set_status(&shared, if manual { "error" } else { "" });
                 state::push_update(&app, &shared);
             }
@@ -180,7 +180,7 @@ pub fn spawn_install(app: AppHandle, shared: Arc<Shared>) {
 
         match res {
             Ok(_) => {
-                println!("[claude-pet] update installed, restarting");
+                println!("[tokibean] update installed, restarting");
                 app.restart();
             }
             Err(e) => fail(&app, &shared, &format!("install failed: {}", e)),
@@ -189,7 +189,7 @@ pub fn spawn_install(app: AppHandle, shared: Arc<Shared>) {
 }
 
 fn fail(app: &AppHandle, shared: &Arc<Shared>, msg: &str) {
-    eprintln!("[claude-pet] {}", msg);
+    eprintln!("[tokibean] {}", msg);
     {
         let mut st = shared.update.lock().unwrap();
         st.status = "error".to_string();

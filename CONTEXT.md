@@ -152,8 +152,12 @@ These are load-bearing. Breaking one is a regression, not a refactor.
 4. **Claude's credential fields never move.** `oauth_access` / `oauth_refresh` / `oauth_expires_ms`
    stay at the top level of config.json. The refresh token rotates on every use; a migration bug
    there logs the user out. Config is extended additively, never restructured.
-5. **The config directory is `claude-pet`, forever.** Renaming it silently orphans every existing
-   user's config, credentials included. The user never sees the path.
+5. **The config directory is `tokibean`, and the old `claude-pet` one is adopted, never abandoned.**
+   Renaming it is what orphans an existing user's config, credentials included — so on first launch
+   the pre-rename file is read and rewritten to the new path (`config.rs::choose`). Two rules keep
+   that safe: our file always wins once it exists (a stale `claude-pet` copy must never resurrect an
+   already-rotated refresh token and log the user out), and the old file is never deleted (a
+   downgrade must still find its credentials). See [ADR-0015](docs/adr/0015-adopt-the-claude-pet-config.md).
 6. **Hooks emit valid JSON on stdout.** Every supported agent requires it (Copilot can deadlock
    without it). The hook server replies `{}` with `Content-Type: application/json`, and hook commands
    append `|| echo '{}'` so an offline pet still emits valid JSON. See [ADR-0008](docs/adr/0008-json-stdout-contract.md).

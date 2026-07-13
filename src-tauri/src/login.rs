@@ -95,7 +95,7 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
         };
         let url = req.url().to_string();
         if !url.starts_with("/callback") {
-            let _ = req.respond(tiny_http::Response::from_string("claude-pet"));
+            let _ = req.respond(tiny_http::Response::from_string("tokibean"));
             continue;
         }
         let get = |k: &str| {
@@ -169,7 +169,7 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
             let s = resp.to_string();
             // Diagnostic (no token content): which failure mode the exchange hit
             eprintln!(
-                "[claude-pet] connect: token exchange failed ({})",
+                "[tokibean] connect: token exchange failed ({})",
                 if s.contains("rate_limit") { "rate_limited" } else { "other" }
             );
             // Rate-limiting is the most common failure; give an actionable hint
@@ -203,7 +203,7 @@ pub fn connect(shared: Arc<Shared>) -> Result<String, String> {
         cfg.save().map_err(|e| e.to_string())?;
         // Diagnostic (no token content): confirm both tokens landed
         eprintln!(
-            "[claude-pet] connect: stored access({} chars) + refresh({} chars), expires in {}s",
+            "[tokibean] connect: stored access({} chars) + refresh({} chars), expires in {}s",
             cfg.oauth_access.len(),
             cfg.oauth_refresh.len(),
             resp["expires_in"].as_i64().unwrap_or(3600)

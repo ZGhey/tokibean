@@ -1,9 +1,33 @@
-// App config: ~/.config/claude-pet/config.json (%APPDATA%\claude-pet on Windows)
+// App config: <config dir>/tokibean/config.json — ~/.config on Linux, ~/Library/Application Support
+// on macOS, %APPDATA% on Windows.
+//
+// The directory used to be `claude-pet`, back when the pet only watched Claude Code. Renaming it is
+// the one rename that can hurt: config.json holds the connected account's OAuth access AND refresh
+// token, and a refresh token that gets orphaned cannot be recovered — the user has to reconnect.
+// So the old directory is ADOPTED rather than abandoned (see `load`), and it is left on disk: a user
+// who downgrades to a pre-rename build must still find their credentials where that build looks.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+
+/// Our config directory, and the one we used to live in.
+const DIR: &str = "tokibean";
+const LEGACY_DIR: &str = "claude-pet";
+
+/// Where the config we're about to use came from.
+///
+/// Deliberately NOT Debug: it carries a Config, and Config carries the OAuth access and refresh
+/// tokens. One stray `{:?}` in a log line is all it would take to leak them.
+enum Choice {
+    /// Our own directory — the normal case, and the case after the first adoption.
+    Ours(Config),
+    /// The pre-rename directory. Must be written to our path so this happens exactly once.
+    Adopted(Config),
+    /// Neither exists (or neither parses): a first run.
+    Fresh,
+}
 
 /// Pet geometry. Mirrors recomputeGeom()/DEFAULT_SCALE in src/main.js — keep both in sync.
 /// The collapsed window is BASE_H_AT_1X · scale tall, with the pet canvas (184 · scale, plus a
@@ -182,22 +206,59 @@ impl Default for Config {
 
 impl Config {
     pub fn path() -> PathBuf {
+        Self::path_in(DIR)
+    }
+
+    /// Where a pre-rename install kept its config.
+    pub fn legacy_path() -> PathBuf {
+        Self::path_in(LEGACY_DIR)
+    }
+
+    fn path_in(dir: &str) -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("claude-pet")
+            .join(dir)
             .join("config.json")
     }
 
+    /// Our config, or — for anyone upgrading from a `claude-pet` build — theirs, adopted.
+    ///
+    /// Adoption is a copy, and it happens once: the moment it succeeds, the new path exists and this
+    /// never looks at the old one again. The old file is deliberately not deleted (see the module
+    /// header); it goes stale, which is harmless, because nothing reads it any more.
     pub fn load() -> Config {
-        let p = Self::path();
-        if let Ok(text) = fs::read_to_string(&p) {
-            if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
-                return cfg;
+        let ours = fs::read_to_string(Self::path()).ok();
+        let legacy = fs::read_to_string(Self::legacy_path()).ok();
+        match Self::choose(ours.as_deref(), legacy.as_deref()) {
+            Choice::Ours(cfg) => cfg,
+            Choice::Adopted(cfg) => {
+                // Credentials, window position, skin — all of it, carried over silently. The user
+                // upgraded an app; they should not have to reconnect an account to do it.
+                println!("[tokibean] adopted the config from the pre-rename claude-pet directory");
+                let _ = cfg.save();
+                cfg
+            }
+            Choice::Fresh => {
+                let cfg = Config::default();
+                let _ = cfg.save();
+                cfg
             }
         }
-        let cfg = Config::default();
-        let _ = cfg.save();
-        cfg
+    }
+
+    /// Which config wins — the whole of the rename's risk, in one pure function.
+    ///
+    /// Ours always beats the legacy file, even after adoption has already happened: once we've
+    /// written our own, the stale `claude-pet` copy must never be able to resurrect an old refresh
+    /// token and log the user out of the account they're currently connected to.
+    fn choose(ours: Option<&str>, legacy: Option<&str>) -> Choice {
+        if let Some(cfg) = ours.and_then(|t| serde_json::from_str::<Config>(t).ok()) {
+            return Choice::Ours(cfg);
+        }
+        if let Some(cfg) = legacy.and_then(|t| serde_json::from_str::<Config>(t).ok()) {
+            return Choice::Adopted(cfg);
+        }
+        Choice::Fresh
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -343,5 +404,81 @@ mod tests {
         let back: Config = serde_json::from_str(&text).unwrap();
         assert!(!back.agent_enabled("codex"));
         assert_eq!(back.oauth_refresh, "live-refresh-token");
+    }
+
+    // --- The rename: claude-pet -> tokibean. -------------------------------------------------
+    // Everything below guards one thing — that renaming the directory cannot cost a user the
+    // account they connected through a browser. The refresh token rotates on every use; orphan it
+    // and there is no way back, only a reconnect.
+
+    #[test]
+    fn a_pre_rename_config_is_adopted_credentials_and_all() {
+        // The upgrader: their config sits in claude-pet, ours doesn't exist yet.
+        match Config::choose(None, Some(LEGACY)) {
+            Choice::Adopted(cfg) => {
+                assert_eq!(cfg.oauth_refresh, "live-refresh-token");
+                assert_eq!(cfg.oauth_access, "live-access-token");
+                assert_eq!(cfg.pos_x, Some(1200)); // and the pet stays where they put it
+                assert_eq!(cfg.skin, "classic");
+            }
+            _ => panic!("the old config must be adopted, not discarded"),
+        }
+    }
+
+    #[test]
+    fn our_own_config_always_beats_the_stale_one() {
+        // THE trap. Adoption is a copy, so the claude-pet file lives on and goes stale. If it could
+        // ever win again, it would restore an OLD refresh token — already rotated and invalidated by
+        // then — and log the user out of the account they are currently connected to.
+        let ours = r#"{"oauth_refresh": "current-token", "skin": "bean"}"#;
+        match Config::choose(Some(ours), Some(LEGACY)) {
+            Choice::Ours(cfg) => {
+                assert_eq!(cfg.oauth_refresh, "current-token");
+                assert_eq!(cfg.skin, "bean");
+            }
+            _ => panic!("our config must win over the pre-rename one"),
+        }
+    }
+
+    #[test]
+    fn adoption_happens_once() {
+        // Second launch: adoption already wrote our file, so `choose` must stop looking at the old
+        // one. (Modelled exactly as the filesystem presents it — our path now reads back.)
+        let adopted = serde_json::to_string(&Config::default()).unwrap();
+        assert!(matches!(
+            Config::choose(Some(&adopted), Some(LEGACY)),
+            Choice::Ours(_)
+        ));
+    }
+
+    #[test]
+    fn a_first_run_is_fresh_not_adopted() {
+        assert!(matches!(Config::choose(None, None), Choice::Fresh));
+    }
+
+    #[test]
+    fn a_corrupt_file_never_silently_eats_the_credential() {
+        // Ours unreadable but the old one intact → adopt it rather than start blank. (A truncated
+        // write is exactly how our file would break, and the old one is the better answer than a
+        // default config with no account.)
+        assert!(matches!(
+            Config::choose(Some("{ truncated"), Some(LEGACY)),
+            Choice::Adopted(_)
+        ));
+        // Both corrupt → there is nothing to save; start fresh rather than refuse to boot.
+        assert!(matches!(
+            Config::choose(Some("{ truncated"), Some("also broken")),
+            Choice::Fresh
+        ));
+    }
+
+    #[test]
+    fn the_two_directories_are_siblings_differing_only_in_name() {
+        let ours = Config::path();
+        let legacy = Config::legacy_path();
+        assert_ne!(ours, legacy);
+        assert_eq!(ours.parent().unwrap().parent(), legacy.parent().unwrap().parent());
+        assert!(ours.parent().unwrap().ends_with("tokibean"), "{ours:?}");
+        assert!(legacy.parent().unwrap().ends_with("claude-pet"), "{legacy:?}");
     }
 }
