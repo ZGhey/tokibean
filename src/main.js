@@ -32,7 +32,9 @@
     ],
     no_window: ["暂无活动窗口", "No active window"],
     week_quota: ["周额度", "Weekly quota"],
-    cost_today: ["今日成本", "Today's cost"],
+    // Cost is Claude-only: we model Anthropic's prices and nobody else's. The label says so,
+    // so a two-agent token count next to a one-agent dollar figure can't read as a total.
+    cost_today: ["今日成本(Claude)", "Today's cost (Claude)"],
     last7: ["近 7 天", "Last 7 days"],
     trend_title: ["近 7 天逐日用量", "Daily usage, last 7 days"],
     tok_today: ["今日 tokens", "Today's tokens"],
@@ -377,13 +379,26 @@
       el("cost-week").textContent = fmtCost(u.week_cost);
     }
 
-    // Normalize trend bar heights against the 7-day maximum
+    // Normalize trend bar heights against the 7-day maximum. Each bar stacks the Codex share on top
+    // of Claude's, so a day spent in Codex is visible as Codex's rather than blended into one bar.
     if (u.daily_tokens && u.daily_tokens.length === 7) {
       const max = Math.max(...u.daily_tokens, 1);
+      const codexDaily = u.daily_codex || [];
       for (let i = 0; i < 7; i++) {
         const cell = trend.children[i];
-        cell.style.height = Math.max(2, Math.round((u.daily_tokens[i] / max) * 24)) + "px";
-        cell.title = fmtTokens(u.daily_tokens[i]);
+        const total = u.daily_tokens[i];
+        const cx = codexDaily[i] || 0;
+        const h = Math.max(2, Math.round((total / max) * 24));
+        cell.style.height = h + "px";
+        // The Codex slice, as a fraction of this bar, drawn from the top down
+        const cxFrac = total > 0 ? cx / total : 0;
+        cell.style.setProperty("--codex", Math.round(cxFrac * 100) + "%");
+        cell.classList.toggle("mixed", cx > 0 && cx < total);
+        cell.classList.toggle("all-codex", cx > 0 && cx === total);
+        cell.title =
+          cx > 0
+            ? fmtTokens(total) + " (Codex " + fmtTokens(cx) + ")"
+            : fmtTokens(total);
       }
     }
     el("tok-today").textContent = fmtTokens(u.today_tokens);

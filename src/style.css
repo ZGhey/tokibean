@@ -254,3 +254,14 @@ button:active { transform: scale(0.98); }
 .codex-active { color: #7fb069; }
 .codex-pending { color: #e0a63b; }
 .codex-absent { color: #8a8178; }
+
+/* Trend bars stack the Codex share on top of Claude's, so a day spent in Codex reads as Codex's
+   work rather than blending into one indistinguishable bar. */
+#trend span.mixed {
+  background: linear-gradient(to top, #6b5548 calc(100% - var(--codex)), #5a7a8c calc(100% - var(--codex)));
+}
+#trend span.all-codex { background: #5a7a8c; }
+#trend span.today.mixed {
+  background: linear-gradient(to top, #d97757 calc(100% - var(--codex)), #6fa3bd calc(100% - var(--codex)));
+}
+#trend span.today.all-codex { background: #6fa3bd; }

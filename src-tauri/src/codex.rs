@@ -92,6 +92,7 @@ fn parse_tokens(payload: &serde_json::Value, ts: i64, model: &str) -> Option<Usa
         cache_w: 0, // Codex doesn't distinguish cache writes
         cache_r: cached,
         model: model.to_string(),
+        agent: crate::state::AGENT_CODEX.to_string(),
     };
     if ev.total() > 0 {
         Some(ev)
