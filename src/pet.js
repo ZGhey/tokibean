@@ -32,6 +32,14 @@
   // Every box below therefore measures its text and CLAMPS to the canvas: `fit()` is the one place
   // that promises a box cannot grow out of frame, whatever the user picks.
   let TS = 1;
+
+  // Grid rows of clear air to leave above the pet's BODY for whatever it's wearing. The body top
+  // (`y0`) is not the top of the pet: reading puts on a mortarboard and coding a hard hat, both of
+  // which rise 7 rows above it, and thinking grows Einstein hair. Floating boxes anchored to y0
+  // therefore sat squarely on the pet's hat. One number, honoured by every box, beats a per-state
+  // patch (`y0 - 6` in the thinking branch was exactly that patch, and only that branch had it).
+  const HEAD = 8;
+
   const fs = (base) => Math.round(base * TS);            // font size at the current text scale
   const sz = (base) => Math.round(base * TS);            // paddings / line heights, likewise
   const fit = (w, W) => Math.min(w, W - 8);              // never wider than the canvas
@@ -351,7 +359,7 @@
     // grows leftward, which is the one direction with room. The bottom edge clears the pet's head by
     // a fixed gap, so it never lands on the dome either.
     const bx = Math.max(W - w - 4, 4);
-    const by = Math.max(y0 * S - sz(8) - h, 2);
+    const by = Math.max((y0 - HEAD) * S - sz(8) - h, 2);
     ctx.fillStyle = "rgba(18,16,14,0.95)";
     ctx.strokeStyle = "rgba(122,222,122,0.45)";
     ctx.lineWidth = 1;
@@ -920,7 +928,7 @@
           px(ctx, sx + Math.round(Math.sin(t * 0.05 + i) * 1.5), y0 + 8 - ph * 4, 2, 2, "#b3aca0");
         }
         ctx.globalAlpha = 1;
-        if (!bubble) statusTag(ctx, canvas, cx, y0 - 6, "thinking", t);
+        if (!bubble) statusTag(ctx, canvas, cx, y0, "thinking", t);
       }
       // Patted while working: doesn't stop, but secretly leaks a little heart
       if (x.pat && Math.floor(t / 40) % 2 === 0) heart(ctx, cx - 17, y0 - 5, 0.7);
@@ -1168,7 +1176,7 @@
       bulbT--;
     }
 
-    if (bubble) bubbleBox(ctx, canvas, bubble, cx, y0 * S);
+    if (bubble) bubbleBox(ctx, canvas, bubble, cx, (y0 - HEAD) * S);
   }
 
   window.PetRenderer = { draw };
