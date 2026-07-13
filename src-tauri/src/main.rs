@@ -11,6 +11,7 @@ mod i18n;
 mod login;
 mod official;
 mod projection;
+mod reducer;
 mod state;
 mod updater;
 mod usage;
