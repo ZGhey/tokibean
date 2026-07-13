@@ -71,6 +71,17 @@
     .note { color: var(--sub); font-size: 11.5px; line-height: 1.55; margin: 8px 0 0; }
     .note.step { color: var(--pending); }
     .dir { color: var(--sub); font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+    /* Install sites: one line per config directory hooks live in. Indented under the Hooks row —
+       they explain what that one button just did (or still has to do), and where. */
+    .site { padding: 7px 0 7px 10px; border-bottom: 1px solid var(--line); border-left: 2px solid var(--line); margin-left: 2px; }
+    .site:last-child { border-bottom: none; }
+    .site-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .site-name { font-size: 12.5px; }
+    .site-what { color: var(--sub); font-size: 11px; }
+    .site-mark { font-size: 11.5px; white-space: nowrap; }
+    .site-mark.ok { color: var(--ok); }
+    .site-mark.pending { color: var(--pending); }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -134,6 +145,9 @@
       <label id="l-claude-hooks">Hooks</label>
       <button class="act" id="claude-install"></button>
     </div>
+    <!-- One row per install site. The desktop app and the Windows terminal share one ~/.claude, so
+         they are ONE site (named by the entrypoints actually seen); each WSL distro is its own. -->
+    <div id="claude-sites"></div>
     <div class="row">
       <label id="l-claude-acct">Claude 账号</label>
       <button class="act ghost" id="claude-connect"></button>
@@ -245,6 +259,20 @@
         cleared: ["已恢复自动检测", "Back to auto-detection"],
         manual: ["(手动指定)", "(set by hand)"],
 
+        // Install sites: which Claude Code, and where
+        site_windows: ["Windows", "Windows"],
+        site_local: ["本机", "This machine"],
+        site_wsl: ["WSL · {d}", "WSL · {d}"],
+        site_ok: ["hooks 已装", "Hooks installed"],
+        site_need: ["hooks 待装", "Hooks needed"],
+        ep_desktop: ["桌面版", "desktop app"],
+        ep_cli: ["终端", "terminal"],
+        ep_both: ["桌面版和终端", "desktop app and terminal"],
+        ep_none: ["还没在这里用过", "not used here yet"],
+        used_now: ["刚刚在用", "in use now"],
+        used_days: ["{n} 天前用过", "last used {n}d ago"],
+        used_today: ["今天用过", "used today"],
+
         // The one instruction that unsticks a Codex user. Written where it's needed, not in a doc.
         codex_approve: [
           "hooks 已写入,但 Codex 还不会执行它们 —— 它要求你先批准。在 Codex 里执行 /hooks,批准列出的 hook。",
@@ -327,6 +355,54 @@
       // opens, so what you're looking at is never stale.
       let connected = false, reconnectNeeded = false;
 
+      // "Which Claude Code do you use?" — the honest answer is per install site. The desktop app and
+      // the Windows terminal share one ~/.claude, so they are one site; a WSL distro is another. What
+      // the user needs to see is which of them the hooks actually cover, and which one he really uses.
+      function siteLabel(s) {
+        if (s.kind === "wsl") return t("site_wsl", { d: s.name || "WSL" });
+        return t(s.kind === "windows" ? "site_windows" : "site_local");
+      }
+
+      function siteWhat(s) {
+        const eps = s.entrypoints || [];
+        const who = eps.length === 2 ? t("ep_both")
+          : eps[0] === "desktop" ? t("ep_desktop")
+          : eps[0] === "cli" ? t("ep_cli")
+          : null;
+        if (!who) return t("ep_none");
+        const days = s.last_used == null ? null
+          : Math.floor((Date.now() / 1000 - s.last_used) / 86400);
+        const when = days == null ? ""
+          : days <= 0 ? t("used_today")
+          : t("used_days", { n: days });
+        return when ? who + " · " + when : who;
+      }
+
+      function renderSites(sites) {
+        const box = el("claude-sites");
+        box.innerHTML = "";
+        // One site is the ordinary case (no WSL, no split) — the Hooks row already says it all.
+        if (!sites || sites.length < 2) return;
+        for (const s of sites) {
+          const row = document.createElement("div");
+          row.className = "site";
+          const top = document.createElement("div");
+          top.className = "site-top";
+          const name = document.createElement("span");
+          name.className = "site-name";
+          name.textContent = siteLabel(s);
+          const mark = document.createElement("span");
+          mark.className = "site-mark " + (s.hooks_incomplete ? "pending" : "ok");
+          mark.textContent = (s.hooks_incomplete ? "⚠ " : "✓ ") + t(s.hooks_incomplete ? "site_need" : "site_ok");
+          top.append(name, mark);
+          const what = document.createElement("div");
+          what.className = "site-what";
+          what.textContent = siteWhat(s);
+          row.append(top, what);
+          box.appendChild(row);
+        }
+      }
+
       function renderAgent(a, presence, seen) {
         const tab = el("tab-" + a);
         const st = el(a + "-status");
@@ -360,6 +436,8 @@
           btn.textContent = presence.hooks_incomplete ? t("install") : t("installed_ok");
           btn.classList.toggle("ghost", !presence.hooks_incomplete);
         }
+
+        if (a === "claude") renderSites(presence && presence.sites);
 
         // Where we looked, and the manual override — shown only when detection failed, so the 99%
         // who never need it never see it.

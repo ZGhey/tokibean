@@ -57,6 +57,12 @@ pub fn incomplete(cfg: &crate::config::Config) -> bool {
     false
 }
 
+/// Are this one config directory's hooks incomplete? `incomplete()` is the OR of this over every
+/// site; the per-site answer is what lets the UI say *which* install still needs doing.
+pub fn file_incomplete_at(dir: &Path, port: u16) -> bool {
+    file_incomplete(&dir.join("settings.json"), port)
+}
+
 fn file_incomplete(path: &Path, port: u16) -> bool {
     let Ok(text) = fs::read_to_string(path) else { return true };
     let Ok(root) = serde_json::from_str::<Value>(&text) else { return true };
@@ -150,7 +156,10 @@ pub fn install(cfg: &crate::config::Config) -> Result<String, String> {
     let mut wsl_note = String::new();
     #[cfg(target_os = "windows")]
     {
-        let targets = crate::wsl::claude_dirs();
+        // The one place we reach into a stopped distro (booting it): installing is an explicit
+        // click, and a hook written into only the distros that happen to be up right now would be
+        // a silent half-install. Every other WSL read is running-only — see wsl.rs.
+        let targets = crate::wsl::claude_dirs_all();
         if !targets.is_empty() {
             let mirrored = wsl_mirrored();
             let cmd = if mirrored {

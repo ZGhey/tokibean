@@ -27,6 +27,16 @@
       "No Claude Code or Codex found — nothing for the pet to watch yet",
     ],
     setup_hooks: ["{a} 的 hooks 还没装,去装一下", "{a}'s hooks aren't installed yet"],
+    // Which install, not just which agent: on Windows a user can have Claude Code in three places
+    // (desktop app, terminal, WSL) and only the WSL one be un-hooked. "Claude Code 的 hooks 还没装"
+    // then reads as a lie to someone whose desktop app is plainly being watched.
+    setup_hooks_site: [
+      "{s} 里的 Claude Code hooks 还没装,去装一下",
+      "Claude Code's hooks aren't installed in {s}",
+    ],
+    site_windows: ["Windows", "Windows"],
+    site_local: ["本机", "this machine"],
+    site_wsl: ["WSL · {d}", "WSL · {d}"],
     setup_codex_approve: [
       "Codex 的 hooks 还没生效 —— 需要你在 Codex 里批准",
       "Codex's hooks aren't live yet — Codex needs you to approve them",
@@ -413,6 +423,11 @@
   //   2. An agent is here but its hooks aren't → that's why the pet never moves.
   //   3. Codex's hooks are written but it hasn't run them → the trust gate; this is the step people
   //      get stuck on, and they'd never guess it.
+  function siteLabel(s) {
+    if (s.kind === "wsl") return t("site_wsl", { d: s.name || "WSL" });
+    return t(s.kind === "windows" ? "site_windows" : "site_local");
+  }
+
   function renderSetupLine() {
     const agents = cur.agents || [];
     const seen = cur.agents_seen || [];
@@ -426,7 +441,13 @@
       const needsHooks = here.find((a) => a.hooks_incomplete);
       const codex = here.find((a) => a.agent === "codex");
       if (needsHooks) {
-        text = t("setup_hooks", { a: AGENT_NAME[needsHooks.agent] || needsHooks.agent });
+        // Name the place when there is more than one, so the line can't be read as "your Claude
+        // Code isn't hooked up" by someone whose other install is working fine.
+        const sites = needsHooks.sites || [];
+        const gaps = sites.filter((s) => s.hooks_incomplete);
+        text = sites.length > 1 && gaps.length === 1
+          ? t("setup_hooks_site", { s: siteLabel(gaps[0]) })
+          : t("setup_hooks", { a: AGENT_NAME[needsHooks.agent] || needsHooks.agent });
         tab = needsHooks.agent;
       } else if (codex && !seen.includes("codex")) {
         // Written, but Codex won't run a hook until it's approved. Nothing else will tell them.

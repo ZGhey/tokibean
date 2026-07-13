@@ -24,6 +24,29 @@ use std::path::PathBuf;
 use crate::config::Config;
 use crate::state::{AGENT_CLAUDE, AGENT_CODEX};
 
+/// One place an agent is installed: one config directory, one settings.json, one set of hooks.
+///
+/// "Which Claude Code do you use?" has three answers on Windows — the desktop app, the terminal CLI,
+/// and the one inside WSL — but only **two** of them are separate installs. The desktop app and the
+/// Windows CLI share `%USERPROFILE%\.claude`, so one hook install covers both; a WSL distro has its
+/// own `~/.claude` and needs its own. A site is therefore a config directory, not an entrypoint —
+/// and the entrypoints are reported *within* a site so the UI can name what the user actually runs
+/// ("Windows — desktop app and terminal") instead of a bare path he has to interpret.
+#[derive(Serialize, Clone, PartialEq, Debug, Default)]
+pub struct Site {
+    /// "windows" | "wsl" | "local" — how to label it (the frontend localizes; distro goes in `name`)
+    pub kind: String,
+    /// The WSL distro name, when kind == "wsl". Empty otherwise.
+    pub name: String,
+    pub dir: String,
+    /// Hooks here are missing or incomplete
+    pub hooks_incomplete: bool,
+    /// Newest transcript in this site, epoch seconds — "when did you last actually use this one"
+    pub last_used: Option<i64>,
+    /// Entrypoints seen in this site's recent transcripts: "desktop" | "cli"
+    pub entrypoints: Vec<String>,
+}
+
 /// One agent's presence on this machine, as the frontend sees it.
 #[derive(Serialize, Clone, PartialEq, Debug, Default)]
 pub struct AgentPresence {
@@ -36,7 +59,10 @@ pub struct AgentPresence {
     /// Whether the user pointed us here by hand, rather than us finding it
     pub manual: bool,
     /// Its hooks are missing or incomplete — something to install. Meaningless when !installed.
+    /// True when ANY site is incomplete: one un-hooked WSL is still a Claude Code we're blind to.
     pub hooks_incomplete: bool,
+    /// Every place this agent is installed. `hooks_incomplete` above is the OR over these.
+    pub sites: Vec<Site>,
 }
 
 /// The environment variable each agent uses to relocate its config directory.
@@ -91,6 +117,11 @@ pub fn installed(cfg: &Config, agent: &str) -> bool {
     }
     // Windows-only, and Claude-only: Codex has no WSL story (crate::wsl is empty off Windows, so this
     // is a no-op elsewhere and the seam stays uniform).
+    //
+    // Only distros that are already running are looked at (see wsl.rs) — probing a stopped one would
+    // boot it. So a WSL-only user with his distro down reads as "no Claude Code" until he starts it,
+    // at which point the 30-second heartbeat re-detects him. That is the right trade: Claude Code
+    // isn't running in there either, and the pet must not start a Linux VM to find that out.
     if agent == AGENT_CLAUDE {
         return !crate::wsl::claude_dirs().is_empty();
     }
@@ -125,9 +156,99 @@ pub fn presence(cfg: &Config) -> Vec<AgentPresence> {
                         AGENT_CODEX => crate::codex_install::incomplete(cfg),
                         _ => crate::hooks_install::incomplete(cfg),
                     },
+                sites: if installed { sites(cfg, agent) } else { Vec::new() },
             }
         })
         .collect()
+}
+
+/// Every config directory this agent is installed in: the local one, plus — for Claude on Windows —
+/// each running WSL distro's. One entry per settings.json, because that is the unit hooks install into.
+pub fn sites(cfg: &Config, agent: &str) -> Vec<Site> {
+    let mut out = Vec::new();
+    if let Some(d) = dir(cfg, agent) {
+        if d.is_dir() {
+            let (last_used, entrypoints) = last_use(&d);
+            out.push(Site {
+                kind: if cfg!(target_os = "windows") { "windows" } else { "local" }.to_string(),
+                name: String::new(),
+                dir: d.display().to_string(),
+                hooks_incomplete: match agent {
+                    AGENT_CODEX => crate::codex_install::incomplete(cfg),
+                    _ => crate::hooks_install::file_incomplete_at(&d, cfg.port),
+                },
+                last_used,
+                entrypoints,
+            });
+        }
+    }
+    // Codex has no WSL story; wsl::claude_sites() is empty off Windows, so this stays uniform.
+    if agent == AGENT_CLAUDE {
+        for (distro, d) in crate::wsl::claude_sites() {
+            let (last_used, entrypoints) = last_use(&d);
+            out.push(Site {
+                kind: "wsl".to_string(),
+                name: distro,
+                dir: d.display().to_string(),
+                hooks_incomplete: crate::hooks_install::file_incomplete_at(&d, cfg.port),
+                last_used,
+                entrypoints,
+            });
+        }
+    }
+    out
+}
+
+/// When this site was last used, and by which entrypoint — read straight from the transcripts it
+/// writes. `entrypoint` ("claude-desktop" / "cli") is how we can tell the desktop app from the
+/// terminal, which share one config directory and are otherwise indistinguishable.
+///
+/// Only the newest transcript is opened, and only its tail: this runs on the heartbeat, and one of
+/// these directories can live across a \\wsl$ share.
+fn last_use(dir: &std::path::Path) -> (Option<i64>, Vec<String>) {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let projects = dir.join("projects");
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let Ok(entries) = std::fs::read_dir(&projects) else {
+        return (None, Vec::new());
+    };
+    for proj in entries.flatten() {
+        let Ok(files) = std::fs::read_dir(proj.path()) else { continue };
+        for f in files.flatten() {
+            if f.path().extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(m) = f.metadata().and_then(|m| m.modified()) else { continue };
+            if newest.as_ref().map(|(t, _)| m > *t).unwrap_or(true) {
+                newest = Some((m, f.path()));
+            }
+        }
+    }
+    let Some((mtime, path)) = newest else { return (None, Vec::new()) };
+    let secs = mtime
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .ok();
+
+    // Tail only — a long session's transcript runs to megabytes.
+    const TAIL: u64 = 256 * 1024;
+    let mut eps = Vec::new();
+    if let Ok(mut f) = std::fs::File::open(&path) {
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let from = len.saturating_sub(TAIL);
+        if f.seek(SeekFrom::Start(from)).is_ok() {
+            let mut buf = String::new();
+            let _ = f.take(TAIL).read_to_string(&mut buf);
+            if buf.contains(r#""entrypoint":"claude-desktop""#) {
+                eps.push("desktop".to_string());
+            }
+            if buf.contains(r#""entrypoint":"cli""#) {
+                eps.push("cli".to_string());
+            }
+        }
+    }
+    (secs, eps)
 }
 
 #[cfg(test)]
