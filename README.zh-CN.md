@@ -116,6 +116,8 @@ npm run dev        # 开发模式启动
 2. **在 Codex 里执行 `/hooks` 批准这些 hook。** 这步不能省:Codex 会给每个 hook 定义算哈希,不经你批准就**拒绝执行**,而且任何改动都会重新触发审核。而且它不是安静地跳过——它会照常打印 `hook: … Completed`,但命令**根本没执行**。
 3. 在 Codex 里随便跑点什么 → 面板翻成「**已生效**」,因为**真的收到了事件**。这是唯一诚实的证据,所以我们只认它
 
+> hooks 装了但宠物还是不理 Codex?见 [docs/codex-hooks.md](docs/codex-hooks.md)——为什么 Codex 会给一个根本没执行的 hook 打印 `Completed`,以及怎么分辨失败的到底是谁的 hook。
+
 > **如果你让 Codex 导入过 Claude Code 的配置**(它首次启动时会问),它把 Tokibean 自己的 hook 原样复制进了 `~/.codex/hooks.json`——但仍然指向 Claude 的端点。放着不管,你在 Codex 里干的活会被**算到 Claude 头上**。安装 Codex hooks 时会自动清理掉这些副本,面板会告诉你清了几个。
 
 顶部悬停会出现拖动手柄,按住可以把宠物拖到任意位置。系统托盘图标可以隐藏/退出。

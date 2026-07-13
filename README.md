@@ -116,6 +116,8 @@ Once the pet shows up on screen, open **Settings** (from the tray, or the ⚙ at
 2. **Run `/hooks` inside Codex and approve them.** This step is not optional: Codex hashes every hook definition and refuses to run it until you say so, and any edit re-arms that review. Until then Codex is not merely quiet — it will happily print `hook: … Completed` while never running the command at all.
 3. Run anything in Codex → the panel flips to *"Active"*, because an event actually arrived. That is the only honest proof, which is why we wait for it.
 
+> Hooks written but the pet still ignores Codex? [docs/codex-hooks.md](docs/codex-hooks.md) — why Codex prints `Completed` for a hook it never ran, and how to tell whose hook actually failed.
+
 > **If you let Codex import your Claude Code setup** (its onboarding offers this), it copied Tokibean's own hooks into `~/.codex/hooks.json` — still pointing at Claude's endpoint. Left alone, your Codex work would be counted as Claude's. Installing Codex hooks cleans those copies up; the panel tells you when it did.
 
 Hovering over the top reveals a drag handle; hold it to move the pet anywhere. The system tray icon lets you hide/quit.
