@@ -1,6 +1,18 @@
 # ADR-0007: Agents are detected; config grows additively
 
-**Status:** Accepted — 2026-07-13
+**Status:** Accepted — 2026-07-13. **Amended by [ADR-0014](0014-setup-lives-in-settings.md)** on two
+points, same day:
+
+1. *"Detect, don't configure"* was only ever implemented for Codex. Claude was never detected at all,
+   so a user who has never touched Claude Code was shown an "Install Claude Code hooks" button — and
+   clicking it created `~/.claude` for him. Claude is now detected the same way Codex is.
+2. *"An agent appears in the UI only if its config directory exists"* was too broad: applied to the
+   **Settings** window it means almost nobody ever learns Tokibean supports Codex. The rule is narrowed
+   to the **panel** (the daily glance). Settings may show an undetected agent, greyed and honestly
+   labelled — that is information, not clutter.
+
+Detection also became live (it ran once at startup), and the config directory is now overridable per
+agent, because `CLAUDE_CONFIG_DIR` / `CODEX_HOME` users were invisible to us entirely. See ADR-0014.
 
 ## Context
 
