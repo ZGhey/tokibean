@@ -675,11 +675,11 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 let mut cfg = shared.cfg.lock().unwrap();
                 // Geometry mirrors recomputeGeom() in src/main.js — keep both in sync. Only the pet
-                // canvas scales; the panel allowance (412) is fixed, so FULL_H grows by the canvas delta.
+                // canvas scales; the panel allowance is fixed, so FULL_H grows by the canvas delta.
                 let scale = cfg.scale();
                 let canvas_h = config::CANVAS_H_AT_1X * scale;
                 let pad_b = config::PAD_B; // body padding-bottom is a fixed 4px CSS gap, not scaled
-                let full_h_l = (canvas_h + pad_b + 412.0).round();
+                let full_h_l = (canvas_h + pad_b + config::PANEL_ALLOWANCE).round();
                 let win_w_l = config::win_w(scale);
                 let f = w.scale_factor().unwrap_or(1.0);
                 let _ = w.set_size(tauri::LogicalSize::new(win_w_l, full_h_l));

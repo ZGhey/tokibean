@@ -14,6 +14,17 @@ pub const CANVAS_H_AT_1X: f64 = 184.0;
 pub const CANVAS_W_AT_1X: f64 = 200.0;
 pub const PAD_B: f64 = 4.0;
 pub const MIN_WIN_W: f64 = 240.0;
+/// Window height reserved for the usage panel, above the pet canvas.
+///
+/// The panel overlaps the canvas by 60px (its negative margin-bottom), so this is
+/// `PANEL_MAX_H - 60` — and PANEL_MAX_H lives twice on the frontend, in src/main.js and as the
+/// `body.prealloc #panel` max-height in style.css. All three are one fact; keep them in step.
+///
+/// Sized for the worst panel a user actually sees: a brand-new install, which stacks the account row,
+/// the connect button, the hook row, the install button and the Codex block on top of the usage cards
+/// (measured at 569px). Too small and the panel silently scrolls, hiding the very buttons a new user
+/// needs — which is what a 412px allowance did once the Codex block and per-agent quota cards landed.
+pub const PANEL_ALLOWANCE: f64 = 600.0;
 /// Collapsed window height used by every build before the pet-size setting existed (0.4.4).
 /// A config with `pet_scale: None` had its position saved against a window this tall.
 pub const LEGACY_BASE_H: f64 = 340.0;

@@ -47,10 +47,15 @@ body {
 #panel.hidden, .hidden { display: none !important; }
 
 /* Windows + macOS: the collapsed window is pre-allocated to a fixed full height (never resized, to
-   avoid the stale-frame jump on open). Bound the panel so a taller-than-usual panel (only the pre-setup
-   state, with the connect + install-hooks sections shown) can't overflow past the window edge in either
-   layout — it scrolls internally instead. The common connected panel fits well under this, no scroll. */
-body.prealloc #panel { max-height: 430px; overflow-y: auto; }
+   avoid the stale-frame jump on open). Bound the panel so it can't overflow past the window edge in
+   either layout — past this it scrolls internally instead.
+
+   MUST equal PANEL_MAX_H in src/main.js, which sizes the window around it (and the Rust allowance in
+   src-tauri/src/main.rs, which is PANEL_MAX_H minus this panel's 60px negative margin-bottom). Set
+   too low, the panel silently scrolls and a new user never sees the connect / install buttons — which
+   is exactly what happened when the Codex block and the per-agent quota cards pushed a fresh install's
+   panel to 569px against a 430px cap. */
+body.prealloc #panel { max-height: 660px; overflow-y: auto; }
 
 /* Panel below the pet — used when there's no room above (pet near the screen top):
    flip the stack so the pet is on top and the panel hangs below it */
@@ -59,6 +64,12 @@ body.prealloc #panel { max-height: 430px; overflow-y: auto; }
    which is what the JS layout math assumes. Using flex-start here drifts the pet downward. */
 body.below { flex-direction: column-reverse; justify-content: flex-end; }
 body.below #panel { margin-bottom: 0; margin-top: -14px; }
+/* Below-layout: the pet canvas sits flush against the window's TOP edge, and an enlarged pet spills
+   out of its fixed 200×184 CSS box upward (it scales from its feet). Without this the spill is clipped
+   by the window and the pet loses its head. --pet-overflow is (184 × (scale − 1)), set by
+   applyCanvasScale: positive when enlarged (push the box down to make room), negative when shrunk
+   (pull it back up so the smaller pet still touches the top edge). */
+body.below #pet { margin-top: var(--pet-overflow, 0px); }
 
 .row.head {
   display: flex;

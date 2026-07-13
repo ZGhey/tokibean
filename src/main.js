@@ -135,6 +135,13 @@
     // Grow upward from the feet so the pet stays planted on the ground as it scales.
     canvas.style.transformOrigin = "bottom center";
     canvas.style.transform = scale === 1 ? "" : "scale(" + scale + ")";
+    // The canvas keeps its 200×184 CSS box at every scale (so pet.js and every skin still draw into a
+    // fixed 200×184 space), which means an enlarged pet spills OUT of that box — upward, since it
+    // grows from its feet. In the up-layout that spill lands in the panel's empty area and nobody
+    // notices. In the BELOW layout the canvas is flush with the window's top edge, so the spill goes
+    // straight past it and the window clips the pet's head off (46px of it at the largest size).
+    // Publish the overflow so the below-layout can reserve exactly that much room above the box.
+    document.body.style.setProperty("--pet-overflow", CANVAS_H0 * (scale - 1) + "px");
   }
   applyCanvasScale(DEFAULT_SCALE);
   const panel = document.getElementById("panel");
@@ -500,6 +507,21 @@
   //   PET_CANVAS_TOP  empty space above the pet drawing inside the canvas (dome top ≈ 64px down)
   //   FULL_H     pre-allocated collapsed height on Windows/macOS (never resized after startup — that's
   //              what kills the stale-frame jump on open); = scaled canvas + fixed panel room
+  // How much window height the panel gets. The panel overlaps the canvas by PANEL_OVERLAP (its
+  // negative margin-bottom), so a panel of height H needs (H - PANEL_OVERLAP) px above the canvas.
+  //
+  // THESE THREE NUMBERS ARE ONE FACT, in three places — keep them in sync or the panel gets clipped:
+  //   · PANEL_MAX_H here
+  //   · `body.prealloc #panel { max-height }` in style.css   (must equal PANEL_MAX_H)
+  //   · the panel allowance in src-tauri/src/main.rs's setup  (must equal PANEL_MAX_H - PANEL_OVERLAP)
+  //
+  // Sized for the WORST panel a user actually sees: a brand-new install, which stacks the account
+  // row, the connect button, the hook row, the install button, and (if Codex is present) the Codex
+  // block on top of the usage cards — measured at 569px. Anything past PANEL_MAX_H scrolls inside the
+  // panel rather than being cut off, which is the backstop for a long session list.
+  const PANEL_MAX_H = 660;
+  const PANEL_OVERLAP = 60; // #panel's negative margin-bottom in style.css
+
   let BASE_H, WIN_W, CANVAS_H, PAD_B, PET_CANVAS_TOP, FULL_H, COLLAPSED_H;
   function recomputeGeom(scale) {
     BASE_H = Math.round(340 * scale);
@@ -507,7 +529,7 @@
     CANVAS_H = Math.round(184 * scale); // visual pet height (canvas is CSS 184, transform-scaled)
     PAD_B = 4;                          // body padding-bottom is a fixed 4px CSS gap, not scaled
     PET_CANVAS_TOP = Math.round(64 * scale);
-    FULL_H = Math.round(CANVAS_H + PAD_B + 412);
+    FULL_H = Math.round(CANVAS_H + PAD_B + (PANEL_MAX_H - PANEL_OVERLAP));
     COLLAPSED_H = PREALLOC ? FULL_H : BASE_H;
   }
   recomputeGeom(DEFAULT_SCALE);
@@ -828,6 +850,28 @@
   let codexCfg = null;
   let currentSkin = "classic";
 
+  /// Where the pet's feet must land for the whole pet — dome to toes, at the NEW scale — to fit on
+  /// screen. Takes the desired feet Y, returns it nudged inside the monitor (unchanged if it already
+  /// fits, and unchanged if we can't read the monitor: never move the pet on a guess).
+  ///
+  /// Call recomputeGeom(newScale) first — this reads the new CANVAS_H / PET_CANVAS_TOP.
+  async function clampFeet(feetY) {
+    let mon;
+    try {
+      mon = await window.__TAURI__.window.currentMonitor();
+    } catch (e) {}
+    if (!mon) return feetY;
+    const mp = mon.position.toLogical(mon.scaleFactor);
+    const ms = mon.size.toLogical(mon.scaleFactor);
+    // The canvas reserves PET_CANVAS_TOP of empty space above the drawing (bubble headroom), so the
+    // pet's visible top is that far below the canvas top.
+    const domeY = feetY - CANVAS_H + PET_CANVAS_TOP;
+    if (domeY < mp.y) feetY += mp.y - domeY; // head poking off the top → push it down
+    const floor = mp.y + ms.height;
+    if (feetY > floor) feetY = floor; // feet through the bottom → lift them back onto it
+    return feetY;
+  }
+
   // Apply a pet size change: rescale the canvas + all window geometry, keeping the pet's feet (the
   // canvas bottom) pinned so it grows/shrinks in place. Called on first config load and whenever the
   // Settings window changes the size (config-changed). A no-op if already at that scale — so the
@@ -843,7 +887,7 @@
       const factor = await win.scaleFactor();
       const winPos = (await win.outerPosition()).toLogical(factor);
       // Pin the pet's feet: remember the canvas bottom's screen Y, restore it after resizing.
-      const bottomY = winPos.y + canvas.getBoundingClientRect().bottom;
+      let bottomY = winPos.y + canvas.getBoundingClientRect().bottom;
       // Resize the COLLAPSED window; if the panel is open, collapse it first (it re-fits on next open).
       if (!panel.classList.contains("hidden")) {
         panel.classList.add("hidden");
@@ -855,6 +899,13 @@
       recomputeGeom(scale);
       const below = PREALLOC ? curBelow : false;
       const targetH = COLLAPSED_H;
+      // Growing pins the pet's FEET, so it gets taller by pushing its head UP — and a pet sitting near
+      // the top of the screen grows its head straight off it. (Shrinking near the bottom is the mirror
+      // image.) Nudge the target so the whole pet lands on-screen. This has to happen HERE, folded into
+      // the geometry we're about to apply: clamping afterwards means a second window move — and on
+      // macOS set_window_rect is dispatched to the main thread, so a follow-up read of the window
+      // position races it and clamps against stale coordinates. One atomic move, correct the first time.
+      bottomY = await clampFeet(bottomY);
       const newTop = Math.round(bottomY - canvasTopIn(targetH, below) - CANVAS_H);
       // Atomic move+size in native code; the pet is hidden across it anyway (its size changes here).
       await invoke("set_window_rect", { x: Math.round(winPos.x), y: newTop, w: WIN_W, h: targetH }).catch(async () => {
