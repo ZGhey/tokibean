@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::i18n;
-use crate::state::{Base, Core, Session, SessionKey};
+use crate::state::{Base, Core, Session, SessionKey, AGENT_CODEX};
 
 /// What the IO shell must do after a reduction. The reducer itself performs no IO.
 #[derive(Default, PartialEq, Debug)]
@@ -32,10 +32,50 @@ pub struct NotifyCfg {
     pub min_secs: u64,
 }
 
+/// Normalize an agent's event name into Tokibean's vocabulary (Claude's names are the canonical set).
+///
+/// Verified against real Codex payloads, not the docs: Codex's event names are already Claude's,
+/// with two differences. It has no `Notification` — its "the agent needs you" signal is
+/// `PermissionRequest`. And it has no `SessionEnd`.
+fn normalize_event(agent: &str, name: &str) -> &'static str {
+    if agent == AGENT_CODEX && name == "PermissionRequest" {
+        return "Notification";
+    }
+    // Everything else already speaks the canonical names. Leak the borrow into a 'static by matching
+    // the known set; an unrecognized name falls through to "" and is ignored downstream.
+    match name {
+        "SessionStart" => "SessionStart",
+        "SessionEnd" => "SessionEnd",
+        "UserPromptSubmit" => "UserPromptSubmit",
+        "PreToolUse" => "PreToolUse",
+        "PostToolUse" => "PostToolUse",
+        "Stop" => "Stop",
+        "SubagentStop" => "SubagentStop",
+        "Notification" => "Notification",
+        _ => "",
+    }
+}
+
+/// Whether this agent's PostToolUse can tell us a tool FAILED.
+///
+/// Claude says so outright (`tool_response.is_error` / `.error` / `.success`). **Codex cannot.**
+/// Verified with real bytes: the same Bash tool running `true` (exit 0), `false` (exit 1) and
+/// `sh -c 'exit 3'` produces byte-identical payloads — `tool_response` is `""` in all three — and the
+/// payload has no exit_code / is_error / success field at all (OpenAI's own schema confirms this).
+///
+/// So the pet simply doesn't do its annoyed "oops" face on Codex. **Do not add a heuristic here.**
+/// This is not a fragility problem to work around: `false` returns an empty string, so there is
+/// nothing to inspect. Guessing from output text ("error", "No such file") would misfire on any
+/// command that happens to print those words — a lying animation is worse than no animation.
+fn reports_tool_errors(agent: &str) -> bool {
+    agent != AGENT_CODEX
+}
+
 /// Apply one hook event to the state. Pure: no locks, no IO, no clock reads beyond the injected `now`.
 ///
 /// `session_key` is (agent, session_id) — the caller owns the keying policy, so the reducer never
-/// has to know how an agent was identified.
+/// has to know how an agent was identified. The agent's own event/tool vocabulary is normalized into
+/// Tokibean's here, so there is exactly ONE state machine rather than one per agent.
 pub fn apply_event(
     core: &mut Core,
     session_key: SessionKey,
@@ -44,7 +84,8 @@ pub fn apply_event(
     ncfg: NotifyCfg,
 ) -> Effects {
     let mut fx = Effects::default();
-    let name = v["hook_event_name"].as_str().unwrap_or("");
+    let agent = session_key.agent.clone();
+    let name = normalize_event(&agent, v["hook_event_name"].as_str().unwrap_or(""));
     if name.is_empty() {
         return fx;
     }
@@ -93,13 +134,16 @@ pub fn apply_event(
             // on launch, long before the subagent finishes. The real "subagent done" signal is the
             // SubagentStop event (handled below); popping here would kill the clone at launch.
             sess.in_tool = false;
-            // Tool error -> a brief annoyed animation
-            let r = &v["tool_response"];
-            let is_err = r["is_error"].as_bool().unwrap_or(false)
-                || !r["error"].is_null()
-                || r["success"].as_bool().map(|s| !s).unwrap_or(false);
-            if is_err {
-                core.oops_until = Some(now + Duration::from_secs(4));
+            // Tool error -> a brief annoyed animation. Only for agents whose PostToolUse can
+            // actually say a tool failed — Codex's cannot (see reports_tool_errors).
+            if reports_tool_errors(&agent) {
+                let r = &v["tool_response"];
+                let is_err = r["is_error"].as_bool().unwrap_or(false)
+                    || !r["error"].is_null()
+                    || r["success"].as_bool().map(|s| !s).unwrap_or(false);
+                if is_err {
+                    core.oops_until = Some(now + Duration::from_secs(4));
+                }
             }
         }
         "PreToolUse" => {
@@ -224,6 +268,7 @@ pub fn apply_event(
     // System notifications: only two events are worth interrupting for.
     // Stop denoising: don't interrupt for small tasks under min_secs.
     if ncfg.enabled {
+        let who = agent_display(&agent);
         match name {
             "Stop" if worked >= ncfg.min_secs => {
                 let msg = v["last_assistant_message"].as_str().unwrap_or("");
@@ -232,23 +277,45 @@ pub fn apply_event(
                 } else {
                     snippet(msg, 80)
                 };
-                fx.notify = Some((i18n::t("Claude 完工了", "Claude is done").to_string(), body));
+                let title = if i18n::is_zh() {
+                    format!("{} 完工了", who)
+                } else {
+                    format!("{} is done", who)
+                };
+                fx.notify = Some((title, body));
             }
             "Notification" => {
-                let msg = v["message"].as_str().unwrap_or(i18n::t(
-                    "Claude 在等你输入或授权",
-                    "Claude is waiting for input or approval",
-                ));
-                fx.notify = Some((
-                    i18n::t("Claude 在等你", "Claude needs you").to_string(),
-                    snippet(msg, 80),
-                ));
+                let msg = v["message"].as_str().unwrap_or("");
+                let body = if msg.is_empty() {
+                    if i18n::is_zh() {
+                        format!("{} 在等你输入或授权", who)
+                    } else {
+                        format!("{} is waiting for input or approval", who)
+                    }
+                } else {
+                    snippet(msg, 80)
+                };
+                let title = if i18n::is_zh() {
+                    format!("{} 在等你", who)
+                } else {
+                    format!("{} needs you", who)
+                };
+                fx.notify = Some((title, body));
             }
             _ => {}
         }
     }
 
     fx
+}
+
+/// How an agent is named to the user. Notifications must say WHICH agent needs you — with several
+/// running, "Claude is done" for a Codex turn is just wrong.
+pub fn agent_display(agent: &str) -> &str {
+    match agent {
+        AGENT_CODEX => "Codex",
+        _ => "Claude",
+    }
 }
 
 pub fn snippet(s: &str, max_chars: usize) -> String {
@@ -261,13 +328,25 @@ pub fn snippet(s: &str, max_chars: usize) -> String {
 }
 
 /// Tool name -> a stable, language-neutral key.
+///
 /// This is NOT localized: the pet renderers both match on these keys to pick the tool
 /// animation AND draw them as terminal-style status tags ("cmd"/"reading"/…), so they
 /// must stay in English regardless of the UI language.
+///
+/// The key set is CLOSED. Every skin in src/skins/ matches on it, so adding a key means auditing
+/// them all — treat it as a breaking change. A new agent maps its tool names ONTO this set.
+///
+/// Codex needs almost nothing here: verified against real payloads, its shell tool is literally
+/// named `Bash` (not `shell`, as the research notes claimed) with the same `tool_input.command`, so
+/// the command sniffing below works unchanged. Its one distinct name is `apply_patch`, its file
+/// editor. Codex has no Read or Grep tool at all — it reads with `Bash` + `sed` and searches with
+/// `Bash` + `grep` — so `reading`/`searching` rarely surface on Codex. That is Codex's information
+/// boundary, not a bug: do NOT try to recover them by guessing at command text, since `cat` in a
+/// pipeline or `grep` filtering command output would both be misread.
 pub fn friendly_tool(t: &str) -> String {
     let known = match t {
         "Bash" | "PowerShell" => "cmd",
-        "Edit" | "Write" | "NotebookEdit" => "coding",
+        "Edit" | "Write" | "NotebookEdit" | "apply_patch" => "coding",
         "Read" => "reading",
         "Grep" | "Glob" => "searching",
         "WebFetch" | "WebSearch" => "browsing",
@@ -780,6 +859,185 @@ mod tests {
         );
         assert_eq!(core.sessions.len(), 1);
         assert!(core.sessions.contains_key(&SessionKey::new("codex", "same-id")));
+    }
+
+    // --- Codex adapter (ticket 04). Every payload below is shaped from a REAL captured Codex hook
+    // event (.scratch/multi-agent/fixtures/codex-hook-payloads*.jsonl), not from the docs — the
+    // research notes turned out to be wrong on three points.
+
+    fn codex(core: &mut Core, v: Value, now: Instant) -> Effects {
+        apply_event(core, SessionKey::new("codex", "cx"), &v, now, QUIET)
+    }
+
+    fn codex_base(core: &Core) -> Base {
+        core.sessions[&SessionKey::new("codex", "cx")].base
+    }
+
+    #[test]
+    fn codex_permission_request_means_it_needs_you() {
+        // Codex has no `Notification` event. PermissionRequest is its "I need you" signal, and it's
+        // the only source of the Attention state on Codex.
+        let now = Instant::now();
+        let mut core = empty_core();
+        codex(
+            &mut core,
+            json!({"hook_event_name": "PermissionRequest", "tool_name": "Bash",
+                   "tool_input": {"command": "rm -rf /", "description": "dangerous"}}),
+            now,
+        );
+        assert_eq!(codex_base(&core), Base::Attention);
+        assert!(core.bubble.is_some());
+    }
+
+    #[test]
+    fn codex_shell_tool_is_literally_named_bash() {
+        // The research notes said Codex's shell tool is `shell`. It isn't — it's `Bash`, with the
+        // same tool_input.command, so the existing command sniffing works untouched.
+        let now = Instant::now();
+        for (cmd, want) in [
+            ("git status", "git"),
+            ("cargo test", "testing"),
+            ("ls -la", "cmd"),
+        ] {
+            let mut core = empty_core();
+            codex(
+                &mut core,
+                json!({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                       "tool_input": {"command": cmd}}),
+                now,
+            );
+            assert_eq!(core.tool_note.as_ref().unwrap().0, want);
+        }
+    }
+
+    #[test]
+    fn codex_apply_patch_is_the_coding_animation() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        codex(
+            &mut core,
+            json!({"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                   "tool_input": {"command": "*** Begin Patch"}}),
+            now,
+        );
+        assert_eq!(core.tool_note.as_ref().unwrap().0, "coding");
+        assert_eq!(codex_base(&core), Base::Working);
+    }
+
+    #[test]
+    fn codex_introduces_no_new_tool_keys() {
+        // The tool keys are a skin contract — every skin in src/skins/ matches on them, so adding one
+        // is a breaking change. Codex's tools must land INSIDE the existing set.
+        const CLOSED_SET: [&str; 10] = [
+            "cmd", "coding", "reading", "searching", "browsing", "agents", "planning", "git",
+            "testing", "deps",
+        ];
+        for tool in ["Bash", "apply_patch"] {
+            let key = friendly_tool_cmd(tool, &json!({"command": "ls"}));
+            assert!(CLOSED_SET.contains(&key.as_str()), "{tool} produced a new key: {key}");
+        }
+    }
+
+    #[test]
+    fn codex_cannot_report_a_tool_failure_so_the_pet_does_not_sulk() {
+        // THE finding that fixtures alone would have missed. Real bytes: the same Bash tool running
+        // `true` (exit 0), `false` (exit 1) and `sh -c 'exit 3'` gives byte-identical payloads —
+        // tool_response is "" in all three. Success and failure are indistinguishable, so there is
+        // no oops animation on Codex, and NO heuristic may be added: `false` returns an empty
+        // string, so there is literally nothing to inspect.
+        let now = Instant::now();
+        for resp in ["", "cat: /nope: No such file or directory\n", "zsh:1: command not found: x\n"] {
+            let mut core = empty_core();
+            codex(
+                &mut core,
+                json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+                       "tool_input": {"command": "false"}, "tool_response": resp}),
+                now,
+            );
+            assert!(
+                core.oops_until.is_none(),
+                "Codex must never oops — it cannot know the tool failed (resp was {resp:?})"
+            );
+        }
+        // Claude, which CAN say so, still does
+        let mut core = empty_core();
+        ev(
+            &mut core,
+            json!({"hook_event_name": "PostToolUse", "tool_response": {"is_error": true}}),
+            now,
+        );
+        assert!(core.oops_until.is_some(), "Claude still oopses");
+    }
+
+    #[test]
+    fn a_codex_turn_runs_the_whole_state_machine() {
+        // End to end, in the shape a real captured turn arrived in
+        let now = Instant::now();
+        let mut core = empty_core();
+        codex(&mut core, json!({"hook_event_name": "SessionStart", "cwd": "/tmp"}), now);
+        codex(
+            &mut core,
+            json!({"hook_event_name": "UserPromptSubmit", "prompt": "run ls"}),
+            now,
+        );
+        assert_eq!(codex_base(&core), Base::Working);
+
+        codex(
+            &mut core,
+            json!({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                   "tool_input": {"command": "ls"}}),
+            now + Duration::from_secs(1),
+        );
+        assert_eq!(core.tool_note.as_ref().unwrap().0, "cmd");
+
+        codex(
+            &mut core,
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+                   "tool_response": "AGENTS.md\nREADME.md\n"}),
+            now + Duration::from_secs(2),
+        );
+
+        let fx = apply_event(
+            &mut core,
+            SessionKey::new("codex", "cx"),
+            &json!({"hook_event_name": "Stop", "last_assistant_message": "done",
+                    "stop_hook_active": false}),
+            now + Duration::from_secs(90),
+            LOUD,
+        );
+        assert_eq!(codex_base(&core), Base::Done);
+        assert_eq!(core.celebrate, 1, "90s of work is a medium celebration");
+        assert!(core.bubble.as_ref().unwrap().0.contains("done"));
+
+        // The notification must name CODEX, not Claude
+        let (title, _) = fx.notify.expect("a 90s job notifies");
+        assert!(title.contains("Codex"), "notification said: {title}");
+    }
+
+    #[test]
+    fn claudes_notifications_still_say_claude() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        let fx = apply_event(
+            &mut core,
+            key("s1"),
+            &json!({"hook_event_name": "Notification"}),
+            now,
+            LOUD,
+        );
+        let (title, _) = fx.notify.unwrap();
+        assert!(title.contains("Claude"));
+    }
+
+    #[test]
+    fn an_event_name_we_do_not_know_is_ignored() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        // Codex sends these; we have no use for them and must not let them create a session
+        for name in ["PreCompact", "PostCompact", "SubagentStart"] {
+            codex(&mut core, json!({"hook_event_name": name}), now);
+        }
+        assert!(core.sessions.is_empty());
     }
 
     #[test]
