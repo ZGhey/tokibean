@@ -75,6 +75,7 @@ fn get_config(app: AppHandle) -> serde_json::Value {
         "sound": cfg.sound,
         "skin": cfg.skin,
         "pet_scale": cfg.scale(), // resolved (never null) — the frontend always gets a valid step
+        "text_scale": cfg.text_scale(),
         "boss_key": cfg.boss_key,
         "block_limit": cfg.block_limit,
         "connected": !cfg.oauth_access.is_empty(),
@@ -103,6 +104,7 @@ fn set_config(
     sound: bool,
     skin: String,
     pet_scale: f64,
+    text_scale: f64,
 ) -> Result<(), String> {
     let shared = app.state::<Arc<Shared>>();
     {
@@ -113,6 +115,8 @@ fn set_config(
         cfg.skin = if skin.is_empty() { "classic".into() } else { skin };
         cfg.pet_scale = Some(pet_scale);
         cfg.pet_scale = Some(cfg.scale()); // snap to a valid step, else the default
+        cfg.text_scale = Some(text_scale);
+        cfg.text_scale = Some(cfg.text_scale()); // likewise
         cfg.save().map_err(|e| e.to_string())?;
     }
     state::push_update(&app, &shared);
@@ -384,7 +388,7 @@ fn show_settings_window_on(app: &AppHandle, tab: Option<String>) {
             Some(t) => format!("settings.html?tab={}", t),
             None => "settings.html".to_string(),
         };
-        let _ = tauri::WebviewWindowBuilder::new(
+        let built = tauri::WebviewWindowBuilder::new(
             &app,
             "settings",
             tauri::WebviewUrl::App(url.into()),
@@ -395,6 +399,16 @@ fn show_settings_window_on(app: &AppHandle, tab: Option<String>) {
         .resizable(false)
         .center()
         .build();
+        // A freshly built window is NOT necessarily a front window. We're an Accessory app (no Dock
+        // icon), so nothing about creating a window makes us the active application — the tray path
+        // got away with it only because clicking the tray already brought us to the front. Opened
+        // from the panel, with some other app active, the window would be born behind it: the click
+        // looked dead, and "open it from the tray once" appeared to fix Settings forever (it didn't
+        // — it just created the window, after which every path takes the show()+focus() branch above).
+        if let Ok(w) = built {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
     });
 }
 
@@ -409,7 +423,8 @@ fn show_about_window(app: &AppHandle) {
             let _ = w.set_focus();
             return;
         }
-        let _ = tauri::WebviewWindowBuilder::new(
+        // Built is not fronted — see show_settings_window_on.
+        if let Ok(w) = tauri::WebviewWindowBuilder::new(
             &app,
             "about",
             tauri::WebviewUrl::App("about.html".into()),
@@ -419,7 +434,11 @@ fn show_about_window(app: &AppHandle) {
         .inner_size(380.0, 430.0)
         .resizable(false)
         .center()
-        .build();
+        .build()
+        {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
     });
 }
 
