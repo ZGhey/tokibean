@@ -4,18 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
-<title>Tokibean — Claude Code desktop pet &amp; token usage monitor</title>
-<meta name="description" content="Tokibean is a free open-source desktop pet for Claude Code. A pixel mascot animates what Claude Code is doing in real time, and a live usage panel shows your real 5-hour window percentage, weekly limit and reset countdown from the official Anthropic usage API. macOS, Windows and Linux.">
+<title>Tokibean — desktop pet for Claude Code &amp; Codex, with live quota</title>
+<meta name="description" content="Tokibean is a free open-source desktop pet for AI coding agents — Claude Code and Codex. A pixel mascot animates what your agent is doing in real time, and a live panel shows each agent's quota: Claude's real 5-hour window from the official Anthropic usage API, and Codex's own window straight from its local logs. macOS, Windows and Linux.">
 <link rel="canonical" href="https://zghey.github.io/tokibean/">
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://zghey.github.io/tokibean/">
-<meta property="og:title" content="Tokibean — Claude Code desktop pet &amp; token usage monitor">
-<meta property="og:description" content="A pixel desktop pet that shows what Claude Code is doing — and tracks your real 5-hour token window from the official Anthropic usage API. Free, open source, macOS / Windows / Linux.">
+<meta property="og:title" content="Tokibean — desktop pet for Claude Code &amp; Codex, with live quota">
+<meta property="og:description" content="A pixel desktop pet that shows what Claude Code and Codex are doing — and tracks each one's real quota window. Free, open source, macOS / Windows / Linux.">
 <meta property="og:image" content="https://zghey.github.io/tokibean/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Tokibean — Claude Code desktop pet &amp; token usage monitor">
-<meta name="twitter:description" content="A pixel desktop pet that shows what Claude Code is doing — and tracks your real 5-hour token window.">
+<meta name="twitter:title" content="Tokibean — desktop pet for Claude Code &amp; Codex, with live quota">
+<meta name="twitter:description" content="A pixel desktop pet that shows what Claude Code and Codex are doing — and tracks each one's real quota window.">
 <meta name="twitter:image" content="https://zghey.github.io/tokibean/og.png">
 
 <link rel="icon" href="icon.png">
@@ -26,7 +26,7 @@
   "@type": "SoftwareApplication",
   "name": "Tokibean",
   "alternateName": "Tokibean 码豆",
-  "description": "A desktop pet that shows what Claude Code is doing in real time and monitors your token usage, including the official 5-hour window percentage and reset countdown.",
+  "description": "A desktop pet that shows what your AI coding agents — Claude Code and Codex — are doing in real time, and monitors each one's quota: Claude's official 5-hour window percentage and reset countdown, and Codex's own window from its local logs.",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "macOS, Windows, Linux",
   "url": "https://zghey.github.io/tokibean/",
@@ -98,7 +98,7 @@ footer{padding:38px 20px 60px; text-align:center; color:var(--muted); font-size:
 <header>
   <div class="wrap">
     <h1>Tokibean 🫘</h1>
-    <p class="tag">A desktop pet that shows you what <b>Claude Code</b> is doing — and how much of your token budget is left.</p>
+    <p class="tag">A desktop pet that shows you what your AI coding agent is doing — <b>Claude Code</b> and <b>Codex</b> — and how much quota each one has left.</p>
 
     <div class="strip">
       <img src="gifs/thinking.gif" alt="Tokibean thinking while Claude Code works" loading="lazy">
@@ -124,7 +124,7 @@ footer{padding:38px 20px 60px; text-align:center; color:var(--muted); font-size:
 <section>
   <div class="wrap">
     <h2>Real usage numbers, not a guess</h2>
-    <p class="lede">This is what sets Tokibean apart from the other Claude Code pets.</p>
+    <p class="lede">This is what sets Tokibean apart from the other coding-agent pets.</p>
     <p>Connect your Claude account once, straight from the panel (a normal OAuth flow in your browser — the token stays on your machine). Tokibean then reads the <b>official Anthropic usage endpoint</b>, so the numbers it shows you are the real ones:</p>
     <ul>
       <li><b>5-hour window percentage</b> and the exact reset countdown</li>
@@ -132,6 +132,7 @@ footer{padding:38px 20px 60px; text-align:center; color:var(--muted); font-size:
       <li>An exclamation mark over the pet's head past 80% — and it flops down to sleep once the quota is spent</li>
       <li>On an API key instead of a subscription? It shows today's and last-7-days dollar cost, parsed from your local logs</li>
     </ul>
+    <p><b>Codex gets its own card</b>, and it costs you nothing to set up: Codex writes its quota — the percentage, the window length, the reset — straight into its own local logs, so there's no login at all. The two cards sit side by side and are never blended: Claude's window is five hours, Codex's is thirty days on the free plan, and averaging those would produce a number that means nothing. The pet warns when <i>any</i> agent runs dry, but only sleeps once <i>every</i> agent is spent — if Codex still has room, there's still work to do.</p>
     <p>Everything else — every animation, every event — is driven by <a href="https://docs.claude.com/en/docs/claude-code/hooks">Claude Code hooks</a> posted to a local server on <code>127.0.0.1</code>. Nothing about your code or prompts ever leaves your machine.</p>
   </div>
 </section>
@@ -192,6 +193,12 @@ footer{padding:38px 20px 60px; text-align:center; color:var(--muted); font-size:
     <h3>How do I check my Claude Code 5-hour window usage?</h3>
     <p>Tokibean shows it live in its panel: the window percentage, the token count, and a countdown to the reset. Connect your Claude account once and the figure comes from Anthropic's own usage endpoint rather than a local estimate.</p>
 
+    <h3>Does it work with Codex too?</h3>
+    <p>Yes. Install its hooks from the panel, then approve them with <code>/hooks</code> inside Codex — Codex won't run a hook until you say so, and Tokibean tells you plainly that they're written but not live until you do. Codex's quota then appears as its own card, read straight from its local logs. No account to connect.</p>
+
+    <h3>How do I see my Codex usage and rate limit?</h3>
+    <p>Codex records <code>used_percent</code>, its window length and its reset time in <code>~/.codex/sessions/</code>. Tokibean reads them and shows the percentage, the window (thirty days on the free plan) and a countdown — no API call, no OAuth, no token to refresh.</p>
+
     <h3>Does it work with a Claude Pro or Max subscription?</h3>
     <p>Yes — subscription mode is what it's built for. If you use an API key instead, it switches to dollar-cost tracking (today and the last 7 days) parsed from your local <code>~/.claude/projects/*.jsonl</code> logs.</p>
 
@@ -201,14 +208,14 @@ footer{padding:38px 20px 60px; text-align:center; color:var(--muted); font-size:
     <h3>Does it run on Windows and Linux, and does it see Claude Code inside WSL?</h3>
     <p>Yes to all three. On Windows the hook installer also syncs into every WSL distro's <code>~/.claude/settings.json</code>, so Claude Code running in WSL is detected from the Windows-side pet.</p>
 
-    <h3>Is it affiliated with Anthropic?</h3>
-    <p>No. It's an independent community project. "Claude" and "Claude Code" are used only as factual compatibility references.</p>
+    <h3>Is it affiliated with Anthropic or OpenAI?</h3>
+    <p>No. It's an independent community project. "Claude", "Claude Code" and "Codex" are used only as factual compatibility references.</p>
   </div>
 </section>
 
 <footer>
   <p><a href="https://github.com/ZGhey/tokibean">GitHub</a> · <a href="https://github.com/ZGhey/tokibean/releases/latest">Download</a> · <a href="https://github.com/ZGhey/tokibean/blob/main/README.zh-CN.md">中文说明</a> · MIT</p>
-  <p>Tokibean 码豆 — a community project, not affiliated with or endorsed by Anthropic.</p>
+  <p>Tokibean 码豆 — a community project, not affiliated with or endorsed by Anthropic or OpenAI.</p>
 </footer>
 
 </body>

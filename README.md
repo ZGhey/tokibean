@@ -2,9 +2,9 @@
 
 # Tokibean 🫘
 
-### A desktop pet that shows you what Claude Code is doing
+### A desktop pet that shows you what your AI coding agent is doing
 
-It thinks, codes, searches, and celebrates right alongside you — and keeps an eye on your token budget.
+Claude Code and Codex. It thinks, codes, searches, and celebrates right alongside you — and keeps an eye on your quota.
 
 [![Release](https://img.shields.io/github/v/release/ZGhey/tokibean?style=flat-square&color=e8916c)](https://github.com/ZGhey/tokibean/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/ZGhey/tokibean/total?style=flat-square&color=e8916c)](https://github.com/ZGhey/tokibean/releases)
@@ -20,15 +20,17 @@ It thinks, codes, searches, and celebrates right alongside you — and keeps an 
 
 </div>
 
-A desktop pet that lives on your screen and watches Claude Code. No feeding, no leveling — it does just three things:
+A desktop pet that lives on your screen and watches your AI coding agents — **Claude Code** and **Codex**. No feeding, no leveling — it does just three things:
 
-1. **Knows whether Claude is working**: receives Claude Code hook events in real time — puffs thinking dots while working, bounces happily and fires a system notification when done, waves at you when it needs input or approval.
-2. **Live token usage**: parses the local JSONL logs under `~/.claude/projects/`. Subscription users (Pro/Max) see the 5-hour window percentage and reset countdown; API users see today's / last-7-days dollar cost.
-3. **Quota state at a glance**: an exclamation mark pops over its head past 80% window usage, and it flops down to sleep once the quota is spent (nothing to do anyway).
+1. **Knows whether your agent is working**: receives hook events in real time — puffs thinking dots while working, bounces happily and fires a system notification when done, waves at you when it needs input or approval. Run several agents at once and it watches all of them: one pet, a ×N badge, and a session list that names which agent (and which project) needs you.
+2. **Live quota and token usage**: Claude's 5-hour window and Codex's own window sit side by side, one card each — each with its own length and its own reset, never averaged together. Plus today's and this week's tokens across every agent.
+3. **Quota state at a glance**: an exclamation mark pops over its head when any agent passes 80%, and it flops down to sleep only once *every* agent is spent (if Codex still has room, there's still work to do).
 
 Cross-platform: Windows / macOS / Linux (Tauri 2).
 
-**What makes it different from the other Claude Code pets:** it reads the **official Anthropic usage API** (connect your account once, in-app OAuth), so the 5-hour-window percentage and reset countdown are the real numbers, not an estimate. It also has a whole ambient world — real moon phases, seasons, weather, festivals — all computed offline from your local clock.
+**What makes it different from the other coding-agent pets:** for Claude it reads the **official Anthropic usage API** (connect your account once, in-app OAuth), so the 5-hour-window percentage and reset countdown are the real numbers, not an estimate. It also has a whole ambient world — real moon phases, seasons, weather, festivals — all computed offline from your local clock.
+
+Claude Code is the flagship: it gets the official usage API, in-app account connect, and WSL hook sync. Codex is first-class but simpler — its quota comes free from its own local logs, no login required.
 
 > A community project, not affiliated with or endorsed by Anthropic; "Claude" is used only as a factual compatibility reference. The default mascot "Archway Dundun" (拱门·墩墩) is an original character, and every built-in skin is free to redistribute.
 
@@ -107,6 +109,14 @@ Once the pet shows up on screen:
 3. **Restart Claude Code** (or run `/hooks` inside it) to apply.
 4. Send any message in Claude Code → the pet should immediately switch to its "thinking" state.
 
+**Codex** (only shown if you have it installed):
+
+1. Click **"Install Codex hooks"** → writes into `~/.codex/hooks.json` (backed up first).
+2. **Run `/hooks` inside Codex and approve them.** This step is not optional: Codex hashes every hook definition and refuses to run it until you say so, and any edit re-arms that review. Until you approve, the panel honestly says *"Awaiting approval"* — the hooks are written, but they are not live.
+3. Run anything in Codex → the panel flips to *"Active"*, because an event actually arrived.
+
+> **If you let Codex import your Claude Code setup** (its onboarding offers this), it copied Tokibean's own hooks into `~/.codex/hooks.json` — still pointing at Claude's endpoint. Left alone, your Codex work would be counted as Claude's. Installing Codex hooks cleans those copies up; the panel tells you when it did.
+
 Hovering over the top reveals a drag handle; hold it to move the pet anywhere. The system tray icon lets you hide/quit.
 
 To build an installer: `npm run build` (on macOS, run `npm run tauri icon app-icon.png` once first to generate the icns icon).
@@ -114,12 +124,18 @@ To build an installer: `npm run build` (on macOS, run `npm run tauri icon app-ic
 ## How it works
 
 ```
-Claude Code hooks ──HTTP POST──▶ 127.0.0.1:8737/event ──▶ state machine ──▶ pet animation + system notification
-~/.claude/projects/*.jsonl ──incremental parse──▶ 5-hour window aggregation ──▶ usage panel + warn/limit state
+Claude Code hooks ──POST──▶ 127.0.0.1:8737/event        ─┐
+Codex hooks       ──POST──▶ 127.0.0.1:8737/event/codex  ─┴─▶ one state machine ──▶ pet + notifications
+
+~/.claude/projects/*.jsonl  ──incremental parse──▶ 5-hour window   ─┐
+~/.codex/sessions/*.jsonl   ──incremental parse──▶ Codex's window  ─┴─▶ one quota card each
 ```
 
 - **Event mapping**: `UserPromptSubmit` → working, `PreToolUse` → shows the current tool ("running a command" / "editing code" …), `Stop` → done (bubble shows duration and a summary of the last message; confetti past 1 minute, a big celebration past 10), `Notification` → waiting for you, `SessionStart/End` → session boundaries. Shell commands are recognized a bit further — `git`, running tests, and installing dependencies each get their own animation.
-- **Multi-session**: state is tracked per `session_id`; a ×N badge appears over its head when several run in parallel. Any one working counts as working; it only celebrates when all are done. The usage panel lists each parallel session by its project folder, state, and elapsed time.
+- **Multi-agent, multi-session**: state is tracked per `(agent, session_id)`, and the agent is decided at install time by the hook's URL path — never guessed from the payload. A ×N badge appears over its head when several run in parallel, across all agents. Any one working counts as working; it only celebrates when all are done. The usage panel lists each session by agent, project folder, state, and elapsed time.
+- **Quota windows are never normalized**: Claude's is a 5-hour billing block; Codex reports its own window (thirty days on the free plan) with its own reset. They are different quantities, so they get one card each, with the length rendered from the agent's own data. The pet warns when *any* agent passes 80%, but only sleeps when *every* agent with a real percentage is spent — napping while Codex is free would be a lie.
+- **Codex's quota is free**: it writes `used_percent`, its window length and its reset straight into `~/.codex/sessions/**/*.jsonl`. No OAuth, no API call, no token to refresh. (Tokens count toward the totals; cost does not — we model Anthropic's prices and nobody else's, so the dollar figure is labelled as Claude's rather than pretending to be a total.)
+- **Codex's trust gate**: Codex hashes each hook definition and won't run it until you approve it via `/hooks`, so "written" is not "live". The panel only claims *Active* once an event has actually arrived. Two things Codex simply cannot tell us: whether a tool *failed* (a successful `true` and a failing `false` produce byte-identical payloads), and whether it was reading or searching (it does both through `Bash`), so the pet skips its annoyed face on Codex rather than guessing.
 - **Notification de-noising**: finishing a task shorter than 30 seconds fires no system notification (tunable via `notify_min_secs` in the config).
 - **Hooks forward via curl** rather than http-type hooks, for compatibility with more Claude Code versions; curl ships by default on Win10+/macOS/mainstream Linux.
 - **5-hour window semantics**: starts at the UTC top-of-hour of the window's first activity and lasts 5 hours (matching ccusage's block semantics).
@@ -160,7 +176,8 @@ All drawing logic lives in the single file `src/pet.js`. Keep the `window.PetRen
 
 - **Linux Wayland**: transparency and always-on-top depend on the compositor; where unsupported it degrades to a normal window. X11 has no such issue.
 - **Quota percentage needs official data or a manual limit**: connect an account for real percentages, or set `block_limit`. With neither, there's no window percentage and no 80%/100% alert (an earlier auto-estimate from your historical peak was removed as too unreliable).
-- **Only counts Claude Code**: usage from the claude.ai web app isn't in local files, so it can't be monitored.
+- **Only counts local agent usage**: work done in the claude.ai or ChatGPT web apps isn't in local files, so it can't be monitored.
+- **No "oops" face on Codex**: Codex's hook payload cannot express that a tool failed — success and failure are byte-identical — so the pet doesn't guess. Its `reading`/`searching` animations are also rare on Codex, which reads and greps through the shell.
 - **Weekly limit**: the official figure isn't published; the panel's "last 7 days" is a rolling approximation.
 - If port 8737 is in use, the hook server fails to start (check the terminal log); change the port in the config and reinstall hooks.
 
