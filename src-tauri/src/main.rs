@@ -283,15 +283,11 @@ fn open_about_window(app: AppHandle) {
 }
 
 #[tauri::command]
-fn open_settings_window_on(app: AppHandle, tab: String) {
+async fn open_settings_window_on(app: AppHandle, tab: String) {
     {
         let shared = app.state::<Arc<Shared>>();
         state::refresh_agents(&shared);
         state::push_update(&app, &shared);
-    }
-    // Rebuild the window when a tab is requested, so the deep link lands even if it's already open.
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.close();
     }
     show_settings_window_on(&app, if tab.is_empty() { None } else { Some(tab) });
 }
@@ -342,8 +338,11 @@ fn set_agent_dir(app: AppHandle, agent: String, dir: String) -> Result<String, S
     })
 }
 
+// async: a sync command runs on the main thread, and refresh_agents stats an agent's config dir —
+// which on Windows means reading a WSL distro's ~/.claude over \\wsl$. A stopped distro is started
+// on demand for that read, so the call can block for seconds; on the main thread that is a frozen UI.
 #[tauri::command]
-fn open_settings_window(app: AppHandle) {
+async fn open_settings_window(app: AppHandle) {
     // Same reason as panel_opened: someone is about to look at the agent list, so make it true first.
     {
         let shared = app.state::<Arc<Shared>>();
@@ -358,6 +357,16 @@ fn show_settings_window(app: &AppHandle) {
     show_settings_window_on(app, None)
 }
 
+/// Open the Settings window, optionally on a given tab.
+///
+/// The window is built at most once and never closed-and-rebuilt to land a deep link. Two reasons,
+/// both learned the hard way on Windows:
+///   · `close()` is asynchronous. Closing and immediately re-opening finds the *still-dying* window
+///     and show()s it — a blank zombie nobody can close.
+///   · `build()` on the main thread pumps the message loop while WebView2 initialises, so a second
+///     build scheduled meanwhile is re-entered inside the first. The two creations wedge each other
+///     and the UI thread never returns: every window hangs, unclosable.
+/// So: if it's already open, just focus it and tell the page which tab to show.
 fn show_settings_window_on(app: &AppHandle, tab: Option<String>) {
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
@@ -366,6 +375,9 @@ fn show_settings_window_on(app: &AppHandle, tab: Option<String>) {
         if let Some(w) = app.get_webview_window("settings") {
             let _ = w.show();
             let _ = w.set_focus();
+            if let Some(t) = &tab {
+                let _ = w.emit("settings-tab", t.clone());
+            }
             return;
         }
         let url = match &tab {

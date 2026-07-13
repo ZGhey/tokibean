@@ -315,6 +315,13 @@
         });
       });
 
+      // A deep link that arrives while we're already open: the window is never rebuilt to land one
+      // (that wedged the UI thread on Windows), so the tab comes over as an event instead.
+      listen("settings-tab", (e) => {
+        const want = e.payload;
+        if (want && el("tab-" + want)) el("tab-" + want).click();
+      });
+
       // ---------- Agent panes ----------
       // Fed by the live pet-update: detection is re-run on the heartbeat AND the moment this window
       // opens, so what you're looking at is never stale.
