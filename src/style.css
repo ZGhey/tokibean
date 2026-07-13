@@ -26,6 +26,9 @@ body {
 /* Panel */
 #panel {
   width: 224px;
+  /* Never let flex shrink the panel: it is measured (getBoundingClientRect) while the window is still
+     collapsed, and a shrunk measurement makes the window too short — the panel's top rows get clipped. */
+  flex: none;
   /* Must be fully opaque: the window floats on top of bright text like a terminal,
      and translucency would let the text beneath bleed through, looking like a rendering glitch */
   background: rgb(24, 22, 20);
@@ -43,11 +46,11 @@ body {
 /* !important so `.hidden` wins over later element/`.label-row` display rules */
 #panel.hidden, .hidden { display: none !important; }
 
-/* Windows: the collapsed window is pre-allocated to a fixed full height (never resized, to avoid the
-   DWM jump/flicker on open). Bound the panel so a taller-than-usual panel (only the pre-setup state,
-   with the connect + install-hooks sections shown) can't overflow past the window edge in either
+/* Windows + macOS: the collapsed window is pre-allocated to a fixed full height (never resized, to
+   avoid the stale-frame jump on open). Bound the panel so a taller-than-usual panel (only the pre-setup
+   state, with the connect + install-hooks sections shown) can't overflow past the window edge in either
    layout — it scrolls internally instead. The common connected panel fits well under this, no scroll. */
-body.winos #panel { max-height: 430px; overflow-y: auto; }
+body.prealloc #panel { max-height: 430px; overflow-y: auto; }
 
 /* Panel below the pet — used when there's no room above (pet near the screen top):
    flip the stack so the pet is on top and the panel hangs below it */

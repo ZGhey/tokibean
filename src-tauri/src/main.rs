@@ -183,8 +183,24 @@ mod win_rect {
     }
 }
 
-/// Non-Windows stub so the command can be registered unconditionally (macOS uses its own JS layout path).
-#[cfg(not(target_os = "windows"))]
+/// macOS: same atomicity requirement. Calling set_position then set_size from the webview means two
+/// awaits, so the OS composites the moved-but-not-yet-resized window — the pet visibly jumped up by
+/// (newH - oldH) and snapped back. Running both inside ONE main-thread turn keeps them in a single
+/// AppKit update, so only the final geometry is ever presented. Size first, position last, so the
+/// final call fixes the top-left regardless of Cocoa's bottom-left resize anchoring.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn set_window_rect(app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = app.clone().run_on_main_thread(move || {
+            let _ = win.set_size(tauri::LogicalSize::new(w, h));
+            let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+        });
+    }
+}
+
+/// Stub for the remaining platforms so the command can be registered unconditionally.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 #[tauri::command]
 fn set_window_rect(_app: AppHandle, _x: f64, _y: f64, _w: f64, _h: f64) {}
 
@@ -526,6 +542,16 @@ fn main() {
                     let mut cfg = shared.cfg.lock().unwrap();
                     cfg.pos_x = Some(pos.x);
                     cfg.pos_y = Some(pos.y);
+                    // Pre-allocated platforms restore from the pet's anchor (its canvas-top on screen),
+                    // not the window top-left — derive it here too, so a move persisted by this backstop
+                    // can't disagree with the frontend's savePetAnchor.
+                    #[cfg(any(target_os = "windows", target_os = "macos"))]
+                    if let Ok(sz) = window.outer_size() {
+                        let f = window.scale_factor().unwrap_or(1.0);
+                        let strip = ((config::CANVAS_H_AT_1X * cfg.scale() + config::PAD_B) * f).round() as i32;
+                        let at_top = shared.pet_at_top.load(std::sync::atomic::Ordering::Relaxed);
+                        cfg.pet_anchor_y = Some(if at_top { pos.y } else { pos.y + sz.height as i32 - strip });
+                    }
                     let _ = cfg.save();
                 }
                 _ => {}
@@ -542,9 +568,10 @@ fn main() {
             #[cfg(target_os = "macos")]
             let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            // Restore the last remembered window position (macOS: pos_x/pos_y ARE the window top-left).
-            // Windows restores from the pet anchor instead (below), so skip this there.
-            #[cfg(not(target_os = "windows"))]
+            // Restore the last remembered window position (pos_x/pos_y ARE the window top-left).
+            // Windows and macOS pre-allocate the full height and restore from the pet anchor instead
+            // (below), so this plain path is Linux-only.
+            #[cfg(target_os = "linux")]
             if let Some(w) = app.get_webview_window("main") {
                 let mut cfg = shared.cfg.lock().unwrap();
                 let scale = cfg.scale();
@@ -612,14 +639,17 @@ fn main() {
                 }
             }
 
-            // Windows: pre-allocate the FULL panel height when collapsed so opening the panel never
-            // resizes the window. A resize (SetWindowPos growing the window upward) is what made the
-            // pet jump/flicker — DWM re-composites the old webview frame into the new geometry before
-            // it repaints. With the space already allocated, opening only reveals the (hidden) panel.
+            // Windows + macOS: pre-allocate the FULL panel height when collapsed so opening the panel
+            // never resizes the window. Resizing is what made the pet jump: the window's top edge moves
+            // up by (fullH - collapsedH) while the webview still paints its OLD layout for one frame, so
+            // the pet flashes that far up and snaps back. (On Windows it's DWM re-compositing the old
+            // frame; on macOS the WKWebView surface lags the window by a frame — same visible bug, and no
+            // amount of atomicity in the move+resize call fixes it.) With the space already allocated,
+            // opening only reveals the (hidden) panel — nothing moves, nothing resizes.
             // The pet is placed in the default up-panel layout (at the window BOTTOM); the frontend
             // lazily flips to below-layout on open if the pet sits too near the screen top.
-            // (tauri.conf.json's 340 is the macOS collapsed height, left untouched.)
-            #[cfg(target_os = "windows")]
+            // (tauri.conf.json's 340 height is only the pre-show default; both platforms resize here.)
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
             if let Some(w) = app.get_webview_window("main") {
                 let mut cfg = shared.cfg.lock().unwrap();
                 // Geometry mirrors recomputeGeom() in src/main.js — keep both in sync. Only the pet
@@ -631,11 +661,28 @@ fn main() {
                 let win_w_l = config::win_w(scale);
                 let f = w.scale_factor().unwrap_or(1.0);
                 let _ = w.set_size(tauri::LogicalSize::new(win_w_l, full_h_l));
-                // Migrate once: the old collapsed window was canvas-height with the pet at offset 0,
-                // so the old saved pos_y equalled the pet's canvas-top — adopt it as the new anchor.
-                if cfg.pet_anchor_y.is_none() && cfg.pos_y.is_some() {
-                    cfg.pet_anchor_y = cfg.pos_y;
-                    let _ = cfg.save();
+                // Migrate once to the layout-independent pet anchor (the pet's canvas-top on screen).
+                // Windows' old collapsed window was canvas-height with the pet at offset 0, so its saved
+                // pos_y already IS the anchor. macOS' old collapsed window was base_h tall with the pet
+                // at the bottom, so the anchor sits (base_h - canvas_h - pad_b) below the saved top-left
+                // — and a config predating the pet-size setting was always LEGACY_BASE_H at scale 1.
+                if cfg.pet_anchor_y.is_none() {
+                    if let Some(y) = cfg.pos_y {
+                        #[cfg(target_os = "windows")]
+                        let anchor = y;
+                        #[cfg(target_os = "macos")]
+                        let anchor = {
+                            let legacy = cfg.pet_scale.is_none();
+                            let old_base_h = if legacy { config::LEGACY_BASE_H } else { cfg.base_h() };
+                            let old_canvas_h = if legacy { config::CANVAS_H_AT_1X } else { canvas_h };
+                            y + ((old_base_h - old_canvas_h - pad_b) * f).round() as i32
+                        };
+                        cfg.pet_anchor_y = Some(anchor);
+                        if cfg.pet_scale.is_none() {
+                            cfg.pet_scale = Some(scale);
+                        }
+                        let _ = cfg.save();
+                    }
                 }
                 if let (Some(x), Some(anchor)) = (cfg.pos_x, cfg.pet_anchor_y) {
                     // Up-layout: pet canvas top sits at (window top + full_h - canvas_h - pad_b).
@@ -772,10 +819,11 @@ fn main() {
                         // Solid (mouse captured) only where the pet/panel actually is; the rest of the
                         // transparent window passes clicks through. When the panel is open the whole window
                         // is solid. When collapsed, only the ~192px canvas strip holding the pet is solid —
-                        // its position depends on the layout: on Windows the collapsed window is pre-allocated
-                        // to the full panel height, so the pet sits at the TOP (below-panel layout, pet_at_top)
-                        // or the BOTTOM (up-panel layout). macOS keeps its height-based rule (unchanged).
-                        // The solid pet strip and the mac "panel is open" height threshold both scale
+                        // its position depends on the layout: on Windows and macOS the collapsed window is
+                        // pre-allocated to the full panel height, so the pet sits at the TOP (below-panel
+                        // layout, pet_at_top) or the BOTTOM (up-panel layout). Linux still resizes, so it
+                        // keeps the height-based rule.
+                        // The solid pet strip and the Linux "panel is open" height threshold both scale
                         // with the pet (mirrors recomputeGeom() in src/main.js: strip 192·scale,
                         // collapsed height 340·scale +5 slack). The strip is also bounded to the pet's
                         // actual width (the canvas is 200·scale wide, centred in a ≥240 window), so at
@@ -786,7 +834,7 @@ fn main() {
                         let in_pet_x = (rel_x - w_logical / 2.0).abs() <= half_pet_w;
                         let solid = if s.panel_open.load(Ordering::Relaxed) {
                             true
-                        } else if cfg!(target_os = "windows") {
+                        } else if cfg!(any(target_os = "windows", target_os = "macos")) {
                             in_pet_x
                                 && if s.pet_at_top.load(Ordering::Relaxed) {
                                     rel_y < strip

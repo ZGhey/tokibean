@@ -385,13 +385,15 @@
   });
 
   // ---------- Interaction ----------
-  // The panel is taller than the pet's canvas. macOS resizes the window open/closed. Windows instead
-  // PRE-ALLOCATES the full height while collapsed, so opening the panel never resizes the window — it
-  // only reveals the already-there (hidden) panel. A resize is what made the pet jump/flicker: when
-  // SetWindowPos grows the window upward, DWM re-composites the OLD webview frame into the new geometry
-  // before it repaints (the jump); hiding the pet across that resize killed the jump but the hidden
-  // frames were the flicker. No resize ⇒ neither can happen.
-  // Windows needs the manual-drag path AND the pre-allocated-layout path (defined once, used below).
+  // The panel is taller than the pet's canvas. Windows and macOS PRE-ALLOCATE the full height while
+  // collapsed, so opening the panel never moves or resizes the window — it only reveals the
+  // already-there (hidden) panel. A resize is what made the pet jump: growing the window upward moves
+  // its top edge by (fullH - collapsedH) while the webview still paints the OLD layout for one frame,
+  // so the pet flashes that far up and snaps back (Windows: DWM re-composites the old frame; macOS: the
+  // WKWebView surface lags the window). Doing the move+resize atomically does NOT help — the stale
+  // frame is the webview's, not the window's. No resize ⇒ no stale frame. (Linux still resizes.)
+  const PREALLOC = /Windows|Mac OS X|Macintosh/.test(navigator.userAgent);
+  // Windows additionally needs a MANUAL drag (see below); macOS uses the native one.
   const IS_WIN_DRAG = navigator.userAgent.includes("Windows");
   let resizing = false;
 
@@ -399,12 +401,12 @@
   // fixed-size DOM, so FULL_H adds a fixed panel allowance (412) on top of the scaled canvas rather
   // than scaling wholesale. These are `let` and rebuilt by recomputeGeom() whenever the scale changes.
   // MUST mirror the Rust geometry in src-tauri/src/main.rs (startup sizing + click-through strip).
-  //   BASE_H     macOS collapsed window height (bubble headroom scales too)
+  //   BASE_H     Linux collapsed window height (bubble headroom scales too)
   //   WIN_W      window width (≥240; a scaled pet wider than 200 widens the window)
   //   CANVAS_H   pet canvas height inside the window;  PAD_B  bottom padding
   //   PET_CANVAS_TOP  empty space above the pet drawing inside the canvas (dome top ≈ 64px down)
-  //   FULL_H     Windows pre-allocated collapsed height (never resized after startup on Windows —
-  //              avoids the DWM re-composite jump/flicker on open); = scaled canvas + fixed panel room
+  //   FULL_H     pre-allocated collapsed height on Windows/macOS (never resized after startup — that's
+  //              what kills the stale-frame jump on open); = scaled canvas + fixed panel room
   let BASE_H, WIN_W, CANVAS_H, PAD_B, PET_CANVAS_TOP, FULL_H, COLLAPSED_H;
   function recomputeGeom(scale) {
     BASE_H = Math.round(340 * scale);
@@ -413,21 +415,22 @@
     PAD_B = 4;                          // body padding-bottom is a fixed 4px CSS gap, not scaled
     PET_CANVAS_TOP = Math.round(64 * scale);
     FULL_H = Math.round(CANVAS_H + PAD_B + 412);
-    COLLAPSED_H = IS_WIN_DRAG ? FULL_H : BASE_H;
+    COLLAPSED_H = PREALLOC ? FULL_H : BASE_H;
   }
   recomputeGeom(DEFAULT_SCALE);
   // Where the pet's canvas sits inside a window of height H, per layout:
   //   up → pet anchored to the bottom;  below → pet anchored to the top
   const canvasTopIn = (H, below) => (below ? 0 : H - CANVAS_H - PAD_B);
-  // Windows: which layout the pre-allocated full-height window is currently in (false = up-panel, pet
+  // Pre-allocated platforms: which layout the full-height window is currently in (false = up-panel, pet
   // at the window bottom; true = below-panel, pet at the window top). Startup is up-layout (main.rs).
   let curBelow = false;
-  if (IS_WIN_DRAG) document.body.classList.add("winos");
+  if (PREALLOC) document.body.classList.add("prealloc");
 
-  // Windows: persist the pet's on-screen anchor (its canvas-top). Layout-independent, so it survives
-  // an up↔below flip and a version upgrade; the backend rebuilds the window position from it on launch.
+  // Pre-allocated platforms: persist the pet's on-screen anchor (its canvas-top). Layout-independent,
+  // so it survives an up↔below flip and a version upgrade; the backend rebuilds the window position
+  // from it on launch (the plain saved window top-left is meaningless once the layout can flip).
   async function savePetAnchor() {
-    if (!IS_WIN_DRAG) return;
+    if (!PREALLOC) return;
     try {
       const win = window.__TAURI__.window.getCurrentWindow();
       const factor = await win.scaleFactor();
@@ -440,11 +443,11 @@
     } catch (e) {}
   }
 
-  // Windows: put the pre-allocated full-height window into the given up/below layout with the pet
-  // pinned at `anchorScreenTop`. If the layout is unchanged this moves nothing — opening just reveals
-  // the panel (flicker-free). A flip (rare — only when the pet has crossed the screen-top threshold)
-  // is a pure move + flex reflow; hide the pet across it so it can't flash to the wrong offset.
-  async function applyWinLayout(below, anchorScreenTop, x) {
+  // Put the pre-allocated full-height window into the given up/below layout with the pet pinned at
+  // `anchorScreenTop`. If the layout is unchanged this moves nothing — opening just reveals the panel
+  // (jump-free). A flip (rare — only when the pet has crossed the screen-top threshold) is a pure move
+  // + flex reflow; hide the pet across it so it can't flash to the wrong offset.
+  async function applyPreallocLayout(below, anchorScreenTop, x) {
     if (below === curBelow) {
       invoke("set_pet_at_top", { v: below }).catch(() => {});
       return; // nothing moves or resizes
@@ -466,15 +469,23 @@
 
   // Resize/reposition the window to `targetH`, keeping the pet's canvas at a fixed screen Y so the pet
   // never jumps. macOS only — Windows pre-allocates and never resizes. `below` = panel-below-pet.
+  // Move + resize MUST be one atomic native call (`set_window_rect`): done as two separate JS awaits,
+  // the OS composites the moved-but-not-yet-resized window and the pet flashes (targetH - oldH) px up
+  // and back on every panel open.
   async function setWindowLayout(anchorScreenTop, targetH, below) {
     const win = window.__TAURI__.window.getCurrentWindow();
-    const { LogicalSize, LogicalPosition } = window.__TAURI__.dpi;
+    const { LogicalPosition } = window.__TAURI__.dpi;
     const factor = await win.scaleFactor();
     const x = (await win.outerPosition()).toLogical(factor).x;
     const estTop = Math.round(anchorScreenTop - canvasTopIn(targetH, below));
-    await win.setPosition(new LogicalPosition(x, estTop));
-    await win.setSize(new LogicalSize(WIN_W, targetH));
-    await new Promise((r) => setTimeout(r, 32));
+    await invoke("set_window_rect", { x, y: estTop, w: WIN_W, h: targetH });
+    // The native call is dispatched to the UI thread — wait until the new geometry has landed (and the
+    // page has reflowed) before measuring, instead of assuming a fixed delay.
+    for (let i = 0; i < 12; i++) {
+      await new Promise((r) => setTimeout(r, 16));
+      const h = (await win.outerSize()).toLogical(factor).height;
+      if (Math.abs(h - targetH) <= 1) break;
+    }
     const corrected = Math.round(anchorScreenTop - canvas.getBoundingClientRect().top);
     if (Math.abs(corrected - estTop) > 1) {
       await win.setPosition(new LogicalPosition(x, corrected));
@@ -515,10 +526,10 @@
     const targetUp = Math.max(Math.round(panelH + CANVAS_H - 60 + 12), BASE_H);
     // If expanding upward would push the window top above this screen's top (+ menu bar), go down
     const below = anchorScreenTop - canvasTopIn(targetUp, false) < monTop + 30;
-    if (IS_WIN_DRAG) {
+    if (PREALLOC) {
       // Pre-allocated: don't resize. Just make sure the full-height window is in the right layout,
       // pinning the pet — a no-op reveal if it already is, a flip only if the pet crossed the edge.
-      await applyWinLayout(below, anchorScreenTop, winPos.x);
+      await applyPreallocLayout(below, anchorScreenTop, winPos.x);
       return;
     }
     document.body.classList.toggle("below", below);
@@ -541,9 +552,9 @@
         invoke("set_panel_open", { open: true }).catch(() => {});
         await fitPanel();
         panel.style.opacity = "";
-      } else if (IS_WIN_DRAG) {
-        // Windows: collapse = just hide the panel. The window stays full-height and in its current
-        // up/below layout, so the pet doesn't move and nothing resizes → no jump, no flicker.
+      } else if (PREALLOC) {
+        // Collapse = just hide the panel. The window stays full-height and in its current up/below
+        // layout, so the pet doesn't move and nothing resizes → no jump, no flicker.
         panel.classList.add("hidden");
         invoke("set_panel_open", { open: false }).catch(() => {});
       } else {
@@ -591,7 +602,8 @@
     clearTimeout(dragEndTimer);
     dragEndTimer = setTimeout(() => {
       dragging = false;
-      if (panel.classList.contains("hidden")) clampToScreen();
+      if (panel.classList.contains("hidden")) clampToScreen().then(savePetAnchor);
+      else savePetAnchor();
     }, 350);
   }
   // Keep the window fully on its current screen so the panel can't be clipped at the left/right
@@ -612,7 +624,7 @@
     const ms = mon.size.toLogical(mon.scaleFactor);
     const x = Math.max(mp.x, Math.min(pos.x, mp.x + ms.width - size.width));
     let y;
-    if (IS_WIN_DRAG) {
+    if (PREALLOC) {
       // The pre-allocated full-height window is mostly transparent, so clamp the PET (not the whole
       // window) to the screen. The pet's canvas offset depends on the layout: top in below, bottom in
       // up. This only stops the pet sliding off an edge — it never pulls it in (no snap).
@@ -621,7 +633,7 @@
       const yMax = mp.y + ms.height - (cTop + CANVAS_H); // canvas bottom flush to the screen bottom
       y = Math.min(Math.max(pos.y, yMin), Math.max(yMin, yMax));
     } else {
-      // macOS: keep the pet's canvas on-screen; its allowance is tuned for the 340 window — untouched.
+      // Linux (resizing window): keep the pet's canvas on-screen; allowance tuned for the 340 window.
       const petTop = size.height - CANVAS_H;
       y = Math.max(mp.y - petTop, Math.min(pos.y, mp.y + ms.height - size.height));
     }
@@ -741,24 +753,22 @@
       if (!panel.classList.contains("hidden")) {
         panel.classList.add("hidden");
         document.body.classList.remove("below");
-        if (IS_WIN_DRAG) curBelow = false;
+        if (PREALLOC) curBelow = false;
       }
       canvas.style.visibility = "hidden";
       applyCanvasScale(scale);
       recomputeGeom(scale);
-      const below = IS_WIN_DRAG ? curBelow : false;
+      const below = PREALLOC ? curBelow : false;
       const targetH = COLLAPSED_H;
       const newTop = Math.round(bottomY - canvasTopIn(targetH, below) - CANVAS_H);
-      if (IS_WIN_DRAG) {
-        // Atomic move+size (one SetWindowPos) to avoid a DWM flash on Windows.
-        await invoke("set_window_rect", { x: Math.round(winPos.x), y: newTop, w: WIN_W, h: targetH }).catch(() => {});
-      } else {
+      // Atomic move+size in native code; the pet is hidden across it anyway (its size changes here).
+      await invoke("set_window_rect", { x: Math.round(winPos.x), y: newTop, w: WIN_W, h: targetH }).catch(async () => {
         await win.setPosition(new LogicalPosition(Math.round(winPos.x), newTop));
         await win.setSize(new LogicalSize(WIN_W, targetH));
-      }
+      });
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       invoke("set_panel_open", { open: false }).catch(() => {});
-      if (IS_WIN_DRAG) {
+      if (PREALLOC) {
         invoke("set_pet_at_top", { v: curBelow }).catch(() => {});
         savePetAnchor();
       } else {
