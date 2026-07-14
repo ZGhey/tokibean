@@ -50,22 +50,26 @@ pub struct UpdateState {
 /// earlier versions keep working untouched.
 pub const AGENT_CLAUDE: &str = "claude";
 pub const AGENT_CODEX: &str = "codex";
+pub const AGENT_HERMES: &str = "hermes";
 
 /// Every agent the pet knows how to watch.
-pub const AGENTS: [&str; 2] = [AGENT_CLAUDE, AGENT_CODEX];
+pub const AGENTS: [&str; 3] = [AGENT_CLAUDE, AGENT_CODEX, AGENT_HERMES];
 
-/// A session is identified by (agent, session_id) — ids cannot collide across agents by
-/// construction, rather than by luck.
+/// A session is identified by (agent, profile, session_id) — ids cannot collide across agents by
+/// construction, rather than by luck. Profile is empty string for agents that have no profile
+/// concept (Claude, Codex); for Hermes it carries the Hermes profile name.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct SessionKey {
     pub agent: String,
+    pub profile: String,
     pub id: String,
 }
 
 impl SessionKey {
-    pub fn new(agent: &str, id: &str) -> Self {
+    pub fn new(agent: &str, profile: &str, id: &str) -> Self {
         SessionKey {
             agent: agent.to_string(),
+            profile: profile.to_string(),
             id: id.to_string(),
         }
     }
@@ -406,6 +410,30 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
         }
     }
 
+    // Hermes: token count across all profiles (no rate-limit percentage — basis: none)
+    if crate::agents::installed(&cfg, AGENT_HERMES) {
+        let dbs = crate::hermes_usage::all_state_dbs();
+        let today_start = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .map(|d| d.and_utc().timestamp())
+            .unwrap_or(0);
+        let tokens = crate::hermes_usage::scan_token_totals(&dbs, today_start);
+        if tokens > 0 {
+            snap.set_quota(crate::usage::AgentQuota {
+                agent: AGENT_HERMES.into(),
+                pct: 0.0,
+                basis: "none".into(),
+                pct_valid: false,
+                tokens,
+                limit_tokens: 0,
+                window_minutes: 0,
+                reset_ts: 0,
+                week_pct: None,
+            });
+        }
+    }
+
     // Subscription mode: prefer the API's real percentage, but fetching follows Claude's actions,
     // not a wall clock — the percentage only moves when Claude burns tokens, so we ask on hook
     // events, never on a timer and never when idle:
@@ -684,7 +712,7 @@ mod tests {
         };
         for (agent, id, base) in sessions {
             c.sessions.insert(
-                SessionKey::new(agent, id),
+                SessionKey::new(agent, "", id),
                 Session {
                     base: *base,
                     since: Instant::now(),
@@ -699,7 +727,7 @@ mod tests {
     }
 
     fn base_of(core: &Core, agent: &str, id: &str) -> Base {
-        core.sessions[&SessionKey::new(agent, id)].base
+        core.sessions[&SessionKey::new(agent, "", id)].base
     }
 
     #[test]

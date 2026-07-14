@@ -15,8 +15,10 @@ use crate::usage::UsageSnapshot;
 /// One session's glanceable status, for the tally chip + panel list.
 #[derive(Serialize, Clone)]
 pub struct SessionBrief {
-    /// Which agent this session belongs to ("claude" | "codex")
+    /// Which agent this session belongs to ("claude" | "codex" | "hermes")
     pub agent: String,
+    /// Hermes profile name, empty for Claude/Codex
+    pub profile: String,
     /// "working" | "attention" | "done" | "idle"
     pub state: String,
     /// Seconds spent in the current base state
@@ -146,6 +148,7 @@ pub fn project(
             };
             let brief = SessionBrief {
                 agent: key.agent.clone(),
+                profile: key.profile.clone(),
                 state: state.to_string(),
                 secs: now.duration_since(s.since).as_secs(),
                 cwd: s.cwd.clone(),
@@ -230,7 +233,7 @@ mod tests {
     }
 
     fn key(id: &str) -> crate::state::SessionKey {
-        crate::state::SessionKey::new("claude", id)
+        crate::state::SessionKey::new("claude", "", id)
     }
 
     /// hooks_seen as the projection now takes it: the set of agents we've heard from.

@@ -96,12 +96,17 @@
     }
   }
 
-  // Body. Returns the head-top row so overlays can be positioned
+  // Body. Returns the head-top row so overlays can be positioned.
+  // Also sets _bodyRestY0 (module var) — the head-top without bounce, so the bubble stays put
+  // while the pet jumps up and down.
+  let _bodyRestY0 = 0;
   function body(ctx, cx, o) {
     let y0;
     if (o.lying) {
+      _bodyRestY0 = GY - 15;
       y0 = GY - 15 - (o.breath || 0);
     } else {
+      _bodyRestY0 = GY - 24;  // body top — bubble anchor (stays put while pet bounces)
       y0 = GY - 22 - (o.bounce || 0);
       const legs = [-11, -5, 3, 9];
       const lift = o.step ? 1 : 0;
@@ -1213,7 +1218,7 @@
       bulbT--;
     }
 
-    if (bubble) bubbleBox(ctx, canvas, bubble, cx, (y0 - headRoom) * S);
+    if (bubble) bubbleBox(ctx, canvas, bubble, cx, (_bodyRestY0 - 4 - headRoom) * S); // dome(4) + headgear
   }
 
   window.PetRenderer = { draw };

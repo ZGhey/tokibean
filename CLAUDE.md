@@ -59,7 +59,7 @@ Both threads (plus command handlers) mutate `state::Shared` (Mutexes + atomics, 
 
 ### Issue tracker
 
-Issues and specs live as markdown under `.scratch/<feature>/` (this repo has no separate tracker). See `docs/agents/issue-tracker.md`.
+GitHub Issues on `ZGhey/tokibean`. Use the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

@@ -8,6 +8,8 @@ mod codex;
 mod codex_install;
 mod config;
 mod fetch_policy;
+mod hermes_install;
+mod hermes_usage;
 mod hooks_install;
 mod hooks_server;
 mod i18n;
@@ -47,6 +49,13 @@ fn install_codex_hooks(app: AppHandle) -> Result<String, String> {
     let shared = app.state::<Arc<Shared>>();
     let cfg = shared.cfg.lock().unwrap().clone();
     codex_install::install(&cfg)
+}
+
+#[tauri::command]
+fn install_hermes_hooks(app: AppHandle) -> Result<String, String> {
+    let shared = app.state::<Arc<Shared>>();
+    let cfg = shared.cfg.lock().unwrap().clone();
+    hermes_install::install(&cfg).map(|_| "ok".into())
 }
 
 #[tauri::command]
@@ -612,6 +621,7 @@ fn main() {
             get_update,
             install_hooks,
             install_codex_hooks,
+            install_hermes_hooks,
             set_agent_dir,
             mark_onboarded,
             open_settings_window_on,
