@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::i18n;
-use crate::state::{Base, Core, Session, SessionKey, AGENT_CODEX};
+use crate::state::{Base, Core, Session, SessionKey, AGENT_CODEX, AGENT_HERMES};
 
 /// What the IO shell must do after a reduction. The reducer itself performs no IO.
 #[derive(Default, PartialEq, Debug)]
@@ -37,9 +37,26 @@ pub struct NotifyCfg {
 /// Verified against real Codex payloads, not the docs: Codex's event names are already Claude's,
 /// with two differences. It has no `Notification` — its "the agent needs you" signal is
 /// `PermissionRequest`. And it has no `SessionEnd`.
+///
+/// Hermes bridge script maps shell hook event names to the canonical set. The raw Hermes names are
+/// also recognized here as a fallback if the endpoint is hit directly without the bridge.
 fn normalize_event(agent: &str, name: &str) -> &'static str {
     if agent == AGENT_CODEX && name == "PermissionRequest" {
         return "Notification";
+    }
+    // Hermes raw event names — recognized as fallback if the bridge isn't doing the mapping
+    if agent == AGENT_HERMES {
+        match name {
+            "pre_tool_call" => return "PreToolUse",
+            "post_tool_call" => return "PostToolUse",
+            "pre_llm_call" => return "UserPromptSubmit",
+            "post_llm_call" => return "Stop",
+            "pre_approval_request" => return "Notification",
+            "on_session_start" => return "SessionStart",
+            "on_session_end" => return "SessionEnd",
+            "subagent_stop" => return "SubagentStop",
+            _ => {}
+        }
     }
     // Everything else already speaks the canonical names. Leak the borrow into a 'static by matching
     // the known set; an unrecognized name falls through to "" and is ignored downstream.
@@ -67,6 +84,9 @@ fn normalize_event(agent: &str, name: &str) -> &'static str {
 /// This is not a fragility problem to work around: `false` returns an empty string, so there is
 /// nothing to inspect. Guessing from output text ("error", "No such file") would misfire on any
 /// command that happens to print those words — a lying animation is worse than no animation.
+///
+/// Hermes CAN report tool errors: its `post_tool_call.extra.status` is "ok"/"error"/"blocked".
+/// The bridge script maps `status: "error"` → `tool_response.is_error: true`.
 fn reports_tool_errors(agent: &str) -> bool {
     agent != AGENT_CODEX
 }
@@ -314,6 +334,7 @@ pub fn apply_event(
 pub fn agent_display(agent: &str) -> &str {
     match agent {
         AGENT_CODEX => "Codex",
+        AGENT_HERMES => "Hermes",
         _ => "Claude",
     }
 }
@@ -343,6 +364,8 @@ pub fn snippet(s: &str, max_chars: usize) -> String {
 /// `Bash` + `grep` — so `reading`/`searching` rarely surface on Codex. That is Codex's information
 /// boundary, not a bug: do NOT try to recover them by guessing at command text, since `cat` in a
 /// pipeline or `grep` filtering command output would both be misread.
+///
+/// Hermes tool names are Hermes-native. No new tool keys are introduced.
 pub fn friendly_tool(t: &str) -> String {
     let known = match t {
         "Bash" | "PowerShell" => "cmd",
@@ -352,6 +375,16 @@ pub fn friendly_tool(t: &str) -> String {
         "WebFetch" | "WebSearch" => "browsing",
         "Task" | "Agent" => "agents",
         "TodoWrite" | "TaskCreate" | "TaskUpdate" => "planning",
+        // Hermes tools — map onto the same closed key set
+        "terminal" => "cmd",
+        "write_file" | "patch" | "execute_code" => "coding",
+        "read_file" => "reading",
+        "search_files" => "searching",
+        "web_search" | "web_extract" | "browser_navigate" | "browser_click"
+        | "browser_snapshot" | "browser_scroll" | "browser_type" | "browser_press"
+        | "browser_back" | "browser_console" | "browser_get_images" => "browsing",
+        "delegate_task" => "agents",
+        "todo" => "planning",
         _ => "",
     };
     if !known.is_empty() {
@@ -484,7 +517,7 @@ mod tests {
     };
 
     fn key(id: &str) -> SessionKey {
-        SessionKey::new("claude", id)
+        SessionKey::new("claude", "", id)
     }
 
     /// Apply an event at `now` and return the effects.
@@ -814,25 +847,25 @@ mod tests {
         let mut core = empty_core();
         apply_event(
             &mut core,
-            SessionKey::new("claude", "same-id"),
+            SessionKey::new("claude", "", "same-id"),
             &json!({"hook_event_name": "UserPromptSubmit"}),
             now,
             QUIET,
         );
         apply_event(
             &mut core,
-            SessionKey::new("codex", "same-id"),
+            SessionKey::new("codex", "", "same-id"),
             &json!({"hook_event_name": "Notification"}),
             now,
             QUIET,
         );
         assert_eq!(core.sessions.len(), 2, "one session per agent");
         assert_eq!(
-            core.sessions[&SessionKey::new("claude", "same-id")].base,
+            core.sessions[&SessionKey::new("claude", "", "same-id")].base,
             Base::Working
         );
         assert_eq!(
-            core.sessions[&SessionKey::new("codex", "same-id")].base,
+            core.sessions[&SessionKey::new("codex", "", "same-id")].base,
             Base::Attention
         );
     }
@@ -844,7 +877,7 @@ mod tests {
         for agent in ["claude", "codex"] {
             apply_event(
                 &mut core,
-                SessionKey::new(agent, "same-id"),
+                SessionKey::new(agent, "", "same-id"),
                 &json!({"hook_event_name": "UserPromptSubmit"}),
                 now,
                 QUIET,
@@ -852,13 +885,13 @@ mod tests {
         }
         apply_event(
             &mut core,
-            SessionKey::new("claude", "same-id"),
+            SessionKey::new("claude", "", "same-id"),
             &json!({"hook_event_name": "SessionEnd"}),
             now,
             QUIET,
         );
         assert_eq!(core.sessions.len(), 1);
-        assert!(core.sessions.contains_key(&SessionKey::new("codex", "same-id")));
+        assert!(core.sessions.contains_key(&SessionKey::new("codex", "", "same-id")));
     }
 
     // --- Codex adapter (ticket 04). Every payload below is shaped from a REAL captured Codex hook
@@ -866,11 +899,11 @@ mod tests {
     // research notes turned out to be wrong on three points.
 
     fn codex(core: &mut Core, v: Value, now: Instant) -> Effects {
-        apply_event(core, SessionKey::new("codex", "cx"), &v, now, QUIET)
+        apply_event(core, SessionKey::new("codex", "", "cx"), &v, now, QUIET)
     }
 
     fn codex_base(core: &Core) -> Base {
-        core.sessions[&SessionKey::new("codex", "cx")].base
+        core.sessions[&SessionKey::new("codex", "", "cx")].base
     }
 
     #[test]
@@ -999,7 +1032,7 @@ mod tests {
 
         let fx = apply_event(
             &mut core,
-            SessionKey::new("codex", "cx"),
+            SessionKey::new("codex", "", "cx"),
             &json!({"hook_event_name": "Stop", "last_assistant_message": "done",
                     "stop_hook_active": false}),
             now + Duration::from_secs(90),
@@ -1053,5 +1086,104 @@ mod tests {
         assert_eq!(snippet("你好世界", 2), "你好…");
         assert_eq!(snippet("hi", 5), "hi");
         assert_eq!(snippet("a\nb", 5), "a b", "newlines flatten");
+    }
+
+    // --- Hermes adapter ---
+
+    fn hermes(core: &mut Core, v: Value, now: Instant) -> Effects {
+        apply_event(core, SessionKey::new("hermes", "", "hx"), &v, now, QUIET)
+    }
+
+    fn hermes_base(core: &Core) -> Base {
+        core.sessions[&SessionKey::new("hermes", "", "hx")].base
+    }
+
+    #[test]
+    fn hermes_pre_llm_call_is_user_prompt_submit() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        hermes(&mut core, json!({"hook_event_name": "pre_llm_call"}), now);
+        assert_eq!(hermes_base(&core), Base::Working);
+    }
+
+    #[test]
+    fn hermes_pre_tool_call_maps_to_pre_tool_use() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        hermes(&mut core, json!({"hook_event_name": "pre_tool_call", "tool_name": "terminal", "tool_input": {"command": "ls"}}), now);
+        assert_eq!(hermes_base(&core), Base::Working);
+        assert_eq!(core.tool_note.as_ref().unwrap().0, "cmd");
+    }
+
+    #[test]
+    fn hermes_post_llm_call_is_stop() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        hermes(&mut core, json!({"hook_event_name": "UserPromptSubmit"}), now);
+        hermes(&mut core, json!({"hook_event_name": "post_llm_call", "last_assistant_message": "all done"}), now + Duration::from_secs(5));
+        assert_eq!(hermes_base(&core), Base::Done);
+        assert!(core.bubble.is_some());
+    }
+
+    #[test]
+    fn hermes_pre_approval_request_is_notification() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        hermes(&mut core, json!({"hook_event_name": "pre_approval_request"}), now);
+        assert_eq!(hermes_base(&core), Base::Attention);
+        assert!(core.bubble.is_some());
+    }
+
+    #[test]
+    fn hermes_on_session_start_creates_bubble_when_nobody_busy() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        hermes(&mut core, json!({"hook_event_name": "on_session_start"}), now);
+        assert!(core.bubble.is_some());
+    }
+
+    #[test]
+    fn hermes_subagent_stop_pops_agent_task() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        core.agent_tasks.push(now + Duration::from_secs(60));
+        assert_eq!(core.agent_tasks.len(), 1);
+        hermes(&mut core, json!({"hook_event_name": "subagent_stop"}), now);
+        assert_eq!(core.agent_tasks.len(), 0);
+    }
+
+    #[test]
+    fn hermes_tools_map_to_correct_keys() {
+        assert_eq!(friendly_tool("terminal"), "cmd");
+        assert_eq!(friendly_tool("write_file"), "coding");
+        assert_eq!(friendly_tool("patch"), "coding");
+        assert_eq!(friendly_tool("execute_code"), "coding");
+        assert_eq!(friendly_tool("read_file"), "reading");
+        assert_eq!(friendly_tool("search_files"), "searching");
+        assert_eq!(friendly_tool("web_search"), "browsing");
+        assert_eq!(friendly_tool("browser_navigate"), "browsing");
+        assert_eq!(friendly_tool("delegate_task"), "agents");
+        assert_eq!(friendly_tool("todo"), "planning");
+    }
+
+    #[test]
+    fn hermes_is_named_in_display() {
+        assert_eq!(agent_display("hermes"), "Hermes");
+    }
+
+    #[test]
+    fn hermes_can_report_tool_errors() {
+        assert!(reports_tool_errors("hermes"));
+    }
+
+    #[test]
+    fn hermes_session_is_independent_from_claude() {
+        let now = Instant::now();
+        let mut core = empty_core();
+        apply_event(&mut core, SessionKey::new("claude", "", "same-id"), &json!({"hook_event_name": "UserPromptSubmit"}), now, QUIET);
+        apply_event(&mut core, SessionKey::new("hermes", "", "same-id"), &json!({"hook_event_name": "pre_llm_call"}), now, QUIET);
+        assert_eq!(core.sessions.len(), 2, "two separate sessions");
+        assert_eq!(core.sessions[&SessionKey::new("claude", "", "same-id")].base, Base::Working);
+        assert_eq!(core.sessions[&SessionKey::new("hermes", "", "same-id")].base, Base::Working);
     }
 }

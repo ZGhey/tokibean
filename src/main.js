@@ -101,6 +101,7 @@
     update_checking: ["检查更新中…", "Checking for updates…"],
     update_error: ["检查更新失败,点重试", "Update check failed — retry"],
     settings: ["设置", "Settings"],
+    about: ["关于", "About"],
     // Weekly cap is the harsher limit — running out locks you out for the WEEK, not five hours.
     week_quota: ["周额度", "Weekly"],
     sessions_label: ["会话", "Sessions"],
@@ -269,7 +270,7 @@
   for (let i = 0; i < 7; i++) trend.appendChild(document.createElement("span"));
   trend.lastChild.className = "today";
 
-  const AGENT_NAME = { claude: "Claude", codex: "Codex" };
+  const AGENT_NAME = { claude: "Claude", codex: "Codex", hermes: "Hermes" };
 
   // A quota window's own length, spelled out. Read FROM the data — Claude's block is 5h, but Codex's
   // free plan reports 43200 minutes (thirty days). Hard-coding "5h" is wrong for anyone but Claude.
@@ -375,6 +376,7 @@
           : t("limit_manual", { v: fmtTokens(q.limit_tokens) });
       return t("reset_line", { hh, mm, left: fmtCountdown(left), note });
     }
+    if (q.basis === "none") return fmtTokens(q.tokens || 0) + " tokens today";
     if (q.basis === "official") return t("no_window_official");
     return q.pct_valid ? t("no_window2") : t("usage_need_connect");
   }
@@ -382,9 +384,8 @@
   function renderQuotas(quotas) {
     const box = el("sub-block");
     box.textContent = "";
-    // No basis, no card. An "--%" card is an empty seat: it takes the space where the number belongs
-    // and tells you nothing. The setup line below says what to do about it instead.
-    const real = (quotas || []).filter((q) => q.pct_valid);
+    // Include cards with a valid percentage, plus Hermes token-only cards (basis "none" but has tokens)
+    const real = (quotas || []).filter((q) => q.pct_valid || (q.basis === "none" && q.tokens > 0));
     real.forEach((q, i) => {
       // A divider between agents, so Claude's block and Codex's read as separate things rather than
       // one continuous list of bars.
@@ -928,13 +929,26 @@
     tickleUntil = 0;
   });
 
-  // Settings, and the setup line, both land in Settings — the setup line on the tab that needs work.
+  // Settings, About, and GitHub — bottom-row items after the divider. Settings opens its own window;
+  // About reuses the tray's about dialog; GitHub opens the project repo in the system browser.
   el("open-settings").addEventListener("click", (e) => {
     e.stopPropagation();
+    document.activeElement?.blur();
     invoke("open_settings_window_on", { tab: "general" }).catch(() => {});
+  });
+  el("open-about").addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.activeElement?.blur();
+    invoke("open_about_window").catch(() => {});
+  });
+  el("open-github").addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    invoke("open_url", { url: "https://github.com/ZGhey/tokibean" }).catch(() => {});
   });
   el("setup-line").addEventListener("click", (e) => {
     e.stopPropagation();
+    document.activeElement?.blur();
     invoke("open_settings_window_on", { tab: el("setup-line").dataset.tab || "general" }).catch(() => {});
   });
 

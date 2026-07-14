@@ -22,7 +22,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::config::Config;
-use crate::state::{AGENT_CLAUDE, AGENT_CODEX};
+use crate::state::{AGENT_CLAUDE, AGENT_CODEX, AGENT_HERMES};
 
 /// One place an agent is installed: one config directory, one settings.json, one set of hooks.
 ///
@@ -75,6 +75,7 @@ pub struct AgentPresence {
 fn env_var(agent: &str) -> &'static str {
     match agent {
         AGENT_CODEX => "CODEX_HOME",
+        AGENT_HERMES => "HERMES_HOME",
         _ => "CLAUDE_CONFIG_DIR",
     }
 }
@@ -82,6 +83,7 @@ fn env_var(agent: &str) -> &'static str {
 fn default_dir_name(agent: &str) -> &'static str {
     match agent {
         AGENT_CODEX => ".codex",
+        AGENT_HERMES => ".hermes",
         _ => ".claude",
     }
 }
@@ -160,6 +162,7 @@ pub fn presence(cfg: &Config) -> Vec<AgentPresence> {
                 hooks_incomplete: installed
                     && match agent {
                         AGENT_CODEX => crate::codex_install::incomplete(cfg),
+                        AGENT_HERMES => crate::hermes_install::incomplete(cfg),
                         _ => crate::hooks_install::incomplete(cfg),
                     },
                 sites: if installed { sites(cfg, agent) } else { Vec::new() },
@@ -209,6 +212,19 @@ pub fn sites(cfg: &Config, agent: &str) -> Vec<Site> {
                 hooks_incomplete: crate::hooks_install::file_incomplete_at(&d, cfg.port),
                 last_used,
                 entrypoints,
+            });
+        }
+    }
+    // Hermes: add a site entry per profile config for the Settings UI
+    if agent == AGENT_HERMES {
+        for (name, cfg_path) in crate::hermes_install::profile_configs() {
+            out.push(Site {
+                kind: "local".to_string(),
+                name,
+                dir: cfg_path.parent().map(|p| p.display().to_string()).unwrap_or_default(),
+                hooks_incomplete: crate::hermes_install::hooks_incomplete_at(&cfg_path, cfg.port),
+                last_used: None,
+                entrypoints: vec!["cli".into()],
             });
         }
     }
