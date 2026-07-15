@@ -185,20 +185,23 @@ pub fn presence(cfg: &Config) -> Vec<AgentPresence> {
 /// each running WSL distro's. One entry per settings.json, because that is the unit hooks install into.
 pub fn sites(cfg: &Config, agent: &str) -> Vec<Site> {
     let mut out = Vec::new();
-    if let Some(d) = dir(cfg, agent) {
-        if d.is_dir() {
-            let (last_used, entrypoints) = last_use(&d);
-            out.push(Site {
-                kind: if cfg!(target_os = "windows") { "windows" } else { "local" }.to_string(),
-                name: String::new(),
-                dir: d.display().to_string(),
-                hooks_incomplete: match agent {
-                    AGENT_CODEX => crate::codex_install::incomplete(cfg),
-                    _ => crate::hooks_install::file_incomplete_at(&d, cfg.port),
-                },
-                last_used,
-                entrypoints,
-            });
+    // Hermes: its profile-specific entries cover every install, so skip the generic site.
+    if agent != AGENT_HERMES {
+        if let Some(d) = dir(cfg, agent) {
+            if d.is_dir() {
+                let (last_used, entrypoints) = last_use(&d);
+                out.push(Site {
+                    kind: if cfg!(target_os = "windows") { "windows" } else { "local" }.to_string(),
+                    name: String::new(),
+                    dir: d.display().to_string(),
+                    hooks_incomplete: match agent {
+                        AGENT_CODEX => crate::codex_install::incomplete(cfg),
+                        _ => crate::hooks_install::file_incomplete_at(&d, cfg.port),
+                    },
+                    last_used,
+                    entrypoints,
+                });
+            }
         }
     }
     // Codex has no WSL story; wsl::claude_sites() is empty off Windows, so this stays uniform.
@@ -222,7 +225,7 @@ pub fn sites(cfg: &Config, agent: &str) -> Vec<Site> {
                 kind: "local".to_string(),
                 name,
                 dir: cfg_path.parent().map(|p| p.display().to_string()).unwrap_or_default(),
-                hooks_incomplete: crate::hermes_install::hooks_incomplete_at(&cfg_path, cfg.port),
+                hooks_incomplete: crate::hermes_install::hooks_incomplete_at(&cfg_path),
                 last_used: None,
                 entrypoints: vec!["cli".into()],
             });

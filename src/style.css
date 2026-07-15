@@ -150,6 +150,20 @@ select {
 .num.big { font-size: 16px; color: #e8916c; }
 .num.small { font-size: 11px; }
 
+/* Per-agent token breakdown under the hovered day's total */
+.token-breakdown {
+  font-family: Consolas, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: #b3aca0;
+  margin: -2px 0 6px;
+  min-height: 14px;
+  line-height: 1.4;
+}
+.token-breakdown .agent-claude { color: #d97757; }
+.token-breakdown .agent-codex { color: #6fa3bd; }
+.token-breakdown .agent-hermes { color: #9ac47a; }
+
 /* Per-model bullet list under "Models" */
 .model-list {
   font-family: Consolas, "SF Mono", Menlo, monospace;
@@ -214,14 +228,56 @@ select {
   align-items: flex-end;
   height: 24px;
   margin: 8px 0 2px;
+  position: relative;
+  overflow: visible;
 }
-#trend span {
+.bar-hit {
   flex: 1;
+  display: flex;
+  align-items: flex-end;
+  cursor: default;
+}
+.bar-inner {
+  width: 100%;
+  min-height: 1px;
   background: #6b5548;
   border-radius: 2px 2px 0 0;
-  min-height: 2px;
+  transition: background 0.15s;
 }
-#trend span.today { background: #d97757; }
+.bar-inner.today { background: #d97757; }
+.bar-inner.hot { background: #e8916c; }
+.bar-inner.today.hot { background: #ee9a7a; }
+.bar-inner.mixed {
+  background: linear-gradient(to top, #6b5548 calc(100% - var(--codex)), #5a7a8c calc(100% - var(--codex)));
+}
+.bar-inner.all-codex { background: #5a7a8c; }
+.bar-inner.mixed.hot {
+  background: linear-gradient(to top, #e8916c calc(100% - var(--codex)), #6fa3bd calc(100% - var(--codex)));
+}
+.bar-inner.all-codex.hot { background: #6fa3bd; }
+.bar-inner.today.mixed {
+  background: linear-gradient(to top, #d97757 calc(100% - var(--codex)), #5a7a8c calc(100% - var(--codex)));
+}
+.bar-inner.today.mixed.hot {
+  background: linear-gradient(to top, #ee9a7a calc(100% - var(--codex)), #6fa3bd calc(100% - var(--codex)));
+}
+.bar-inner.today.all-codex { background: #6fa3bd; }
+.bar-inner.today.all-codex.hot { background: #7ab0c9; }
+
+/* Tooltip for trend bars — native title is unreliable in frameless Tauri webviews */
+#trend-tip {
+  display: none;
+  position: fixed;
+  z-index: 100;
+  background: #1e1e20;
+  color: #e8e0d8;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
 
 .hint { color: #8a8478; font-size: 11px; margin-top: 4px; line-height: 1.5; }
 .hint.dim { color: #6b665c; margin-top: 8px; }
@@ -268,14 +324,26 @@ button:active { transform: scale(0.98); }
 
 /* Trend bars stack the Codex share on top of Claude's, so a day spent in Codex reads as Codex's
    work rather than blending into one indistinguishable bar. */
-#trend span.mixed {
+#trend span.bar-inner { background: #6b5548; }
+#trend span.bar-inner.hot { background: #e8916c; }
+#trend span.bar-inner.today { background: #d97757; }
+#trend span.bar-inner.today.hot { background: #ee9a7a; }
+#trend span.bar-inner.mixed {
   background: linear-gradient(to top, #6b5548 calc(100% - var(--codex)), #5a7a8c calc(100% - var(--codex)));
 }
-#trend span.all-codex { background: #5a7a8c; }
-#trend span.today.mixed {
-  background: linear-gradient(to top, #d97757 calc(100% - var(--codex)), #6fa3bd calc(100% - var(--codex)));
+#trend span.bar-inner.all-codex { background: #5a7a8c; }
+#trend span.bar-inner.mixed.hot {
+  background: linear-gradient(to top, #e8916c calc(100% - var(--codex)), #6fa3bd calc(100% - var(--codex)));
 }
-#trend span.today.all-codex { background: #6fa3bd; }
+#trend span.bar-inner.all-codex.hot { background: #6fa3bd; }
+#trend span.bar-inner.today.mixed {
+  background: linear-gradient(to top, #d97757 calc(100% - var(--codex)), #5a7a8c calc(100% - var(--codex)));
+}
+#trend span.bar-inner.today.mixed.hot {
+  background: linear-gradient(to top, #ee9a7a calc(100% - var(--codex)), #6fa3bd calc(100% - var(--codex)));
+}
+#trend span.bar-inner.today.all-codex { background: #6fa3bd; }
+#trend span.bar-inner.today.all-codex.hot { background: #7ab0c9; }
 
 /* Bottom row: Settings, About, GitHub — last and quiet. One row, evenly spaced. */
 .bottom-row {

@@ -4,6 +4,7 @@
 //   (working first so a session waiting on input can't hide others that are actively working)
 // warn (window >80%) is an overlay flag, not a state slot
 
+use chrono::{Datelike, TimeZone};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -413,12 +414,26 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
     // Hermes: token count across all profiles (no rate-limit percentage — basis: none)
     if crate::agents::installed(&cfg, AGENT_HERMES) {
         let dbs = crate::hermes_usage::all_state_dbs();
-        let today_start = chrono::Local::now()
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .map(|d| d.and_utc().timestamp())
-            .unwrap_or(0);
+        let today_start = {
+            let now = chrono::Local::now();
+            chrono::Local
+                .with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
+                .single()
+                .map(|d| d.timestamp())
+                .unwrap_or(0)
+        };
         let tokens = crate::hermes_usage::scan_token_totals(&dbs, today_start);
+        let hermes_daily = crate::hermes_usage::scan_daily_tokens(&dbs, today_start);
+        // Fold Hermes tokens into the panel's "today" total, so the bottom line counts all agents.
+        snap.today_tokens = snap.today_tokens.saturating_add(tokens);
+        if snap.daily_tokens.len() >= 7 {
+            snap.daily_tokens[6] = snap.daily_tokens[6].saturating_add(tokens);
+        }
+        if snap.daily_hermes.len() >= 7 {
+            for i in 0..7 {
+                snap.daily_hermes[i] = snap.daily_hermes[i].saturating_add(hermes_daily[i]);
+            }
+        }
         if tokens > 0 {
             snap.set_quota(crate::usage::AgentQuota {
                 agent: AGENT_HERMES.into(),

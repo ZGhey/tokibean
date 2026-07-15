@@ -267,8 +267,71 @@
 
   // 7-day trend bars
   const trend = el("trend");
-  for (let i = 0; i < 7; i++) trend.appendChild(document.createElement("span"));
-  trend.lastChild.className = "today";
+  for (let i = 0; i < 7; i++) {
+    const hit = document.createElement("span");
+    hit.className = "bar-hit";
+    const inner = document.createElement("span");
+    inner.className = "bar-inner";
+    hit.appendChild(inner);
+    trend.appendChild(hit);
+  }
+  const bars = trend.querySelectorAll(".bar-inner");
+  bars[6].classList.add("today");
+  bars[6].classList.add("hot");
+
+  // Hover: highlight the bar and swap the label/token to that day,
+  // showing a per-agent breakdown underneath. The whole #trend box is the
+  // hit area, including the gaps between bars.
+  let hotIdx = 6;
+  const tokLabel = el("tok-label");
+  const savedLabel = tokLabel.textContent;
+  const breakdown = el("tok-breakdown");
+
+  function dayLabel(i) {
+    const d = new Date(Date.now() - (6 - i) * 86400000);
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  }
+  function fmtBreakdown(i) {
+    const total = bars[i]._total || 0;
+    const codex = bars[i]._codex || 0;
+    const hermes = bars[i]._hermes || 0;
+    const claude = total > codex + hermes ? total - codex - hermes : 0;
+    const parts = [];
+    if (claude > 0) parts.push('<span class="agent-claude">Claude ' + fmtTokens(claude) + "</span>");
+    if (codex > 0) parts.push('<span class="agent-codex">Codex ' + fmtTokens(codex) + "</span>");
+    if (hermes > 0) parts.push('<span class="agent-hermes">Hermes ' + fmtTokens(hermes) + "</span>");
+    return parts.join(" · ");
+  }
+  function updateBreakdown(i) {
+    breakdown.innerHTML = fmtBreakdown(i);
+  }
+  function setHot(i) {
+    if (hotIdx === i) return;
+    bars[hotIdx].classList.remove("hot");
+    hotIdx = i;
+    bars[i].classList.add("hot");
+    tokLabel.textContent = dayLabel(i);
+    el("tok-today").textContent = fmtTokens(bars[i]._total || 0);
+    updateBreakdown(i);
+  }
+  function clearHot() {
+    bars[hotIdx].classList.remove("hot");
+    hotIdx = 6;
+    bars[6].classList.add("hot");
+    tokLabel.textContent = savedLabel;
+    el("tok-today").textContent = fmtTokens(cur.usage ? cur.usage.today_tokens : 0);
+    updateBreakdown(6);
+  }
+
+  trend.addEventListener("mousemove", (e) => {
+    const rect = trend.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const colW = rect.width / 7;
+    if (colW <= 0) return;
+    const i = Math.min(6, Math.max(0, Math.floor(x / colW)));
+    setHot(i);
+  });
+  trend.addEventListener("mouseleave", clearHot);
 
   const AGENT_NAME = { claude: "Claude", codex: "Codex", hermes: "Hermes" };
 
@@ -293,13 +356,25 @@
     const head = document.createElement("div");
     head.className = "label-row";
     const title = document.createElement("span");
-    const win = windowLabel(q.window_minutes);
+    const win = q.basis === "none" ? null : windowLabel(q.window_minutes);
     title.textContent = (AGENT_NAME[q.agent] || q.agent) + (win ? " · " + win : "");
     const pct = document.createElement("span");
     pct.className = "num";
-    pct.textContent = q.pct_valid ? Math.round(q.pct * 100) + "%" : "--%";
+    // For agents without a rate-limit basis, show token count instead of a meaningless "--%"
+    pct.textContent = q.basis === "none" ? fmtTokens(q.tokens) : (q.pct_valid ? Math.round(q.pct * 100) + "%" : "--%");
     head.appendChild(title);
     head.appendChild(pct);
+
+    // Agents without a rate-limit percentage (e.g. Hermes) get a token-only card — no bar,
+    // no weekly rail. Just the headline number and a one-liner that says what it means.
+    if (q.basis === "none") {
+      const line = document.createElement("div");
+      line.className = "hint";
+      line.textContent = fmtTokens(q.tokens || 0) + " tokens today";
+      card.appendChild(head);
+      card.appendChild(line);
+      return card;
+    }
 
     // The 5-hour window: DISCRETE blocks. Ten of them, chunky, gapped — time you spend a block at a
     // time, in the pet's own pixel language.
@@ -384,8 +459,8 @@
   function renderQuotas(quotas) {
     const box = el("sub-block");
     box.textContent = "";
-    // Include cards with a valid percentage, plus Hermes token-only cards (basis "none" but has tokens)
-    const real = (quotas || []).filter((q) => q.pct_valid || (q.basis === "none" && q.tokens > 0));
+    // Include cards with a valid percentage (Claude/Codex), plus Hermes token-only cards (basis "none" but has tokens)
+    const real = (quotas || []).filter((q) => q.pct_valid || q.agent === "hermes");
     real.forEach((q, i) => {
       // A divider between agents, so Claude's block and Codex's read as separate things rather than
       // one continuous list of bars.
@@ -515,24 +590,26 @@
     if (u.daily_tokens && u.daily_tokens.length === 7) {
       const max = Math.max(...u.daily_tokens, 1);
       const codexDaily = u.daily_codex || [];
+      const hermesDaily = u.daily_hermes || [];
       for (let i = 0; i < 7; i++) {
-        const cell = trend.children[i];
+        const cell = bars[i];
         const total = u.daily_tokens[i];
         const cx = codexDaily[i] || 0;
-        const h = Math.max(2, Math.round((total / max) * 24));
+        const hx = hermesDaily[i] || 0;
+        const h = Math.max(1, Math.round((total / max) * 24));
         cell.style.height = h + "px";
+        cell._total = total;
+        cell._codex = cx;
+        cell._hermes = hx;
         // The Codex slice, as a fraction of this bar, drawn from the top down
         const cxFrac = total > 0 ? cx / total : 0;
         cell.style.setProperty("--codex", Math.round(cxFrac * 100) + "%");
         cell.classList.toggle("mixed", cx > 0 && cx < total);
         cell.classList.toggle("all-codex", cx > 0 && cx === total);
-        cell.title =
-          cx > 0
-            ? fmtTokens(total) + " (Codex " + fmtTokens(cx) + ")"
-            : fmtTokens(total);
       }
     }
     el("tok-today").textContent = fmtTokens(u.today_tokens);
+    updateBreakdown(6);
     renderSetupLine();
 
     // In-app updater row: only visible when an update is actually pending / downloading.

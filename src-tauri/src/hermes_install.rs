@@ -1,15 +1,14 @@
-// Hermes Agent hook installer.
+// Hermes Agent plugin installer.
 //
-// Hermes uses shell hooks declared in ~/.hermes/config.yaml (and per-profile
-// ~/.hermes/profiles/<name>/config.yaml). Tokibean installs a Python bridge
-// script that receives Hermes hook JSON on stdin and curl-POSTs it to
-// localhost:<port>/event/hermes?profile=<name>.
+// Installs the tokibean Hermes plugin into ~/.hermes/plugins/tokibean/ and
+// enables it in config.yaml. The plugin registers Python hooks that forward
+// Hermes lifecycle events to the local tokibean pet via HTTP POST.
+//
+// Also cleans up any leftover shell hooks from a previous install.
 //
 // - Backs up to config.yaml.bak-tokibean before writing.
-// - Idempotent: events whose command already carries the tokibean-bridge marker
-//   are skipped.
-// - Sets hooks_auto_accept: true so hooks run without per-event consent prompts.
-// - Writes the bridge script to ~/.hermes/agent-hooks/tokibean-bridge.py.
+// - Idempotent: if the plugin is already in plugins.enabled, the config skip is a no-op.
+// - Plugin files are rewritten (safe: they ship with the app).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,22 +17,11 @@ use serde_yaml::{Mapping, Value};
 
 use crate::state::AGENT_HERMES;
 
-const BRIDGE_SCRIPT: &str = include_str!("bridge_hermes.py");
+const PLUGIN_YAML: &str = include_str!("plugin_hermes.yaml");
+const PLUGIN_PY: &str = include_str!("plugin_hermes.py");
 
-/// The events we register hooks for. Must match the set that the bridge script handles.
-pub const HERMES_HOOK_EVENTS: [&str; 8] = [
-    "pre_tool_call",
-    "post_tool_call",
-    "pre_llm_call",
-    "post_llm_call",
-    "pre_approval_request",
-    "on_session_start",
-    "on_session_end",
-    "subagent_stop",
-];
-
-/// The substring we look for in a hook's command to decide it's already ours.
-pub const BRIDGE_MARKER: &str = "tokibean-bridge.py";
+/// The plugin name as listed in plugins.enabled.
+pub const PLUGIN_NAME: &str = "tokibean";
 
 /// All Hermes profile config directories on this machine, if Hermes is installed.
 /// Returns (profile_name, config_path) pairs. The default profile has name "default".
@@ -44,7 +32,14 @@ pub fn profile_configs() -> Vec<(String, PathBuf)> {
         None => return out,
     };
     let hermes_home = match std::env::var("HERMES_HOME") {
-        Ok(p) if !p.is_empty() => PathBuf::from(p),
+        Ok(p) if !p.is_empty() => {
+            let path = PathBuf::from(p);
+            if path.parent().map(|pp| pp.file_name() == Some(std::ffi::OsStr::new("profiles"))).unwrap_or(false) {
+                path.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or(path)
+            } else {
+                path
+            }
+        }
         _ => home.join(".hermes"),
     };
 
@@ -69,172 +64,163 @@ pub fn profile_configs() -> Vec<(String, PathBuf)> {
     out
 }
 
-/// Check whether the installed Hermes hooks are missing any event (newly added events
-/// after an upgrade, or a new profile). If so, the Settings window re-surfaces the
-/// install button.
+/// Check whether the installed Hermes hooks are missing or incomplete.
 pub fn incomplete(cfg: &crate::config::Config) -> bool {
     if !crate::agents::installed(cfg, AGENT_HERMES) {
         return false;
     }
-    let port = cfg.port;
     for (_profile, path) in profile_configs() {
-        if hooks_incomplete_at(&path, port) {
+        if hooks_incomplete_at(&path) {
             return true;
         }
     }
     false
 }
 
-/// Whether the hooks in a single config.yaml are missing any of our events.
-pub fn hooks_incomplete_at(config_path: &Path, _port: u16) -> bool {
+/// Whether a single config.yaml needs plugin install (plugin not in plugins.enabled,
+/// or old shell hooks still present).
+pub fn hooks_incomplete_at(config_path: &Path) -> bool {
     let Ok(raw) = fs::read_to_string(config_path) else {
-        return true; // can't read → may need install
+        return true;
     };
     let doc: Value = match serde_yaml::from_str(&raw) {
         Ok(d) => d,
         Err(_) => return true,
     };
-    let hooks = match doc.get("hooks") {
-        Some(Value::Mapping(m)) => m,
-        _ => return true, // no hooks block at all → definitely need install
-    };
-    for event in &HERMES_HOOK_EVENTS {
-        let key = Value::String(event.to_string());
-        let entries = match hooks.get(&key) {
-            Some(Value::Sequence(s)) => s,
-            _ => return true, // event missing entirely
-        };
-        let found = entries.iter().any(|e| {
-            e.get("command")
-                .and_then(|c| c.as_str())
-                .map(|c| c.contains(BRIDGE_MARKER))
-                .unwrap_or(false)
-        });
-        if !found {
-            return true;
+
+    // Check if plugin is enabled
+    if let Some(Value::Mapping(plugins)) = doc.get("plugins") {
+        if let Some(Value::Sequence(enabled)) = plugins.get(&Value::String("enabled".into())) {
+            if enabled.iter().any(|v| v.as_str() == Some(PLUGIN_NAME)) {
+                return false; // plugin is enabled — install is complete
+            }
         }
     }
-    false
+
+    true // plugin not in enabled list
 }
 
-/// Pure planner. Given a parsed config YAML and install parameters, return the
-/// modified YAML with our hooks added. Does not touch the filesystem.
-pub fn plan(
-    config: Value,
-    _port: u16,
-    _profile: &str,
-    bridge_path: &str,
-) -> Value {
+/// Pure planner. Given a parsed config YAML, return the modified YAML with the
+/// tokibean plugin enabled and any old shell hooks cleaned up.
+pub fn plan(config: Value) -> Value {
     let mut mapping = match config {
         Value::Mapping(m) => m,
         _ => Mapping::new(),
     };
 
-    // Ensure hooks block exists
-    let hooks = mapping
-        .entry(Value::String("hooks".into()))
+    // Enable the tokibean plugin
+    let plugins = mapping
+        .entry(Value::String("plugins".into()))
         .or_insert(Value::Mapping(Mapping::new()));
-    let hooks_map = hooks.as_mapping_mut().expect("hooks must be mapping");
+    if !plugins.is_mapping() {
+        *plugins = Value::Mapping(Mapping::new());
+    }
+    let plugins_map = plugins.as_mapping_mut().expect("plugins is a mapping");
+    let enabled = plugins_map
+        .entry(Value::String("enabled".into()))
+        .or_insert(Value::Sequence(Vec::new()));
+    if !enabled.is_sequence() {
+        *enabled = Value::Sequence(Vec::new());
+    }
+    let enabled_seq = enabled.as_sequence_mut().expect("enabled is a sequence");
 
-    for event in &HERMES_HOOK_EVENTS {
-        let key = Value::String(event.to_string());
-        let entries = hooks_map
-            .entry(key.clone())
-            .or_insert(Value::Sequence(Vec::new()));
-        let seq = entries.as_sequence_mut().expect("hook entries must be sequence");
-
-        let has_bridge = seq.iter().any(|e| {
-            e.get("command")
-                .and_then(|c| c.as_str())
-                .map(|c| c.contains(BRIDGE_MARKER))
-                .unwrap_or(false)
-        });
-
-        if !has_bridge {
-            let mut entry = Mapping::new();
-            entry.insert(
-                Value::String("command".into()),
-                Value::String(bridge_path.to_string()),
-            );
-            entry.insert(
-                Value::String("timeout".into()),
-                Value::Number(10.into()),
-            );
-            seq.push(Value::Mapping(entry));
-        }
+    let already = enabled_seq.iter().any(|v| v.as_str() == Some(PLUGIN_NAME));
+    if !already {
+        enabled_seq.push(Value::String(PLUGIN_NAME.into()));
     }
 
-    // Always set hooks_auto_accept so the user isn't prompted per-event
-    if !mapping.contains_key(&Value::String("hooks_auto_accept".into())) {
-        mapping.insert(
-            Value::String("hooks_auto_accept".into()),
-            Value::Bool(true),
-        );
-    }
+    // Remove old shell hooks block (if any)
+    mapping.remove(&Value::String("hooks".into()));
+    mapping.remove(&Value::String("hooks_auto_accept".into()));
 
     Value::Mapping(mapping)
 }
 
-/// Install the bridge script and hooks for all detected Hermes profiles.
-pub fn install(cfg: &crate::config::Config) -> Result<(), String> {
+/// Install the plugin files and enable it in all Hermes profile configs.
+/// Also cleans up leftover shell hooks.
+pub fn install(cfg: &crate::config::Config) -> Result<String, String> {
     let port = cfg.port;
     let profiles = profile_configs();
     if profiles.is_empty() {
         return Err("No Hermes config found".into());
     }
 
-    // Write the bridge script once
+    // Write plugin files to every profile's plugins directory.
+    // Hermes discovers plugins from get_hermes_home()/plugins/ — which for profile X
+    // is ~/.hermes/profiles/X/plugins/, NOT ~/.hermes/plugins/.
+    let py = PLUGIN_PY.replace("TOKIBEAN_PORT = 8737", &format!("TOKIBEAN_PORT = {port}"));
+
+    for (profile, config_path) in &profiles {
+        // Config path is .../config.yaml; plugin dir is .../plugins/tokibean/
+        let profile_home = config_path.parent().unwrap_or(Path::new("."));
+        let plugin_dir = profile_home.join("plugins").join("tokibean");
+        fs::create_dir_all(&plugin_dir)
+            .map_err(|e| format!("Cannot create plugin dir for {profile}: {e}"))?;
+        fs::write(plugin_dir.join("__init__.py"), py.as_bytes())
+            .map_err(|e| format!("Cannot write plugin for {profile}: {e}"))?;
+        fs::write(plugin_dir.join("plugin.yaml"), PLUGIN_YAML.as_bytes())
+            .map_err(|e| format!("Cannot write plugin.yaml for {profile}: {e}"))?;
+    }
+
+    // Also write to the global plugins dir (for the default profile)
     let hermes_home = dirs::home_dir()
         .ok_or("No home directory")?
         .join(".hermes");
-    let hooks_dir = hermes_home.join("agent-hooks");
-    fs::create_dir_all(&hooks_dir).map_err(|e| format!("Cannot create agent-hooks dir: {e}"))?;
+    let global_plugin_dir = hermes_home.join("plugins").join("tokibean");
+    fs::create_dir_all(&global_plugin_dir)
+        .map_err(|e| format!("Cannot create global plugin dir: {e}"))?;
+    fs::write(global_plugin_dir.join("__init__.py"), py.as_bytes())
+        .map_err(|e| format!("Cannot write global plugin: {e}"))?;
+    fs::write(global_plugin_dir.join("plugin.yaml"), PLUGIN_YAML.as_bytes())
+        .map_err(|e| format!("Cannot write global plugin.yaml: {e}"))?;
 
-    let bridge_path = hooks_dir.join("tokibean-bridge.py");
-    // Bake port and default profile into the script (profile is set per-profile in the config)
-    let script = BRIDGE_SCRIPT
-        .replace("TOKIBEAN_PORT = \"8737\"", &format!("TOKIBEAN_PORT = \"{port}\""));
+    // Clean up old bridge script
+    let old_bridge = hermes_home.join("agent-hooks").join("tokibean-bridge.py");
+    let _ = fs::remove_file(&old_bridge);
 
-    fs::write(&bridge_path, script.as_bytes())
-        .map_err(|e| format!("Cannot write bridge script: {e}"))?;
-
-    // Make it executable on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&bridge_path, std::fs::Permissions::from_mode(0o755));
-    }
-
-    for (profile, config_path) in &profiles {
-        // Bake profile into the command
-        let command = if cfg!(target_os = "windows") {
-            format!(
-                "python \"{}\"",
-                bridge_path.display()
-            )
-        } else {
-            bridge_path.display().to_string()
+    let mut errors: Vec<String> = Vec::new();
+    for (_profile, config_path) in &profiles {
+        let raw = match fs::read_to_string(config_path) {
+            Ok(r) => r,
+            Err(e) => {
+                errors.push(format!("{}: read: {e}", config_path.display()));
+                continue;
+            }
+        };
+        let doc: Value = match serde_yaml::from_str(&raw) {
+            Ok(d) => d,
+            Err(e) => {
+                errors.push(format!("{}: parse: {e}", config_path.display()));
+                continue;
+            }
         };
 
-        let raw = fs::read_to_string(config_path)
-            .map_err(|e| format!("Cannot read {}: {e}", config_path.display()))?;
-        let doc: Value = serde_yaml::from_str(&raw)
-            .map_err(|e| format!("Cannot parse {}: {e}", config_path.display()))?;
+        let doc = plan(doc);
 
-        // Bake the profile name into the planned config
-        let doc = plan(doc, port, profile, &command);
-
-        // Backup
         let bak = config_path.with_extension("yaml.bak-tokibean");
         let _ = fs::copy(config_path, &bak);
 
-        let out = serde_yaml::to_string(&doc)
-            .map_err(|e| format!("Cannot serialize config: {e}"))?;
-        fs::write(config_path, &out)
-            .map_err(|e| format!("Cannot write {}: {e}", config_path.display()))?;
+        match serde_yaml::to_string(&doc) {
+            Ok(out) => {
+                if let Err(e) = fs::write(config_path, &out) {
+                    errors.push(format!("{}: write: {e}", config_path.display()));
+                }
+            }
+            Err(e) => {
+                errors.push(format!("{}: serialize: {e}", config_path.display()));
+            }
+        }
     }
 
-    Ok(())
+    if !errors.is_empty() {
+        Ok(format!("Partial success. Errors: {}", errors.join("; ")))
+    } else {
+        Ok(crate::i18n::t(
+            "已在 {n} 个 profile 安装 tokibean 插件",
+            "tokibean plugin installed in {n} profile(s)",
+        )
+        .replace("{n}", &profiles.len().to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -243,39 +229,37 @@ mod tests {
     use serde_yaml::Value;
 
     #[test]
-    fn plan_adds_hooks_to_empty_config() {
+    fn plan_adds_plugin_to_empty_config() {
         let config = Value::Mapping(Mapping::new());
-        let result = plan(config, 8737, "default", "python ~/.hermes/agent-hooks/tokibean-bridge.py");
-
-        let hooks = result.get("hooks").unwrap().as_mapping().unwrap();
-        assert!(hooks.contains_key(&Value::String("pre_tool_call".into())));
-        assert!(hooks.contains_key(&Value::String("post_llm_call".into())));
-
-        // hooks_auto_accept is set
-        assert_eq!(result.get("hooks_auto_accept").unwrap().as_bool().unwrap(), true);
+        let result = plan(config);
+        let plugins = result.get("plugins").unwrap().as_mapping().unwrap();
+        let enabled = plugins.get(&Value::String("enabled".into())).unwrap().as_sequence().unwrap();
+        assert!(enabled.iter().any(|v| v.as_str() == Some("tokibean")));
     }
 
     #[test]
     fn plan_is_idempotent() {
         let config = Value::Mapping(Mapping::new());
-        let first = plan(config, 8737, "default", "python ~/.hermes/agent-hooks/tokibean-bridge.py");
-        // Running plan a second time should not add duplicate entries
-        let second = plan(first, 8737, "default", "python ~/.hermes/agent-hooks/tokibean-bridge.py");
-
-        let hooks = second.get("hooks").unwrap().as_mapping().unwrap();
-        let count = hooks.get(&Value::String("pre_tool_call".into()))
-            .unwrap().as_sequence().unwrap().len();
-        assert_eq!(count, 1, "second plan should not duplicate entries");
+        let first = plan(config);
+        // Running plan a second time should not add duplicate plugin entries
+        let second = plan(first);
+        let plugins = second.get("plugins").unwrap().as_mapping().unwrap();
+        let enabled = plugins.get(&Value::String("enabled".into())).unwrap().as_sequence().unwrap();
+        let count = enabled.iter().filter(|v| v.as_str() == Some("tokibean")).count();
+        assert_eq!(count, 1, "second plan should not duplicate plugin entries");
     }
 
     #[test]
-    fn plan_preserves_existing_config() {
+    fn plan_removes_old_shell_hooks() {
         let mut mapping = Mapping::new();
         mapping.insert(Value::String("model".into()), Value::String("claude-sonnet".into()));
+        mapping.insert(Value::String("hooks".into()), Value::Mapping(Mapping::new()));
         mapping.insert(Value::String("hooks_auto_accept".into()), Value::Bool(true));
         let config = Value::Mapping(mapping);
 
-        let result = plan(config, 8737, "default", "python ~/.hermes/agent-hooks/tokibean-bridge.py");
+        let result = plan(config);
         assert_eq!(result.get("model").unwrap().as_str().unwrap(), "claude-sonnet");
+        assert!(result.get("hooks").is_none(), "old hooks should be removed");
+        assert!(result.get("hooks_auto_accept").is_none(), "hooks_auto_accept should be removed");
     }
 }
