@@ -38,7 +38,7 @@
        would mean a Claude-only user (almost everyone) never learns Tokibean watches Codex at all. */
     .tab.off { color: var(--absent); }
     .pane { display: none; }
-    .pane.on { display: block; }
+    .pane.on { display: block; max-height: 340px; overflow-y: auto; }
 
     .row {
       display: flex; align-items: center; justify-content: space-between;
@@ -57,12 +57,35 @@
     select { cursor: pointer; }
     .result { color: var(--sub); font-size: 11.5px; min-height: 14px; margin-top: 10px; }
 
+    .modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .modal.hidden { display: none !important; }
+    .modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.35); }
+    .modal-box { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: 260px; max-width: 90%; box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
+    .modal-title { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+    .modal-title.ok { color: var(--ok); }
+    .modal-title.err { color: #c62828; }
+    @media (prefers-color-scheme: dark) { .modal-title.err { color: #ff7a7a; } }
+    .modal-body { color: var(--fg); font-size: 12.5px; line-height: 1.5; margin-bottom: 16px; word-break: break-word; }
+    .modal-box button.act { width: 100%; }
+    .expand-arrow { display: inline-block; transition: transform 0.2s; margin-right: 2px; font-size: 10px; }
+    .expand-arrow.collapsed { transform: rotate(-90deg); }
+    #hermes-sites.collapsed { display: none; }
+    #hermes-sites-header { cursor: pointer; }
+    #hermes-sites-header button { cursor: pointer; }
+
     button.act {
       background: var(--accent); color: #fff; border: none; border-radius: 6px;
       padding: 7px 14px; font: inherit; cursor: pointer;
     }
     button.act:hover { filter: brightness(1.08); }
+    button.act:disabled { opacity: 0.65; cursor: default; filter: none; }
     button.act.ghost { background: none; color: var(--accent); border: 1px solid var(--accent); }
+    button.act.pulse { animation: okPulse 0.9s ease-out; }
+    @keyframes okPulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent); }
+      70% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--ok) 0%, transparent); }
+      100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 0%, transparent); }
+    }
 
     .status { font-size: 12px; }
     .status.ok { color: var(--ok); }
@@ -76,6 +99,7 @@
        they explain what that one button just did (or still has to do), and where. */
     .site { padding: 7px 0 7px 10px; border-bottom: 1px solid var(--line); border-left: 2px solid var(--line); margin-left: 2px; }
     .site:last-child { border-bottom: none; }
+    .sites-scroll { max-height: 200px; overflow-y: auto; margin: 4px 0; }
     .site-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
     .site-name { font-size: 12.5px; }
     .site-what { color: var(--sub); font-size: 11px; }
@@ -92,6 +116,7 @@
     <button class="tab on" id="tab-general" data-pane="general">通用</button>
     <button class="tab" id="tab-claude" data-pane="claude">Claude Code</button>
     <button class="tab" id="tab-codex" data-pane="codex">Codex</button>
+    <button class="tab" id="tab-hermes" data-pane="hermes">Hermes</button>
   </div>
 
   <!-- General: everything that isn't about a specific agent -->
@@ -207,7 +232,45 @@
     <p class="note" id="codex-note"></p>
   </div>
 
+  <!-- Hermes -->
+  <div class="pane" id="pane-hermes">
+    <div class="row">
+      <label id="l-hermes-state">状态</label>
+      <span class="status" id="hermes-status"></span>
+    </div>
+    <div class="row" id="hermes-hooks-row">
+      <label id="l-hermes-hooks">Hooks</label>
+      <button class="act" id="hermes-install"></button>
+    </div>
+    <div class="row" id="hermes-sites-header">
+      <label id="l-hermes-profiles"><span id="hermes-arrow" class="expand-arrow">▼</span> <span id="hermes-profiles-label">Profiles</span> <span id="hermes-profiles-count"></span></label>
+      <button class="act ghost" id="hermes-refresh">刷新</button>
+    </div>
+    <div id="hermes-sites" class="sites-scroll"></div>
+    <div class="row" id="hermes-dir-row">
+      <label id="l-hermes-dir">配置目录</label>
+      <span class="dir" id="hermes-dir"></span>
+    </div>
+    <div class="hidden" id="hermes-add">
+      <p class="note" id="hermes-add-note"></p>
+      <div class="row">
+        <input type="text" class="path" id="hermes-path" placeholder="/path/to/.hermes" />
+        <button class="act ghost" id="hermes-save-path"></button>
+      </div>
+    </div>
+    <p class="note" id="hermes-note"></p>
+  </div>
+
   <div class="result" id="result"></div>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-backdrop" id="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-body" id="modal-body"></div>
+      <button class="act" id="modal-close"></button>
+    </div>
+  </div>
 
   <script>
     (function () {
@@ -268,6 +331,16 @@
         install: ["安装 hooks", "Install hooks"],
         reinstall: ["更新 hooks", "Update hooks"],
         installed_ok: ["hooks 已装好", "Hooks are installed"],
+        install_ok_title: ["安装成功", "Installation successful"],
+        install_fail_title: ["安装失败", "Installation failed"],
+        ok: ["确定", "OK"],
+        hermes_profiles: ["Profiles", "Profiles"],
+        refresh: ["刷新", "Refresh"],
+        refreshed_title: ["已刷新", "Refreshed"],
+        refreshed_body: ["Profile 列表已更新", "Profile list updated"],
+        refresh_fail_title: ["刷新失败", "Refresh failed"],
+        saved_title: ["已保存", "Saved"],
+        save_fail_title: ["保存失败", "Save failed"],
         connect: ["连接账号", "Connect account"],
         connected: ["已连接", "Connected"],
         connecting: ["浏览器授权中…", "Authorizing in browser…"],
@@ -312,6 +385,14 @@
           "没找到 Codex 的配置目录。装好并运行一次 Codex,Tokibean 会自动发现它 —— 不用重启。",
           "No Codex config directory found. Install Codex and run it once; Tokibean will notice on its own — no restart needed.",
         ],
+        absent_hermes: [
+          "没找到 Hermes 的配置目录。装好并运行一次 Hermes,Tokibean 会自动发现它 —— 不用重启。",
+          "No Hermes config directory found. Install Hermes and run it once; Tokibean will notice on its own — no restart needed.",
+        ],
+        hermes_note: [
+          "Hermes 的 shell hooks 在安装后需要 /new 开新 session 才会生效。Token 用量从 ~/.hermes/state.db 读取。",
+          "Hermes shell hooks take effect after /new in a fresh session. Token counts are read from ~/.hermes/state.db.",
+        ],
         add_note: [
           "已经装了却没被检测到?(比如设过 CLAUDE_CONFIG_DIR / CODEX_HOME)把它的配置目录填在这里。",
           "Installed it but we didn't find it? (e.g. you set CLAUDE_CONFIG_DIR / CODEX_HOME.) Point us at its config directory.",
@@ -336,7 +417,7 @@
       el("l-textsize").textContent = t("textsize");
       const topts = { "1": "t_small", "1.2": "t_normal", "1.4": "t_large" };
       for (const o of el("cfg-textsize").options) o.textContent = t(topts[o.value] || o.value);
-      for (const a of ["claude", "codex"]) {
+      for (const a of ["claude", "codex", "hermes"]) {
         el("l-" + a + "-state").textContent = t("state");
         el("l-" + a + "-dir").textContent = t("cfg_dir");
         el(a + "-add-note").textContent = t("add_note");
@@ -344,7 +425,11 @@
       }
       el("l-claude-hooks").textContent = t("hooks");
       el("l-codex-hooks").textContent = t("hooks");
+      el("l-hermes-hooks").textContent = t("hooks");
       el("l-claude-acct").textContent = t("acct");
+      el("modal-close").textContent = t("ok");
+      el("hermes-refresh").textContent = t("refresh");
+      el("hermes-profiles-label").textContent = t("hermes_profiles");
       el("l-claude-mode").textContent = t("mode");
       const mopts = { auto: "m_auto", subscription: "m_sub", api: "m_api" };
       for (const o of el("cfg-mode").options) o.textContent = t(mopts[o.value] || o.value);
@@ -462,22 +547,56 @@
         hooksRow.classList.toggle("hidden", !here);
         if (here) {
           btn.disabled = false;
-          btn.textContent = presence.hooks_incomplete ? t("install") : t("installed_ok");
+          if (presence.hooks_incomplete) {
+            btn.textContent = t("install");
+          } else if (seen) {
+            btn.textContent = t("st_active");
+          } else if (a === "codex" && presence.approval === "recorded") {
+            btn.textContent = t("st_approved");
+          } else if (a === "codex") {
+            btn.textContent = t("st_pending");
+          } else {
+            btn.textContent = t("st_ready");
+          }
           btn.classList.toggle("ghost", !presence.hooks_incomplete);
         }
 
-        if (a === "claude") renderSites(presence && presence.sites);
+        if (a === "claude") {
+          renderSites(presence && presence.sites);
+        } else if (a === "hermes") {
+          const box = el("hermes-sites");
+          box.innerHTML = "";
+          const sites = presence && presence.sites;
+          if (sites && sites.length > 0) {
+            for (const s of sites) {
+              const row = document.createElement("div");
+              row.className = "site";
+              const top = document.createElement("div");
+              top.className = "site-top";
+              const name = document.createElement("span");
+              name.className = "site-name";
+              name.textContent = s.name || siteLabel(s);
+              const mark = document.createElement("span");
+              mark.className = "site-mark " + (s.hooks_incomplete ? "pending" : "ok");
+              mark.textContent = (s.hooks_incomplete ? "⚠ " : "✓ ") + t(s.hooks_incomplete ? "site_need" : "site_ok");
+              top.append(name, mark);
+              row.appendChild(top);
+              box.appendChild(row);
+            }
+          }
+          el("hermes-profiles-count").textContent = "(" + (sites ? sites.length : 0) + ")";
+        }
 
         // Where we looked, and the manual override — shown only when detection failed, so the 99%
-        // who never need it never see it.
+        // who never need it never see it. Hermes has per-profile sites instead.
         el(a + "-dir-row").classList.toggle("hidden", !here);
         el(a + "-dir").textContent =
           (presence ? presence.dir : "") + (presence && presence.manual ? " " + t("manual") : "");
-        el(a + "-add").classList.toggle("hidden", here);
-        if (!here && presence) el(a + "-path").value = presence.manual ? presence.dir : "";
+        el(a + "-add").classList.toggle("hidden", false);
+        if (presence) el(a + "-path").value = presence.dir || "";
         el(a + "-note").textContent = here
-          ? t(a === "codex" ? "codex_note" : "claude_note")
-          : t(a === "codex" ? "absent_codex" : "absent_claude");
+          ? t(a === "codex" ? "codex_note" : a === "hermes" ? "hermes_note" : "claude_note")
+          : t(a === "codex" ? "absent_codex" : a === "hermes" ? "absent_hermes" : "absent_claude");
 
         // Codex's trust gate gets its instruction right where the user is stuck — but ONLY while he
         // is actually stuck. Telling someone to go approve hooks that Codex already has on record
@@ -506,7 +625,7 @@
 
       function applyUpdate(u) {
         const seen = u.agents_seen || [];
-        for (const a of ["claude", "codex"]) {
+        for (const a of ["claude", "codex", "hermes"]) {
           const p = (u.agents || []).find((x) => x.agent === a);
           renderAgent(a, p, seen.includes(a));
         }
@@ -517,18 +636,75 @@
       listen("pet-update", (e) => applyUpdate(e.payload));
 
       // ---------- Actions ----------
+      function setInstalling(agent) {
+        const btn = el(agent + "-install");
+        btn.disabled = true;
+        btn.textContent = t("installing");
+        btn.classList.remove("ghost");
+      }
+      function pulseButton(agent) {
+        const btn = el(agent + "-install");
+        btn.classList.add("pulse");
+        setTimeout(() => btn.classList.remove("pulse"), 900);
+      }
+      function showModal(title, body, ok) {
+        el("modal-title").textContent = title;
+        el("modal-title").className = "modal-title " + (ok ? "ok" : "err");
+        el("modal-body").textContent = body;
+        el("modal").classList.remove("hidden");
+      }
+      el("modal-close").addEventListener("click", () => el("modal").classList.add("hidden"));
+      el("modal-backdrop").addEventListener("click", () => el("modal").classList.add("hidden"));
+
       el("claude-install").addEventListener("click", () => {
-        el("result").textContent = t("installing");
+        setInstalling("claude");
         invoke("install_hooks")
-          .then((msg) => { el("result").textContent = msg; return invoke("get_update").then(applyUpdate); })
-          .catch((err) => (el("result").textContent = String(err)));
+          .then((msg) => invoke("get_update").then((u) => {
+            applyUpdate(u);
+            const seen = (u.agents_seen || []).includes("claude");
+            showModal(t("install_ok_title"), seen ? msg : t("st_ready"), true);
+            pulseButton("claude");
+          }))
+          .catch((err) => { showModal(t("install_fail_title"), String(err), false); return invoke("get_update").then(applyUpdate); });
       });
       el("codex-install").addEventListener("click", () => {
-        el("result").textContent = t("installing");
+        setInstalling("codex");
         invoke("install_codex_hooks")
-          .then((msg) => { el("result").textContent = msg; return invoke("get_update").then(applyUpdate); })
-          .catch((err) => (el("result").textContent = String(err)));
+          .then((msg) => invoke("get_update").then((u) => {
+            applyUpdate(u);
+            const seen = (u.agents_seen || []).includes("codex");
+            showModal(t("install_ok_title"), seen ? msg : t("st_ready"), true);
+            pulseButton("codex");
+          }))
+          .catch((err) => { showModal(t("install_fail_title"), String(err), false); return invoke("get_update").then(applyUpdate); });
       });
+      el("hermes-install").addEventListener("click", () => {
+        setInstalling("hermes");
+        invoke("install_hermes_hooks")
+          .then((msg) => invoke("get_update").then((u) => {
+            applyUpdate(u);
+            const seen = (u.agents_seen || []).includes("hermes");
+            showModal(t("install_ok_title"), seen ? msg : t("st_ready"), true);
+            pulseButton("hermes");
+          }))
+          .catch((err) => { showModal(t("install_fail_title"), String(err), false); return invoke("get_update").then(applyUpdate); });
+      });
+
+      let hermesSitesExpanded = false;
+      el("hermes-sites").classList.add("collapsed");
+      el("hermes-arrow").classList.add("collapsed");
+      el("hermes-sites-header").addEventListener("click", (e) => {
+        if (e.target.closest("#hermes-refresh")) return;
+        hermesSitesExpanded = !hermesSitesExpanded;
+        el("hermes-sites").classList.toggle("collapsed", !hermesSitesExpanded);
+        el("hermes-arrow").classList.toggle("collapsed", !hermesSitesExpanded);
+      });
+      el("hermes-refresh").addEventListener("click", () => {
+        invoke("refresh_agents")
+          .then((u) => { applyUpdate(u); showModal(t("refreshed_title"), t("refreshed_body"), true); })
+          .catch((err) => showModal(t("refresh_fail_title"), String(err), false));
+      });
+
       el("claude-connect").addEventListener("click", () => {
         el("result").textContent = t("connecting");
         invoke("connect_claude")
@@ -536,12 +712,12 @@
           .catch((err) => (el("result").textContent = String(err)));
       });
 
-      for (const a of ["claude", "codex"]) {
+      for (const a of ["claude", "codex", "hermes"]) {
         el(a + "-save-path").addEventListener("click", () => {
           const dir = el(a + "-path").value.trim();
           invoke("set_agent_dir", { agent: a, dir })
-            .then((msg) => { el("result").textContent = dir ? msg : t("cleared"); return invoke("get_update").then(applyUpdate); })
-            .catch((err) => (el("result").textContent = String(err)));
+            .then((msg) => { showModal(t("saved_title"), dir ? msg : t("cleared"), true); return invoke("get_update").then(applyUpdate); })
+            .catch((err) => showModal(t("save_fail_title"), String(err), false));
         });
       }
 

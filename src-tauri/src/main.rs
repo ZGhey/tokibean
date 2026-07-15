@@ -55,7 +55,15 @@ fn install_codex_hooks(app: AppHandle) -> Result<String, String> {
 fn install_hermes_hooks(app: AppHandle) -> Result<String, String> {
     let shared = app.state::<Arc<Shared>>();
     let cfg = shared.cfg.lock().unwrap().clone();
-    hermes_install::install(&cfg).map(|_| "ok".into())
+    hermes_install::install(&cfg)
+}
+
+#[tauri::command]
+fn refresh_agents(app: AppHandle) -> state::PetUpdate {
+    let shared = app.state::<Arc<Shared>>();
+    state::refresh_agents(&shared);
+    state::push_update(&app, &shared);
+    state::build_update(&shared)
 }
 
 #[tauri::command]
@@ -622,6 +630,7 @@ fn main() {
             install_hooks,
             install_codex_hooks,
             install_hermes_hooks,
+            refresh_agents,
             set_agent_dir,
             mark_onboarded,
             open_settings_window_on,

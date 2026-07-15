@@ -267,6 +267,8 @@ pub struct UsageSnapshot {
     /// The Codex share of each of those days, so the chart can show which agent burned what rather
     /// than blending two agents' work into one indistinguishable bar.
     pub daily_codex: Vec<u64>,
+    /// The Hermes share of each of those days, shown on hover.
+    pub daily_hermes: Vec<u64>,
 }
 
 impl UsageSnapshot {
@@ -384,6 +386,7 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config, now_ts: i64) -> Usage
     let mut per_model: HashMap<String, u64> = HashMap::new();
     let mut daily_tokens = vec![0u64; 7];
     let mut daily_codex = vec![0u64; 7];
+    let daily_hermes = vec![0u64; 7];
 
     // Tokens and the trend span EVERY agent — "today's work" means all of it. Cost does not: we
     // model Anthropic's prices and nobody else's, so cost_of() returns zero for another agent's
@@ -458,6 +461,7 @@ pub fn build_snapshot(events: &[UsageEvent], cfg: &Config, now_ts: i64) -> Usage
         has_data: !evs.is_empty(),
         daily_tokens,
         daily_codex,
+        daily_hermes,
     }
 }
 
