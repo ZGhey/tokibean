@@ -1,0 +1,50 @@
+[
+  {
+    "id": "classic",
+    "name": {
+      "zh": "墩墩(默认)",
+      "en": "Dundun (default)"
+    },
+    "file": "pet.js"
+  },
+  {
+    "id": "daruma",
+    "name": {
+      "zh": "达摩·许愿",
+      "en": "Daruma"
+    },
+    "file": "skins/daruma.js"
+  },
+  {
+    "id": "maneki",
+    "name": {
+      "zh": "招财猫·墩墩",
+      "en": "Maneki"
+    },
+    "file": "skins/maneki.js"
+  },
+  {
+    "id": "shiba",
+    "name": {
+      "zh": "柴犬·豆豆",
+      "en": "Shiba"
+    },
+    "file": "skins/shiba.js"
+  },
+  {
+    "id": "tabby",
+    "name": {
+      "zh": "橘猫·摸鱼",
+      "en": "Tabby"
+    },
+    "file": "skins/tabby.js"
+  },
+  {
+    "id": "tuerye",
+    "name": {
+      "zh": "兔爷·骑虎",
+      "en": "Tu'er Ye"
+    },
+    "file": "skins/tuerye.js"
+  }
+]

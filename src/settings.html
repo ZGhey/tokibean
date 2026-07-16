@@ -55,6 +55,8 @@
     input[type="text"].hotkey.recording { border-color: var(--accent); color: var(--accent); }
     input[type="text"].path { min-width: 240px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; }
     select { cursor: pointer; }
+    .skin-checks { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+    .skin-checks label { display: flex; align-items: center; gap: 6px; color: var(--fg); font-size: 12.5px; cursor: pointer; }
     .result { color: var(--sub); font-size: 11.5px; min-height: 14px; margin-top: 10px; }
 
     .modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 100; }
@@ -143,11 +145,21 @@
     </div>
     <div class="row">
       <label id="l-skin">皮肤</label>
-      <select id="cfg-skin">
-        <option value="classic">墩墩(默认)</option>
-        <option value="bean">豆豆</option>
-        <option value="tabby">橘猫·摸鱼</option>
+      <select id="cfg-skin"></select>
+    </div>
+    <div class="row">
+      <label id="l-rotation">皮肤循环</label>
+      <select id="cfg-rotation">
+        <option value="off">关闭</option>
+        <option value="hourly">每小时</option>
+        <option value="daily">每天</option>
       </select>
+    </div>
+    <!-- Which skins take part in rotation; only shown while rotation is on. Generated from
+         skins.json like the skin dropdown, so new skins need no HTML edits. -->
+    <div class="row hidden" id="rotation-skins-row">
+      <label id="l-rotation-skins">参与循环</label>
+      <div class="skin-checks" id="cfg-rotation-skins"></div>
     </div>
     <div class="row">
       <label id="l-size">大小</label>
@@ -273,7 +285,7 @@
   </div>
 
   <script>
-    (function () {
+    (async function () {
       const { invoke } = window.__TAURI__.core;
       const { emit, listen } = window.__TAURI__.event;
       // Language injected by the backend (system locale) as __PET_ZH__; navigator.language is
@@ -292,9 +304,11 @@
         autostart: ["开机启动", "Launch at login"],
         hotkey: ["快捷键", "Hotkey"],
         skin: ["皮肤", "Skin"],
-        s_classic: ["墩墩(默认)", "Dundun (default)"],
-        s_bean: ["豆豆", "Bean"],
-        s_tabby: ["橘猫·摸鱼", "Tabby"],
+        rotation: ["皮肤循环", "Skin rotation"],
+        r_off: ["关闭", "Off"],
+        r_hourly: ["每小时", "Hourly"],
+        r_daily: ["每天", "Daily"],
+        rotation_skins: ["参与循环", "Rotate among"],
         size: ["大小", "Size"],
         z_small: ["小", "Small"],
         z_normal: ["中(默认)", "Normal (default)"],
@@ -409,8 +423,55 @@
       el("l-autostart").textContent = t("autostart");
       el("l-hotkey").textContent = t("hotkey");
       el("l-skin").textContent = t("skin");
-      const opts = { classic: "s_classic", bean: "s_bean", tabby: "s_tabby" };
-      for (const o of el("cfg-skin").options) o.textContent = t(opts[o.value] || o.value);
+      el("l-rotation").textContent = t("rotation");
+      const ropts = { off: "r_off", hourly: "r_hourly", daily: "r_daily" };
+      for (const o of el("cfg-rotation").options) o.textContent = t(ropts[o.value] || o.value);
+      el("l-rotation-skins").textContent = t("rotation_skins");
+      // The checkbox list only means something while rotation is on; keep it out of sight otherwise.
+      function syncRotationRow() {
+        el("rotation-skins-row").classList.toggle("hidden", el("cfg-rotation").value === "off");
+      }
+      // Skin list is generated from skins.json so new skins don't need HTML edits. The same list
+      // feeds the rotation checkboxes: an empty/absent saved selection defaults to ALL checked, so
+      // turning rotation on works out of the box.
+      async function loadSkinOptions(selected, rotationSkins) {
+        const checkAll = !Array.isArray(rotationSkins) || rotationSkins.length === 0;
+        const buildCheck = (id, name) => {
+          const label = document.createElement("label");
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.value = id;
+          box.checked = checkAll || rotationSkins.includes(id);
+          box.addEventListener("change", () => saveCfg());
+          label.appendChild(box);
+          label.appendChild(document.createTextNode(name));
+          el("cfg-rotation-skins").appendChild(label);
+        };
+        const sel = el("cfg-skin");
+        sel.innerHTML = "";
+        el("cfg-rotation-skins").innerHTML = "";
+        try {
+          const res = await fetch("skins.json");
+          const skins = await res.json();
+          for (const s of skins) {
+            const opt = document.createElement("option");
+            opt.value = s.id;
+            opt.textContent = s.name[ZH ? "zh" : "en"] || s.id;
+            sel.appendChild(opt);
+            buildCheck(s.id, opt.textContent);
+          }
+          sel.value = selected || "classic";
+        } catch (e) {
+          // Fallback: at least keep classic selectable
+          const opt = document.createElement("option");
+          opt.value = "classic";
+          opt.textContent = "Dundun (default)";
+          sel.appendChild(opt);
+          sel.value = selected || "classic";
+          buildCheck("classic", opt.textContent);
+        }
+      }
+      await loadSkinOptions();
       el("l-size").textContent = t("size");
       const zopts = { "0.5": "z_small", "0.75": "z_normal", "1": "z_large", "1.25": "z_xlarge" };
       for (const o of el("cfg-size").options) o.textContent = t(zopts[o.value] || o.value);
@@ -750,24 +811,36 @@
         return mods.concat(key).join("+");
       }
 
-      // Persist notify/minsecs/sound/skin/size; tell the pet window so it can re-sync (sound / size) /
-      // reload (skin). Pet size (pet_scale) applies live in the pet window via config-changed.
+      // Persist notify/minsecs/sound/skin/rotation/size; tell the pet window so it can re-sync
+      // (sound / size) / reload (skin change — manual or a rotation setting that changes the
+      // derived pick). Pet size (pet_scale) applies live in the pet window via config-changed.
       function saveCfg() {
         return invoke("set_config", {
           notify: el("cfg-notify").checked,
           notifyMinSecs: Math.max(0, parseInt(el("cfg-minsecs").value, 10) || 0),
           sound: el("cfg-sound").checked,
           skin: el("cfg-skin").value,
+          skinRotation: el("cfg-rotation").value,
+          rotationSkins: [...el("cfg-rotation-skins").querySelectorAll("input:checked")].map((b) => b.value),
           petScale: parseFloat(el("cfg-size").value) || 0.75,
           textScale: parseFloat(el("cfg-textsize").value) || 1.2,
         })
-          .then(() => emit("config-changed", { skin: el("cfg-skin").value }))
+          .then(() => emit("config-changed", {}))
           .catch((err) => (el("result").textContent = String(err)));
       }
       el("cfg-notify").addEventListener("change", () => saveCfg());
       el("cfg-minsecs").addEventListener("change", () => saveCfg());
       el("cfg-sound").addEventListener("change", () => saveCfg());
-      el("cfg-skin").addEventListener("change", () => saveCfg());
+      // A manual skin pick means "I want THIS one" — it wins over rotation, so rotation turns off.
+      el("cfg-skin").addEventListener("change", () => {
+        el("cfg-rotation").value = "off";
+        syncRotationRow();
+        saveCfg();
+      });
+      el("cfg-rotation").addEventListener("change", () => {
+        syncRotationRow();
+        saveCfg();
+      });
       el("cfg-size").addEventListener("change", () => saveCfg());
       el("cfg-textsize").addEventListener("change", () => saveCfg());
 
@@ -796,11 +869,13 @@
       });
 
       // Load current config
-      invoke("get_config").then((c) => {
+      invoke("get_config").then(async (c) => {
+        await loadSkinOptions(c.skin, c.rotation_skins);
+        el("cfg-rotation").value = c.skin_rotation === "hourly" || c.skin_rotation === "daily" ? c.skin_rotation : "off";
+        syncRotationRow();
         el("cfg-notify").checked = c.notify;
         el("cfg-minsecs").value = c.notify_min_secs;
         el("cfg-sound").checked = c.sound;
-        el("cfg-skin").value = c.skin || "classic";
         el("cfg-size").value = String(c.pet_scale || 0.75);
         el("cfg-textsize").value = String(c.text_scale || 1.2);
         if (c.boss_key) { bossKeyAccel = c.boss_key; bossInput.value = prettyAccel(c.boss_key); }
