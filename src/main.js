@@ -1031,7 +1031,57 @@
 
   // ---------- Config (settings now live in the tray Settings window) ----------
   let soundOn = false;
-  let currentSkin = "classic";
+  let currentSkin = "classic"; // the skin actually rendered (manual pick, or rotation's pick)
+  let rotationTimer = null;
+
+  // ---------- Skin rotation (frontend-owned; the backend only stores the two config fields) ----
+  // Calendar-aligned and stateless: the displayed skin is derived from the local clock, so a
+  // restart lands on the same skin and nothing about "last switch time" is ever persisted.
+  // `shifted` moves the epoch to local time so the period boundaries fall on the local top of the
+  // hour / local midnight (incl. half-hour timezones). A DST switch shifts the offset by an hour,
+  // so that night the cycle skips or repeats one step — cosmetic, twice a year, self-corrects.
+  function rotationPeriod(mode) {
+    const shifted = Date.now() - new Date().getTimezoneOffset() * 60000;
+    const span = mode === "daily" ? 86400e3 : 3600e3;
+    return { index: Math.floor(shifted / span), msToNext: span - (shifted % span) };
+  }
+
+  // The skins taking part in rotation, in skins.json order (so the cycle order is stable no
+  // matter how the config list happens to be ordered). Unknown/removed ids drop out silently;
+  // empty result (or rotation off) means rotation is inert.
+  async function rotationList(c) {
+    if (c.skin_rotation !== "hourly" && c.skin_rotation !== "daily") return [];
+    const chosen = Array.isArray(c.rotation_skins) ? c.rotation_skins : [];
+    if (!chosen.length) return [];
+    try {
+      const all = await (await fetch("skins.json")).json();
+      return all.map((s) => s.id).filter((id) => chosen.includes(id));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // What should be on screen right now: rotation's pick when active, else the manual choice.
+  async function effectiveSkin(c) {
+    const list = await rotationList(c);
+    if (!list.length) return c.skin || "classic";
+    return list[rotationPeriod(c.skin_rotation).index % list.length];
+  }
+
+  // Arm a timer for the next boundary. Switching = the plain skin-change path (location.reload);
+  // if the boundary lands on the same skin (single-skin list, wrap-around), just re-arm.
+  function scheduleRotation(c) {
+    clearTimeout(rotationTimer);
+    rotationTimer = null;
+    if (c.skin_rotation !== "hourly" && c.skin_rotation !== "daily") return;
+    // +1s so a timer that fires a hair early still lands past the boundary.
+    rotationTimer = setTimeout(async () => {
+      const cfg = await invoke("get_config").catch(() => null);
+      if (!cfg) return scheduleRotation(c); // transient failure: keep the loop alive
+      if ((await effectiveSkin(cfg)) !== currentSkin) return location.reload();
+      scheduleRotation(cfg);
+    }, rotationPeriod(c.skin_rotation).msToNext + 1000);
+  }
 
   /// Where the pet's feet must land for the whole pet — dome to toes, at the NEW scale — to fit on
   /// screen. Takes the desired feet Y, returns it nudged inside the monitor (unchanged if it already
@@ -1112,13 +1162,14 @@
 
   function applyConfig(c) {
     soundOn = c.sound;
-    currentSkin = c.skin || "classic";
     applyTextScale(typeof c.text_scale === "number" ? c.text_scale : DEFAULT_TEXT_SCALE);
     applyScale(typeof c.pet_scale === "number" ? c.pet_scale : DEFAULT_SCALE).catch(() => {});
   }
 
-  invoke("get_config").then((c) => {
+  invoke("get_config").then(async (c) => {
     applyConfig(c);
+    currentSkin = await effectiveSkin(c);
+    scheduleRotation(c);
     // Non-default skin: dynamically load it to override PetRenderer
     if (currentSkin !== "classic") {
       const s = document.createElement("script");
@@ -1138,11 +1189,14 @@
     // and every route in (the gear, the setup line) is one click behind it.
     if (!c.onboarded) invoke("mark_onboarded").catch(() => {});
   });
-  // The Settings window persists changes and emits "config-changed" — re-sync here (reload on skin change)
-  listen("config-changed", (e) => {
-    const newSkin = e && e.payload && e.payload.skin;
-    if (newSkin && newSkin !== currentSkin) return location.reload();
-    invoke("get_config").then(applyConfig).catch(() => {});
+  // The Settings window persists changes and emits "config-changed" — re-sync here. Reload when
+  // the EFFECTIVE skin changed (manual pick, or a rotation setting whose derived pick differs).
+  listen("config-changed", async () => {
+    const c = await invoke("get_config").catch(() => null);
+    if (!c) return;
+    if ((await effectiveSkin(c)) !== currentSkin) return location.reload();
+    applyConfig(c);
+    scheduleRotation(c);
   });
 
 

@@ -145,6 +145,13 @@ pub struct Config {
     pub sound: bool,
     /// Skin: classic (default) / a filename under the skins/ directory
     pub skin: String,
+    /// Skin rotation cadence: off (default) / hourly / daily. When active, the frontend derives
+    /// the displayed skin from the clock and `rotation_skins`; `skin` itself is never rewritten —
+    /// it stays the user's manual pick, and turning rotation off falls straight back to it.
+    pub skin_rotation: String,
+    /// Skin ids that take part in rotation. The frontend filters them against skins.json at
+    /// runtime (unknown ids are dropped silently); an empty result makes rotation inert.
+    pub rotation_skins: Vec<String>,
     /// Pet display scale multiplier. Only the pet canvas scales (not the panel); the window
     /// grows around a fixed bottom-center anchor. Valid steps: 0.5 / 0.75 / 1.0 / 1.25.
     /// Every step keeps the art-pixel size (4·scale·dpr) an integer, so pixel edges stay crisp.
@@ -211,6 +218,8 @@ impl Default for Config {
             notify_min_secs: 30,
             sound: false,
             skin: "classic".into(),
+            skin_rotation: "off".into(),
+            rotation_skins: Vec::new(),
             pet_scale: None,
             text_scale: None,
             layout_v: 0,
@@ -384,6 +393,29 @@ mod tests {
         assert_eq!(cfg.scale(), 0.75);
         // And the new field simply defaults
         assert!(cfg.agents.is_empty());
+    }
+
+    #[test]
+    fn skin_rotation_defaults_off_on_old_and_fresh_configs() {
+        // A config written before the skin-rotation feature: both new fields must default.
+        let cfg: Config = serde_json::from_str(LEGACY).expect("a legacy config must still parse");
+        assert_eq!(cfg.skin_rotation, "off");
+        assert!(cfg.rotation_skins.is_empty());
+
+        let fresh = Config::default();
+        assert_eq!(fresh.skin_rotation, "off");
+        assert!(fresh.rotation_skins.is_empty());
+    }
+
+    #[test]
+    fn skin_rotation_round_trips() {
+        let mut cfg = Config::default();
+        cfg.skin_rotation = "hourly".into();
+        cfg.rotation_skins = vec!["classic".into(), "tabby".into()];
+        let text = serde_json::to_string(&cfg).unwrap();
+        let back: Config = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.skin_rotation, "hourly");
+        assert_eq!(back.rotation_skins, vec!["classic".to_string(), "tabby".to_string()]);
     }
 
     #[test]

@@ -91,6 +91,8 @@ fn get_config(app: AppHandle) -> serde_json::Value {
         "notify_min_secs": cfg.notify_min_secs,
         "sound": cfg.sound,
         "skin": cfg.skin,
+        "skin_rotation": cfg.skin_rotation,
+        "rotation_skins": cfg.rotation_skins,
         "pet_scale": cfg.scale(), // resolved (never null) — the frontend always gets a valid step
         "text_scale": cfg.text_scale(),
         "boss_key": cfg.boss_key,
@@ -120,6 +122,8 @@ fn set_config(
     notify_min_secs: u64,
     sound: bool,
     skin: String,
+    skin_rotation: String,
+    rotation_skins: Vec<String>,
     pet_scale: f64,
     text_scale: f64,
 ) -> Result<(), String> {
@@ -130,6 +134,13 @@ fn set_config(
         cfg.notify_min_secs = notify_min_secs;
         cfg.sound = sound;
         cfg.skin = if skin.is_empty() { "classic".into() } else { skin };
+        // Anything but the two live cadences means off — config.json is hand-editable too,
+        // but the frontend treats unknown values as off as well, so this is just tidiness.
+        cfg.skin_rotation = match skin_rotation.as_str() {
+            "hourly" | "daily" => skin_rotation,
+            _ => "off".into(),
+        };
+        cfg.rotation_skins = rotation_skins;
         cfg.pet_scale = Some(pet_scale);
         cfg.pet_scale = Some(cfg.scale()); // snap to a valid step, else the default
         cfg.text_scale = Some(text_scale);
