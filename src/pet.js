@@ -1224,7 +1224,7 @@
   window.PetRenderer = { draw };
   // Shared drawing toolkit: reusable by skin files (pixels, bubbles, status box, hearts, Zzz, confetti,
   // and the calendar ambience — call ambient(ctx, canvas, t) early in a skin's draw for moon/season/festival).
-  // setTextScale is how a skin with its own draw() (bean, tabby) still gets the user's text size:
+  // setTextScale is how a skin with its own draw() (tabby, etc.) still gets the user's text size:
   // main.js calls it whenever the setting changes. The default skin's draw() also reads
   // extra.textScale, so a skin that ignores PetKit entirely can still be handed the value.
   window.PetKit = { S, GY, px, heart, zzz, bubbleBox, statusTag, confetti, isNight, ambient, moonPhase, drawMoon, season, festival, weather, drawWeather, setTextScale, centreCx };
