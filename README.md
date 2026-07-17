@@ -173,6 +173,8 @@ Open `~/.claude/settings.json` (and/or `~/.codex/hooks.json`) and delete every h
 
 Built-in skins: **Archway Dundun (default, persimmon orange)** / Bean / Tabby cat, switchable instantly from the panel dropdown. A skin is a standalone file under `src/skins/` that overrides `window.PetRenderer` and may reuse the `window.PetKit` toolkit (pixels / bubbles / status boxes / hearts / confetti).
 
+Skins can also rotate on their own: Settings → Skin rotation, hourly or daily (aligned to the top of the hour / local midnight), cycling through whichever skins you tick. The current skin is derived from the clock — a restart lands on the same one — and picking a skin by hand simply turns rotation off.
+
 All drawing logic lives in the single file `src/pet.js`. Keep the `window.PetRenderer.draw(ctx, canvas, state, warn, bubble, t, extra)` interface unchanged and draw however you like. There are 5 states: `idle / working / attention / done / limit`, plus a `warn` overlay flag. The 7th argument `extra` is optional (old skins can ignore it): `{sessions, workSecs, attnSecs, toolNote, celebrate, oops, bgCount, dragging, pat}` — for the multi-session badge, work-time corner tag / tired face, tool label, celebration level, error frustration, background-task satellite, drag dangle, and head pat respectively.
 
 > Not affiliated with Anthropic; "Claude Code" is used only as a factual compatibility reference.
