@@ -171,7 +171,7 @@ Open `~/.claude/settings.json` (and/or `~/.codex/hooks.json`) and delete every h
 
 ## Skins
 
-Built-in skins: **Archway Dundun (default, persimmon orange)** / Bean / Tabby cat, switchable instantly from the panel dropdown. A skin is a standalone file under `src/skins/` that overrides `window.PetRenderer` and may reuse the `window.PetKit` toolkit (pixels / bubbles / status boxes / hearts / confetti).
+Built-in skins: **Archway Dundun (default, persimmon orange)** / Tabby / Shiba / Maneki / Daruma / Tu'er Ye, switchable instantly from the panel dropdown. A skin is a standalone file under `src/skins/` that overrides `window.PetRenderer` and may reuse the `window.PetKit` toolkit (pixels / bubbles / status boxes / hearts / confetti).
 
 Skins can also rotate on their own: Settings → Skin rotation, hourly or daily (aligned to the top of the hour / local midnight), cycling through whichever skins you tick. The current skin is derived from the clock — a restart lands on the same one — and picking a skin by hand simply turns rotation off.
 
