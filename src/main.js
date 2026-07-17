@@ -608,8 +608,11 @@
         cell.classList.toggle("all-codex", cx > 0 && cx === total);
       }
     }
-    el("tok-today").textContent = fmtTokens(u.today_tokens);
-    updateBreakdown(6);
+    // Respect an in-progress hover: the panel re-renders every push (~1s while open), and blindly
+    // writing today's numbers here yanks the display away from the day the cursor is on.
+    el("tok-today").textContent =
+      hotIdx === 6 ? fmtTokens(u.today_tokens) : fmtTokens(bars[hotIdx]._total || 0);
+    updateBreakdown(hotIdx);
     renderSetupLine();
 
     // In-app updater row: only visible when an update is actually pending / downloading.
@@ -704,6 +707,24 @@
   // at the window bottom; true = below-panel, pet at the window top). Startup is up-layout (main.rs).
   let curBelow = false;
   if (PREALLOC) document.body.classList.add("prealloc");
+
+  // A skin switch reloads the page (location.reload), which resets this module's state while the
+  // full-height window stays wherever the below-layout left it. The backend's pet_at_top flag
+  // survives the reload, so restore the layout from it before anything measures the canvas or
+  // saves the pet anchor — otherwise the pet re-renders at the wrong end of the window and the
+  // click-through strip (still at the old end) makes it unclickable. The panel_open flag survives
+  // the reload the same way (the reload lands with the panel hidden), so reset it too.
+  invoke("set_panel_open", { open: false }).catch(() => {});
+  const layoutRestored = !PREALLOC
+    ? Promise.resolve()
+    : invoke("get_pet_at_top")
+        .then((atTop) => {
+          if (atTop) {
+            curBelow = true;
+            document.body.classList.add("below");
+          }
+        })
+        .catch(() => {});
 
   // Pre-allocated platforms: persist the pet's on-screen anchor (its canvas-top). Layout-independent,
   // so it survives an up↔below flip and a version upgrade; the backend rebuilds the window position
@@ -1167,6 +1188,9 @@
   }
 
   invoke("get_config").then(async (c) => {
+    // applyScale reads curBelow and pins the pet to its current on-screen spot — both are wrong
+    // until the post-reload layout restore has landed.
+    await layoutRestored;
     applyConfig(c);
     currentSkin = await effectiveSkin(c);
     scheduleRotation(c);

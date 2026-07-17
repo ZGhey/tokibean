@@ -183,6 +183,14 @@ fn set_pet_at_top(app: AppHandle, v: bool) {
 }
 
 #[tauri::command]
+fn get_pet_at_top(app: AppHandle) -> bool {
+    // The frontend re-reads this after a page reload (skin switch): the reload resets its layout
+    // state while the window stays put, and this flag is the surviving source of truth.
+    let shared = app.state::<Arc<Shared>>();
+    shared.pet_at_top.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[tauri::command]
 fn set_pet_pos(app: AppHandle, x: i32, y: i32) {
     // Windows: the frontend persists the pet's on-screen anchor (x = window left, y = pet
     // canvas-top, both physical px). The full-height collapsed window's own top-left is
@@ -407,6 +415,8 @@ fn show_settings_window_on(app: &AppHandle, tab: Option<String>) {
         if let Some(w) = app.get_webview_window("settings") {
             let _ = w.show();
             let _ = w.set_focus();
+            #[cfg(target_os = "macos")]
+            macos_refocus_later(&app, "settings");
             if let Some(t) = &tab {
                 let _ = w.emit("settings-tab", t.clone());
             }
@@ -436,7 +446,31 @@ fn show_settings_window_on(app: &AppHandle, tab: Option<String>) {
         if let Ok(w) = built {
             let _ = w.show();
             let _ = w.set_focus();
+            #[cfg(target_os = "macos")]
+            macos_refocus_later(&app, "settings");
         }
+    });
+}
+
+/// macOS: re-focus a window shortly after opening it. Opening Settings/About from the pet panel
+/// happens while the app is inactive (the pet window is a non-activating NSPanel, so clicking it
+/// never activates us), and the Accessory→Regular activation-policy switch above is processed
+/// asynchronously by AppKit — the `activateIgnoringOtherApps:` inside the immediate `set_focus`
+/// races it and can fall on deaf ears. The window then LOOKS frontmost but the app is not active,
+/// and the first click in it only activates (the classic "every control needs two clicks" feel).
+/// A second set_focus after the policy switch has settled makes the activation stick.
+#[cfg(target_os = "macos")]
+fn macos_refocus_later(app: &AppHandle, label: &'static str) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let _ = app.clone().run_on_main_thread(move || {
+            if let Some(w) = app.get_webview_window(label) {
+                if w.is_visible().unwrap_or(false) {
+                    let _ = w.set_focus();
+                }
+            }
+        });
     });
 }
 
@@ -449,6 +483,8 @@ fn show_about_window(app: &AppHandle) {
         if let Some(w) = app.get_webview_window("about") {
             let _ = w.show();
             let _ = w.set_focus();
+            #[cfg(target_os = "macos")]
+            macos_refocus_later(&app, "about");
             return;
         }
         // Built is not fronted — see show_settings_window_on.
@@ -466,6 +502,8 @@ fn show_about_window(app: &AppHandle) {
         {
             let _ = w.show();
             let _ = w.set_focus();
+            #[cfg(target_os = "macos")]
+            macos_refocus_later(&app, "about");
         }
     });
 }
@@ -653,6 +691,7 @@ fn main() {
             panel_opened,
             set_panel_open,
             set_pet_at_top,
+            get_pet_at_top,
             set_pet_pos,
             check_update,
             install_update,

@@ -418,9 +418,11 @@ pub fn refresh_usage(shared: &Shared, with_official: bool) {
             let now = chrono::Local::now();
             chrono::Local
                 .with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
-                .single()
+                .earliest()
                 .map(|d| d.timestamp())
-                .unwrap_or(0)
+                // Midnight can be nonexistent under a DST jump; fall back to the last 24h
+                // rather than epoch 0, which would count all history as "today".
+                .unwrap_or_else(|| now.timestamp() - 86_400)
         };
         let tokens = crate::hermes_usage::scan_token_totals(&dbs, today_start);
         let hermes_daily = crate::hermes_usage::scan_daily_tokens(&dbs, today_start);

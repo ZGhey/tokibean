@@ -38,7 +38,9 @@
        would mean a Claude-only user (almost everyone) never learns Tokibean watches Codex at all. */
     .tab.off { color: var(--absent); }
     .pane { display: none; }
-    .pane.on { display: block; max-height: 340px; overflow-y: auto; }
+    /* No own scroll cap: the window (body) is the single scroll container — a nested pane
+       scrollbar fights the outer one at the boundary. */
+    .pane.on { display: block; }
 
     .row {
       display: flex; align-items: center; justify-content: space-between;
@@ -101,7 +103,9 @@
        they explain what that one button just did (or still has to do), and where. */
     .site { padding: 7px 0 7px 10px; border-bottom: 1px solid var(--line); border-left: 2px solid var(--line); margin-left: 2px; }
     .site:last-child { border-bottom: none; }
-    .sites-scroll { max-height: 200px; overflow-y: auto; margin: 4px 0; }
+    /* No own scrollbar: the pane is the single scroll container (nested scrollbars read as two
+       competing scroll rules). The list can be collapsed via its header instead. */
+    .sites-scroll { margin: 4px 0; }
     .site-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
     .site-name { font-size: 12.5px; }
     .site-what { color: var(--sub); font-size: 11px; }

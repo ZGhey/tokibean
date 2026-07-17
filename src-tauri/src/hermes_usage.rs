@@ -107,21 +107,16 @@ mod tests {
     }
 
     #[test]
-    fn real_state_db_has_tokens_today() {
+    fn real_state_db_scans_without_error() {
+        // Environmental smoke test: only runs where a real Hermes state.db exists. Scans ALL
+        // history (since 0), not "today" — a machine whose Hermes was last used yesterday is
+        // not a parser bug, and asserting on today's usage made this test fail every morning.
         let home = dirs::home_dir().unwrap();
         let db = home.join(".hermes").join("state.db");
         if !db.exists() {
             return;
         }
-        let today_start = {
-            let now = chrono::Local::now();
-            chrono::Local
-                .with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
-                .single()
-                .map(|d| d.timestamp())
-                .unwrap_or(0)
-        };
-        let tokens = scan_token_totals(&[db], today_start);
-        assert!(tokens > 0, "expected tokens > 0, got {}", tokens);
+        let tokens = scan_token_totals(&[db], 0);
+        assert!(tokens > 0, "a present state.db should have historical tokens, got 0");
     }
 }
