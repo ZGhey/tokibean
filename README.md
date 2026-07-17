@@ -16,6 +16,8 @@ Claude Code and Codex. It thinks, codes, searches, and celebrates right alongsid
 
 <img src="docs/gifs/thinking.gif" width="150" alt="thinking"> <img src="docs/gifs/coding.gif" width="150" alt="coding"> <img src="docs/gifs/done.gif" width="150" alt="celebrating">
 
+Ships with six characters — an orange cat, a shiba, a maneki-neko, a daruma, the Rabbit God… **[meet the cast ↓](#meet-the-skins)**
+
 **[⬇ Download for macOS / Windows / Linux](https://github.com/ZGhey/tokibean/releases/latest)** &nbsp;·&nbsp; macOS one-liner: `brew install --cask zghey/tap/tokibean`
 
 </div>
@@ -28,7 +30,7 @@ A desktop pet that lives on your screen and watches your AI coding agents — **
 
 Cross-platform: Windows / macOS / Linux (Tauri 2).
 
-**What makes it different from the other coding-agent pets:** for Claude it reads the **official Anthropic usage API** (connect your account once, in-app OAuth), so the 5-hour-window percentage and reset countdown are the real numbers, not an estimate. It also has a whole ambient world — real moon phases, seasons, weather, festivals — all computed offline from your local clock.
+**What makes it different from the other coding-agent pets:** for Claude it reads the **official Anthropic usage API** (connect your account once, in-app OAuth), so the 5-hour-window percentage and reset countdown are the real numbers, not an estimate. It also has a whole ambient world — real moon phases, seasons, weather, festivals, all computed offline from your local clock — and [six built-in skins](#meet-the-skins) to live in it.
 
 Claude Code is the flagship: it gets the official usage API, in-app account connect, and WSL hook sync. Codex is first-class but simpler — its quota comes free from its own local logs, no login required.
 
@@ -76,6 +78,22 @@ The scene lives on its own — all from your local clock, no network:
 - **🌅 Quota reset**: as the 5-hour window is about to refill, the sleeping pet stirs awake at dawn.
 
 Plus the original hidden bits — flopping down to sleep when the quota runs out, and more. Install it and find them yourself.
+
+## Meet the skins
+
+Six built-in characters, switchable live from the panel dropdown. Same brain, different soul: each skin re-acts the whole state vocabulary in its own body language, so "coding" looks like coding on every one of them — just never the same way twice.
+
+| | | |
+| :---: | :---: | :---: |
+| ![Archway Dundun](docs/gifs/skin-dundun.gif) | ![Tabby](docs/gifs/skin-tabby.gif) | ![Shiba](docs/gifs/skin-shiba.gif) |
+| **Archway Dundun** 拱门·墩墩 *(default)*<br>The original persimmon arch, and the best-dressed: Einstein hair for thinking, a hard hat for coding, a scholar's cap for reading. | **Tabby the Slacker** 橘猫·摸鱼<br>A cat, not a coder in a cat suit — it searches by digging through a cardboard box, chases the laser pointer, and knocks a cup off the table. | **Shiba the Good Boy** 柴犬·豆豆<br>Everything is dog body language: tail wags while it works, ears perk when it needs you, tongue-out zoomies when it's done. |
+
+| | | |
+| :---: | :---: | :---: |
+| ![Maneki](docs/gifs/skin-maneki.gif) | ![Daruma](docs/gifs/skin-daruma.gif) | ![Tu'er Ye](docs/gifs/skin-tuerye.gif) |
+| **Maneki the Fortune Cat** 招财猫·墩墩<br>The beckoning paw is its mood ring — a slow bob at rest, double-time while summoning fortune (working), triple in celebration. | **Daruma the Wish-Keeper** 达摩·许愿<br>No limbs, all resolve: it works by rocking in place and never falling over. When the job is done, its blank second eye gets painted in — wish granted. | **Tu'er Ye** 兔爷·骑虎<br>The Beijing Rabbit God riding his tiger. The little general never breaks composure; the tiger blinks, gallops, startles, and steals every scene. |
+
+Skins can also rotate on their own: **Settings → Skin rotation**, hourly or daily (aligned to the top of the hour / local midnight), cycling through whichever skins you tick. The current skin is derived from the clock — a restart lands on the same one — and picking a skin by hand simply turns rotation off. Want to draw your own? See [Make your own skin](#make-your-own-skin).
 
 ## Requirements
 
@@ -169,11 +187,9 @@ Config file: `~/.config/tokibean/config.json` (macOS: `~/Library/Application Sup
 
 Open `~/.claude/settings.json` (and/or `~/.codex/hooks.json`) and delete every hook entry whose `command` contains `127.0.0.1:8737/event`; or just restore from the backup — `settings.json.bak-tokibean` for Claude Code, `hooks.json.bak-tokibean` for Codex.
 
-## Skins
+## Make your own skin
 
-Built-in skins: **Archway Dundun (default, persimmon orange)** / Tabby / Shiba / Maneki / Daruma / Tu'er Ye, switchable instantly from the panel dropdown. A skin is a standalone file under `src/skins/` that overrides `window.PetRenderer` and may reuse the `window.PetKit` toolkit (pixels / bubbles / status boxes / hearts / confetti).
-
-Skins can also rotate on their own: Settings → Skin rotation, hourly or daily (aligned to the top of the hour / local midnight), cycling through whichever skins you tick. The current skin is derived from the clock — a restart lands on the same one — and picking a skin by hand simply turns rotation off.
+The [six built-in skins](#meet-the-skins) are each a standalone file under `src/skins/` that overrides `window.PetRenderer` and may reuse the `window.PetKit` toolkit (pixels / bubbles / status boxes / hearts / confetti) — yours works the same way.
 
 All drawing logic lives in the single file `src/pet.js`. Keep the `window.PetRenderer.draw(ctx, canvas, state, warn, bubble, t, extra)` interface unchanged and draw however you like. There are 5 states: `idle / working / attention / done / limit`, plus a `warn` overlay flag. The 7th argument `extra` is optional (old skins can ignore it): `{sessions, workSecs, attnSecs, toolNote, celebrate, oops, bgCount, dragging, pat}` — for the multi-session badge, work-time corner tag / tired face, tool label, celebration level, error frustration, background-task satellite, drag dangle, and head pat respectively.
 

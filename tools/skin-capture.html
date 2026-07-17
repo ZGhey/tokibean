@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<!--
+  Headless capture harness for skin GIFs. Loaded by gen-skin-gifs.sh via
+  headless Chrome; not part of the app. It loads src/pet.js (and optionally a
+  skin), drives PetRenderer.draw() frame by frame on an offscreen-sized canvas,
+  and dumps every frame as a PNG data URL into <pre id="out"> for the shell
+  side to extract with --dump-dom.
+
+  Query params:
+    base      file:// URL of the src/ directory (required)
+    skin      skin name under src/skins/, empty = default pet.js renderer
+    state     pet state (idle/working/attention/done/limit), default "working"
+    note      toolNote key (cmd/reading/coding/...), default ""
+    frames    captured frame count, default 30
+    step      rAF frames per captured frame (60fps -> 10fps at step=6)
+    start     starting rAF frame, default 600
+    celebrate celebrate level for done state, default 0
+    bubble    bubble text, default none
+-->
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<canvas id="pet" width="288" height="184"></canvas>
+<pre id="out"></pre>
+<script>
+// Freeze the clock at a plain summer afternoon (no festival, no night sky,
+// fireflies only appear at dusk) so ambience never bleeds into captures and
+// re-running the script yields identical frames.
+(function () {
+  const RealDate = Date;
+  const FIXED = new RealDate(2026, 6, 8, 14, 0, 0).getTime();
+  function FakeDate(...args) {
+    if (args.length === 0) return new RealDate(FIXED);
+    return new RealDate(...args);
+  }
+  FakeDate.now = () => FIXED;
+  FakeDate.parse = RealDate.parse;
+  FakeDate.UTC = RealDate.UTC;
+  FakeDate.prototype = RealDate.prototype;
+  window.Date = FakeDate;
+})();
+</script>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  const skin = q.get("skin") || "";
+  const state = q.get("state") || "working";
+  const note = q.get("note") || "";
+  const frames = parseInt(q.get("frames") || "30", 10);
+  const step = parseInt(q.get("step") || "6", 10);
+  const start = parseInt(q.get("start") || "600", 10);
+  const bubble = q.get("bubble") || null;
+  const celebrate = parseInt(q.get("celebrate") || "0", 10);
+  const base = q.get("base");
+
+  function load(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = src; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  async function run() {
+    await load(base + "/pet.js");
+    if (skin) await load(base + "/skins/" + skin + ".js");
+    const canvas = document.getElementById("pet");
+    const ctx = canvas.getContext("2d");
+    const extra = {
+      sessions: 1,
+      workSecs: 65,
+      attnSecs: 0,
+      toolNote: note,
+      celebrate: celebrate,
+      oops: false,
+      bgCount: 0,
+      agentCount: 1,
+      resetSecs: null,
+      gazeX: null, gazeY: null,
+      tickle: false, dragging: false, pat: false,
+      textScale: 1.2,
+      forceWeather: "none",
+    };
+    const out = [];
+    for (let i = 0; i < frames; i++) {
+      window.PetRenderer.draw(ctx, canvas, state, false, bubble, start + i * step, extra);
+      out.push(canvas.toDataURL("image/png"));
+    }
+    document.getElementById("out").textContent = JSON.stringify(out);
+    document.title = "DONE";
+  }
+  run().catch(e => { document.getElementById("out").textContent = "ERR " + e; });
+})();
+</script>
+</body>
+</html>
